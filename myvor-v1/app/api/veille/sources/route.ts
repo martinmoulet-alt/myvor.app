@@ -40,7 +40,9 @@ function decode(value: string) {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, " ")
     .replace(/<[^>]+>/g, "")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
@@ -61,9 +63,14 @@ function linkFrom(block: string) {
 
 function inferNature(title: string, fallback: string) {
   const t = title.toLowerCase();
+  if (t.startsWith("loi ") || t.startsWith("loi n°")) return "Loi";
+  if (t.includes("ordonnance")) return "Ordonnance";
   if (t.includes("amendement")) return "Amendement";
   if (t.includes("proposition de loi")) return "Proposition de loi";
   if (t.includes("projet de loi")) return "Projet de loi";
+  if (t.startsWith("décret") || t.includes(" décret ")) return "Décret";
+  if (t.startsWith("arrêté") || t.includes(" arrêté ")) return "Arrêté";
+  if (t.startsWith("décision") || t.includes(" décision ")) return "Décision / jurisprudence";
   if (t.includes("rapport")) return "Rapport";
   if (t.includes("question")) return "Question parlementaire";
   if (t.includes("résolution")) return "Résolution";
@@ -91,8 +98,61 @@ function parseFeed(xml: string, source: Source): FeedItem[] {
     .filter(item => item.title && item.source_url.startsWith("http"));
 }
 
+async function fetchLegifranceJorf(): Promise<FeedItem[]> {
+  const response = await fetch("https://www.legifrance.gouv.fr/jorf/jo", {
+    headers: {
+      "User-Agent": "Myvor/1.0 (+https://myvor.app)",
+      Accept: "text/html,application/xhtml+xml",
+    },
+    next: { revalidate: 300 },
+  });
+
+  if (!response.ok) throw new Error(`Légifrance — JORF: HTTP ${response.status}`);
+  const html = await response.text();
+
+  const issueDate = decode(
+    html.match(/Journal officiel de la République française[^<]*du\s+([^<]+)/i)?.[1] || "",
+  );
+
+  const items: FeedItem[] = [];
+  const anchorRegex = /<a\b[^>]*href=["']([^"']*\/jorf\/id\/JORFTEXT[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
+
+  for (const match of html.matchAll(anchorRegex)) {
+    const href = match[1];
+    const title = decode(match[2]);
+    if (!title) continue;
+
+    const nature = inferNature(title, "Texte réglementaire");
+    const accepted = new Set([
+      "Loi",
+      "Ordonnance",
+      "Décret",
+      "Arrêté",
+      "Décision / jurisprudence",
+      "Rapport",
+    ]);
+    if (!accepted.has(nature)) continue;
+
+    const source_url = href.startsWith("http")
+      ? href
+      : `https://www.legifrance.gouv.fr${href.startsWith("/") ? "" : "/"}${href}`;
+
+    items.push({
+      title,
+      nature,
+      source_url,
+      source_name: "Légifrance — Journal officiel",
+      published_at: issueDate,
+    });
+  }
+
+  return items
+    .filter((item, index, all) => all.findIndex(other => other.source_url === item.source_url) === index)
+    .slice(0, 20);
+}
+
 export async function GET() {
-  const settled = await Promise.allSettled(
+  const feedSettled = await Promise.allSettled(
     SOURCES.map(async source => {
       const response = await fetch(source.url, {
         headers: { "User-Agent": "Myvor/1.0 (+https://myvor.app)" },
@@ -104,18 +164,32 @@ export async function GET() {
     }),
   );
 
-  const items = settled
-    .flatMap(result => (result.status === "fulfilled" ? result.value : []))
+  const legifranceSettled = await Promise.allSettled([fetchLegifranceJorf()]);
+
+  const feedItems = feedSettled.flatMap(result =>
+    result.status === "fulfilled" ? result.value : [],
+  );
+  const legifranceItems = legifranceSettled.flatMap(result =>
+    result.status === "fulfilled" ? result.value : [],
+  );
+
+  const items = [...legifranceItems, ...feedItems]
     .filter((item, index, all) => all.findIndex(other => other.source_url === item.source_url) === index)
-    .slice(0, 30);
+    .slice(0, 45);
 
-  const active_sources = settled
-    .map((result, index) => (result.status === "fulfilled" ? SOURCES[index].name : null))
-    .filter(Boolean);
+  const active_sources = [
+    ...feedSettled
+      .map((result, index) => (result.status === "fulfilled" ? SOURCES[index].name : null))
+      .filter(Boolean),
+    ...(legifranceSettled[0]?.status === "fulfilled" ? ["Légifrance — Journal officiel"] : []),
+  ];
 
-  const unavailable_sources = settled
-    .map((result, index) => (result.status === "rejected" ? SOURCES[index].name : null))
-    .filter(Boolean);
+  const unavailable_sources = [
+    ...feedSettled
+      .map((result, index) => (result.status === "rejected" ? SOURCES[index].name : null))
+      .filter(Boolean),
+    ...(legifranceSettled[0]?.status === "rejected" ? ["Légifrance — Journal officiel"] : []),
+  ];
 
   return NextResponse.json({
     synced_at: new Date().toISOString(),
