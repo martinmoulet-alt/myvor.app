@@ -59,9 +59,12 @@ export default function Home(){
       const response=await fetch("/api/veille/sources",{cache:"no-store"});
       const payload=await response.json();
       if(!response.ok)throw new Error(payload?.error||"Synchronisation impossible");
+
       const incoming:SourceItem[]=payload.items||[];
-      const existing=new Set(watch.map(item=>item.source_url));
-      const fresh=incoming.filter(item=>!existing.has(item.source_url));
+      const byUrl=new Map(watch.map(item=>[item.source_url,item]));
+      const fresh=incoming.filter(item=>!byUrl.has(item.source_url));
+      const existing=incoming.filter(item=>byUrl.has(item.source_url));
+
       if(fresh.length){
         const rows=fresh.map(item=>({
           title:item.title,
@@ -73,9 +76,22 @@ export default function Home(){
         const {error}=await supabase.from("watch_items").insert(rows);
         if(error)throw error;
       }
+
+      let repaired=0;
+      for(const item of existing){
+        const current=byUrl.get(item.source_url);
+        if(!current)continue;
+        if(current.title!==item.title || current.nature!==item.nature){
+          const {error}=await supabase.from("watch_items").update({title:item.title,nature:item.nature}).eq("id",current.id);
+          if(error)throw error;
+          repaired++;
+        }
+      }
+
       await loadData();
       const active=(payload.active_sources||[]).join(", ");
-      setSyncMessage(`${fresh.length} nouveau(x) élément(s). Sources actives : ${active||"aucune"}.`);
+      const unavailable=(payload.unavailable_sources||[]).join(", ");
+      setSyncMessage(`${fresh.length} nouveau(x) élément(s), ${repaired} corrigé(s). Sources actives : ${active||"aucune"}.${unavailable?` Indisponibles : ${unavailable}.`:""}`);
     }catch(error:any){
       setSyncMessage(`Erreur de synchronisation : ${error?.message||"inconnue"}`);
     }finally{
@@ -113,7 +129,7 @@ function SetupScreen(){return <div className="auth"><div className="authbox"><di
 function Header({eyebrow,title,lead,action}:{eyebrow:string,title:string,lead:string,action?:React.ReactNode}){return <div className="toolbar"><div><div className="eyebrow">{eyebrow}</div><h1 className="h1">{title}</h1><p className="lead">{lead}</p></div>{action}</div>;}
 function Dashboard({dossiers,watch,go}:{dossiers:Dossier[],watch:Watch[],go:(t:Tab)=>void}){const urgent=watch.filter(x=>["fort","absolument urgent"].includes(x.urgency)).length;return <><Header eyebrow="Vue d’ensemble" title="Bonjour, voici vos priorités." lead="Un point d’entrée unique pour passer de l’information à l’action."/><div className="grid stats"><div className="card stat"><span className="muted">Dossiers actifs</span><strong>{dossiers.length}</strong></div><div className="card stat"><span className="muted">Éléments de veille</span><strong>{watch.length}</strong></div><div className="card stat"><span className="muted">Alertes fortes</span><strong>{urgent}</strong></div><div className="card stat"><span className="muted">Notes produites</span><strong>0</strong></div></div><div className="grid two" style={{marginTop:16}}><div className="card"><h2>Dossiers récents</h2>{dossiers.length?<div className="list">{dossiers.slice(0,4).map(d=><div className="row" key={d.id}><div><h3>{d.title}</h3><span className="muted small">{d.client}</span></div><span className="badge green">Actif</span></div>)}</div>:<Empty title="Aucun dossier" text="Créez votre premier dossier client."/>}<button className="btn ghost" style={{marginTop:12}} onClick={()=>go("dossiers")}>Voir les dossiers</button></div><div className="card"><h2>Priorités</h2>{urgent?<p>{urgent} élément(s) nécessitent une analyse rapide.</p>:<Empty title="Aucune alerte urgente" text="Les éléments critiques apparaîtront ici."/>}<button className="btn ghost" onClick={()=>go("veille")}>Ouvrir la veille</button></div></div></>;}
 function Dossiers({items,add}:{items:Dossier[],add:()=>void}){return <><Header eyebrow="Portefeuille" title="Dossiers clients" lead="Chaque analyse part d’un objectif client clairement défini." action={<button className="btn primary" onClick={add}><Plus size={16}/> Nouveau dossier</button>}/>{items.length?<div className="list">{items.map(d=><div className="row" key={d.id}><div><h3>{d.title}</h3><div className="muted small">{d.client}</div><p className="small">Objectif : {d.objective}</p></div><span className="badge green">{d.status}</span></div>)}</div>:<div className="card"><Empty title="Votre portefeuille est vide" text="Ajoutez un premier client et son objectif stratégique."/></div>}</>;}
-function Veille({items,dossiers,add,sync,syncing,syncMessage}:{items:Watch[],dossiers:Dossier[],add:()=>void,sync:()=>void,syncing:boolean,syncMessage:string}){return <><Header eyebrow="Sources institutionnelles" title="Veille" lead="Assemblée nationale et Sénat sont désormais reliés à Myvor." action={<div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}><button className="btn ghost" onClick={sync} disabled={syncing}><RefreshCw size={16}/>{syncing?" Synchronisation…":" Synchroniser les sources"}</button><button className="btn primary" onClick={add}><Plus size={16}/> Ajouter un texte</button></div>}/><div className="notice small"><b>Sources automatiques :</b> Assemblée nationale — publications parlementaires · Sénat — textes et rapports. <b>Légifrance :</b> connexion API PISTE à ajouter avec identifiants dédiés.</div>{syncMessage&&<div className="notice small">{syncMessage}</div>}{items.length?<div className="list">{items.map(w=><div className="row" key={w.id}><div><span className="badge">{w.nature}</span><h3 style={{marginTop:8}}>{w.title}</h3><div className="muted small">{dossiers.find(d=>d.id===w.dossier_id)?.title||"Non rattaché"}</div></div><div style={{display:"grid",gap:7,justifyItems:"end"}}><Urgency value={w.urgency}/>{w.source_url&&<a className="small" href={w.source_url} target="_blank" rel="noreferrer">Lire le texte original</a>}</div></div>)}</div>:<div className="card"><Empty title="Aucun texte suivi" text="Cliquez sur Synchroniser les sources pour importer les dernières publications officielles."/></div>}</>;}
+function Veille({items,dossiers,add,sync,syncing,syncMessage}:{items:Watch[],dossiers:Dossier[],add:()=>void,sync:()=>void,syncing:boolean,syncMessage:string}){return <><Header eyebrow="Sources institutionnelles" title="Veille" lead="Assemblée nationale, Sénat et Journal officiel sont reliés à Myvor." action={<div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}><button className="btn ghost" onClick={sync} disabled={syncing}><RefreshCw size={16}/>{syncing?" Synchronisation…":" Synchroniser les sources"}</button><button className="btn primary" onClick={add}><Plus size={16}/> Ajouter un texte</button></div>}/><div className="notice small"><b>Sources automatiques :</b> Assemblée nationale — publications parlementaires · Sénat — textes et rapports · Légifrance — Journal officiel.</div>{syncMessage&&<div className="notice small">{syncMessage}</div>}{items.length?<div className="list">{items.map(w=><div className="row" key={w.id}><div><span className="badge">{w.nature}</span><h3 style={{marginTop:8}}>{w.title}</h3><div className="muted small">{dossiers.find(d=>d.id===w.dossier_id)?.title||"Non rattaché"}</div></div><div style={{display:"grid",gap:7,justifyItems:"end"}}><Urgency value={w.urgency}/>{w.source_url&&<a className="small" href={w.source_url} target="_blank" rel="noreferrer">Lire le texte original</a>}</div></div>)}</div>:<div className="card"><Empty title="Aucun texte suivi" text="Cliquez sur Synchroniser les sources pour importer les dernières publications officielles."/></div>}</>;}
 function ModulePlaceholder({tab,dossiers,watch}:{tab:Tab,dossiers:Dossier[],watch:Watch[]}){const names:any={impact:["Analyse stratégique","Note d’impact","Transformez un texte en risques, opportunités, échéances et recommandations."],radar:["Cartographie","Radar d’influence","Positionnez les acteurs par rapport à l’objectif précis du client."],builder:["Production","Note Builder","Préparez une note, un argumentaire ou un e-mail à partir du dossier."]};const n=names[tab];return <><Header eyebrow={n[0]} title={n[1]} lead={n[2]}/><div className="card empty"><Sparkles size={34}/><h2>Module prêt à être connecté au moteur d’analyse</h2><p className="muted">La structure fonctionnelle est en place. Il utilisera les {dossiers.length} dossier(s) et {watch.length} élément(s) de veille de votre espace.</p><span className="badge orange">Étape suivante de la V1</span></div></>;}
 function Empty({title,text}:{title:string,text:string}){return <div className="empty"><h3>{title}</h3><p className="muted">{text}</p></div>;}
 function Urgency({value}:{value:string}){const cls=value==="faible"?"green":value==="moyen"?"orange":value==="fort"?"red":"wine";return <span className={`badge ${cls}`}>{value}</span>;}
