@@ -4,79 +4,104 @@ type WatchItem = { id:string; title:string; nature?:string };
 type Dossier = { id:string; title:string; objective?:string };
 type Assignment = { watch_id:string; dossier_id:string|null; confidence:number };
 
+const STOP_WORDS=new Set([
+  "a","au","aux","avec","ce","ces","dans","de","des","du","elle","en","et","eux","il","je","la","le","les","leur","lui","ma","mais","me","meme","mes","moi","mon","ne","nos","notre","nous","on","ou","par","pas","pour","qu","que","qui","sa","se","ses","son","sur","ta","te","tes","toi","ton","tu","un","une","vos","votre","vous","d","l","y","texte","obtenir","modification","favorable","reforme","projet","proposition"
+]);
+
+function normalize(value:string){
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+}
+
+function tokens(value:string){
+  return normalize(value).split(/\s+/).filter(w=>w.length>2&&!STOP_WORDS.has(w));
+}
+
+function stems(value:string){
+  return tokens(value).map(w=>w.replace(/(ements?|ations?|iques?|istes?|ismes?|eurs?|euses?|ites?|ives?|ifs?|aux|ales?|es|s)$/,""));
+}
+
+function localScore(item:WatchItem,dossier:Dossier){
+  const itemTokens=new Set(stems(`${item.title} ${item.nature||""}`));
+  const dossierTokens=stems(`${dossier.title} ${dossier.objective||""}`);
+  if(!itemTokens.size||!dossierTokens.length)return 0;
+  let matched=0;
+  for(const word of dossierTokens){
+    if(itemTokens.has(word))matched+=1;
+    else if([...itemTokens].some(x=>x.length>=5&&word.length>=5&&(x.includes(word)||word.includes(x))))matched+=0.75;
+  }
+  const unique=new Set(dossierTokens).size||1;
+  const ratio=matched/unique;
+  if(matched>=3)return Math.min(0.96,0.76+ratio*0.22);
+  if(matched>=2)return Math.min(0.88,0.70+ratio*0.20);
+  if(matched>=1)return Math.min(0.72,0.48+ratio*0.18);
+  return 0;
+}
+
+function localAssignments(items:WatchItem[],dossiers:Dossier[]):Assignment[]{
+  return items.map(item=>{
+    let best:Dossier|null=null;
+    let bestScore=0;
+    for(const dossier of dossiers){
+      const score=localScore(item,dossier);
+      if(score>bestScore){bestScore=score;best=dossier;}
+    }
+    return {watch_id:item.id,dossier_id:bestScore>=0.78&&best?best.id:null,confidence:Number(bestScore.toFixed(2))};
+  });
+}
+
 function extractOutputText(payload:any){
   if(typeof payload?.output_text==="string")return payload.output_text;
   const chunks=payload?.output?.flatMap((item:any)=>item?.content||[])||[];
   return chunks.map((chunk:any)=>chunk?.text||"").join("");
 }
 
-function keyFingerprint(apiKey:string){
-  const trimmed=apiKey.trim();
-  return trimmed.length>=4?trimmed.slice(-4):"????";
-}
-
-function friendlyOpenAIError(status:number, raw:string, fingerprint:string){
-  let message=raw;
-  try{message=JSON.parse(raw)?.error?.message||raw;}catch{}
-  const lower=message.toLowerCase();
-  if(status===401||lower.includes("api key"))return `Clé OpenAI refusée. Netlify utilise une clé finissant par …${fingerprint}. Vérifie qu’elle correspond à la dernière clé créée.`;
-  if(status===429||lower.includes("quota")||lower.includes("billing"))return `Clé reconnue (…${fingerprint}), mais quota OpenAI indisponible. Vérifie la facturation ou les crédits API.`;
-  if(lower.includes("model")&&lower.includes("access"))return `Clé reconnue (…${fingerprint}), mais le modèle OpenAI configuré n’est pas accessible.`;
-  return `OpenAI a refusé la requête (${status}, clé …${fingerprint}) : ${message.slice(0,260)}`;
-}
-
-export async function POST(request:Request){
-  const apiKey=(process.env.OPENAI_API_KEY||"").trim();
-  if(!apiKey)return NextResponse.json({error:"IA non configurée : OPENAI_API_KEY est absente dans Netlify."},{status:503});
-  const fingerprint=keyFingerprint(apiKey);
-
-  const body=await request.json().catch(()=>null);
-  const items:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,40):[];
-  const dossiers:Dossier[]=Array.isArray(body?.dossiers)?body.dossiers.slice(0,30):[];
-  if(!items.length||!dossiers.length)return NextResponse.json({assignments:[]});
-
-  const allowedDossierIds=new Set(dossiers.map(d=>d.id));
-  const allowedWatchIds=new Set(items.map(i=>i.id));
-
+async function tryOpenAI(apiKey:string,items:WatchItem[],dossiers:Dossier[]):Promise<Assignment[]|null>{
+  if(!apiKey)return null;
   const prompt=[
-    "Tu es le moteur de rattachement automatique de Myvor, une plateforme d'affaires publiques.",
-    "Associe chaque élément de veille au dossier client le plus pertinent uniquement si le lien thématique et stratégique est suffisamment clair.",
-    "Base-toi sur le titre et la nature du texte, puis sur le titre et l'objectif du dossier.",
-    "N'invente jamais de lien. Si aucun dossier n'est suffisamment pertinent, utilise dossier_id null.",
-    "La confiance doit être comprise entre 0 et 1. Réserve 0.78 ou plus aux rattachements réellement solides.",
-    "Réponds uniquement avec un objet JSON de cette forme exacte : {\"assignments\":[{\"watch_id\":\"...\",\"dossier_id\":\"...\" ou null,\"confidence\":0.0}]}",
+    "Tu es le moteur de pertinence de Myvor, plateforme d'affaires publiques.",
+    "Associe chaque évolution institutionnelle au dossier client le plus pertinent seulement si le lien thématique et stratégique est solide.",
+    "Analyse le titre, la nature du texte, le titre du dossier et surtout l'objectif client.",
+    "Si aucun dossier n'est assez pertinent, utilise dossier_id null.",
+    "Une confiance de 0.78 ou plus signifie que le texte mérite d'être rattaché automatiquement.",
+    "Réponds uniquement avec un objet JSON : {\"assignments\":[{\"watch_id\":\"...\",\"dossier_id\":\"...\" ou null,\"confidence\":0.0}]}",
     "Éléments de veille:",JSON.stringify(items),
     "Dossiers:",JSON.stringify(dossiers.map(d=>({id:d.id,title:d.title,objective:d.objective||""}))),
   ].join("\n");
+  try{
+    const response=await fetch("https://api.openai.com/v1/responses",{
+      method:"POST",
+      headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},
+      body:JSON.stringify({model:process.env.OPENAI_MODEL||"gpt-5-mini",input:prompt,text:{format:{type:"json_object"}}}),
+    });
+    if(!response.ok)return null;
+    const payload=await response.json();
+    const text=extractOutputText(payload);
+    const parsed=JSON.parse(text||"{}");
+    return Array.isArray(parsed?.assignments)?parsed.assignments:null;
+  }catch{return null;}
+}
 
-  const response=await fetch("https://api.openai.com/v1/responses",{
-    method:"POST",
-    headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},
-    body:JSON.stringify({
-      model:process.env.OPENAI_MODEL||"gpt-5-mini",
-      input:prompt,
-      text:{format:{type:"json_object"}},
-    }),
-  });
+export async function POST(request:Request){
+  const body=await request.json().catch(()=>null);
+  const items:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,40):[];
+  const dossiers:Dossier[]=Array.isArray(body?.dossiers)?body.dossiers.slice(0,30):[];
+  if(!items.length||!dossiers.length)return NextResponse.json({assignments:[],engine:"local"});
 
-  if(!response.ok){
-    const raw=await response.text();
-    return NextResponse.json({error:friendlyOpenAIError(response.status,raw,fingerprint)},{status:502});
-  }
+  const allowedDossierIds=new Set(dossiers.map(d=>d.id));
+  const allowedWatchIds=new Set(items.map(i=>i.id));
+  const apiKey=(process.env.OPENAI_API_KEY||"").trim();
 
-  const payload=await response.json();
-  const text=extractOutputText(payload);
-  let parsed:{assignments?:Assignment[]}={};
-  try{parsed=JSON.parse(text||"{}");}
-  catch{return NextResponse.json({error:`La réponse IA n’était pas exploitable (clé …${fingerprint}). Réessaie.`},{status:502});}
+  const aiAssignments=await tryOpenAI(apiKey,items,dossiers);
+  const rawAssignments=aiAssignments||localAssignments(items,dossiers);
+  const engine=aiAssignments?"openai":"myvor-local";
 
-  const assignments=(parsed.assignments||[])
-    .filter(a=>allowedWatchIds.has(a.watch_id))
-    .map(a=>({
+  const assignments=(rawAssignments||[])
+    .filter((a:Assignment)=>allowedWatchIds.has(a.watch_id))
+    .map((a:Assignment)=>({
       watch_id:a.watch_id,
       dossier_id:a.dossier_id&&allowedDossierIds.has(a.dossier_id)?a.dossier_id:null,
       confidence:Math.max(0,Math.min(1,Number(a.confidence)||0)),
     }));
 
-  return NextResponse.json({assignments});
+  return NextResponse.json({assignments,engine});
 }
