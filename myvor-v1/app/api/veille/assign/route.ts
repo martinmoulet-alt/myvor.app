@@ -10,19 +10,25 @@ function extractOutputText(payload:any){
   return chunks.map((chunk:any)=>chunk?.text||"").join("");
 }
 
-function friendlyOpenAIError(status:number, raw:string){
+function keyFingerprint(apiKey:string){
+  const trimmed=apiKey.trim();
+  return trimmed.length>=4?trimmed.slice(-4):"????";
+}
+
+function friendlyOpenAIError(status:number, raw:string, fingerprint:string){
   let message=raw;
   try{message=JSON.parse(raw)?.error?.message||raw;}catch{}
   const lower=message.toLowerCase();
-  if(status===401||lower.includes("api key"))return "Clé OpenAI refusée. Vérifie OPENAI_API_KEY dans Netlify.";
-  if(status===429||lower.includes("quota")||lower.includes("billing"))return "Quota OpenAI indisponible. Vérifie la facturation ou les crédits du compte API OpenAI.";
-  if(lower.includes("model")&&lower.includes("access"))return "Le modèle OpenAI configuré n’est pas accessible avec cette clé API.";
-  return `OpenAI a refusé la requête (${status}) : ${message.slice(0,300)}`;
+  if(status===401||lower.includes("api key"))return `Clé OpenAI refusée. Netlify utilise une clé finissant par …${fingerprint}. Vérifie qu’elle correspond à la dernière clé créée.`;
+  if(status===429||lower.includes("quota")||lower.includes("billing"))return `Clé reconnue (…${fingerprint}), mais quota OpenAI indisponible. Vérifie la facturation ou les crédits API.`;
+  if(lower.includes("model")&&lower.includes("access"))return `Clé reconnue (…${fingerprint}), mais le modèle OpenAI configuré n’est pas accessible.`;
+  return `OpenAI a refusé la requête (${status}, clé …${fingerprint}) : ${message.slice(0,260)}`;
 }
 
 export async function POST(request:Request){
-  const apiKey=process.env.OPENAI_API_KEY;
-  if(!apiKey)return NextResponse.json({error:"IA non configurée : ajoute OPENAI_API_KEY dans Netlify."},{status:503});
+  const apiKey=(process.env.OPENAI_API_KEY||"").trim();
+  if(!apiKey)return NextResponse.json({error:"IA non configurée : OPENAI_API_KEY est absente dans Netlify."},{status:503});
+  const fingerprint=keyFingerprint(apiKey);
 
   const body=await request.json().catch(()=>null);
   const items:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,40):[];
@@ -55,14 +61,14 @@ export async function POST(request:Request){
 
   if(!response.ok){
     const raw=await response.text();
-    return NextResponse.json({error:friendlyOpenAIError(response.status,raw)},{status:502});
+    return NextResponse.json({error:friendlyOpenAIError(response.status,raw,fingerprint)},{status:502});
   }
 
   const payload=await response.json();
   const text=extractOutputText(payload);
   let parsed:{assignments?:Assignment[]}={};
   try{parsed=JSON.parse(text||"{}");}
-  catch{return NextResponse.json({error:"La réponse IA n’était pas exploitable. Réessaie."},{status:502});}
+  catch{return NextResponse.json({error:`La réponse IA n’était pas exploitable (clé …${fingerprint}). Réessaie.`},{status:502});}
 
   const assignments=(parsed.assignments||[])
     .filter(a=>allowedWatchIds.has(a.watch_id))
