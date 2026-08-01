@@ -68,6 +68,9 @@ function inferNature(title:string,fallback:string){
   if(t.includes("question")) return "Question parlementaire";
   if(t.includes("résolution")) return "Résolution";
   if(t.includes("consultation")) return "Consultation publique";
+  if(t.includes("sanction")) return "Décision de régulation";
+  if(t.includes("règlement")||t.includes("reglement")) return "Règlement européen";
+  if(t.includes("directive")) return "Directive européenne";
   if(t.includes("communiqué")||t.includes("communique")) return "Communiqué institutionnel";
   return fallback;
 }
@@ -92,6 +95,24 @@ async function fetchFeed(source:Source){
   }finally{clearTimeout(timer);}
 }
 
+async function fetchHtmlListing(input:{name:string;url:string;base:string;pathPattern:RegExp;defaultNature:string;limit?:number}):Promise<FeedItem[]>{
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),6500);
+  try{
+    const response=await fetch(input.url,{headers:{"User-Agent":"Mozilla/5.0 Myvor/1.0","Accept":"text/html,*/*","Accept-Language":"fr-FR,fr;q=0.9"},next:{revalidate:600},signal:controller.signal});
+    if(!response.ok)throw new Error(`${input.name}: HTTP ${response.status}`);
+    const html=await responseText(response);const items:FeedItem[]=[];
+    const regex=/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+    for(const match of html.matchAll(regex)){
+      const href=decodeHtml(match[1]); if(!input.pathPattern.test(href))continue;
+      const title=decodeHtml(match[2]); if(title.length<12)continue;
+      const source_url=href.startsWith("http")?href:`${input.base}${href.startsWith("/")?"":"/"}${href}`;
+      items.push({title,nature:inferNature(title,input.defaultNature),source_url,source_name:input.name});
+    }
+    return items.filter((x,i,a)=>a.findIndex(y=>y.source_url===x.source_url)===i).slice(0,input.limit||12);
+  }finally{clearTimeout(timer);}
+}
+
 async function fetchLegifranceJorf():Promise<FeedItem[]>{
   const response=await fetch("https://www.legifrance.gouv.fr/jorf/jo",{redirect:"follow",headers:{"User-Agent":"Mozilla/5.0 Myvor/1.0","Accept":"text/html,application/xhtml+xml,*/*","Accept-Language":"fr-FR,fr;q=0.9"},next:{revalidate:300}});
   if(!response.ok) throw new Error(`Légifrance — JORF: HTTP ${response.status}`);
@@ -111,38 +132,42 @@ async function fetchLegifranceJorf():Promise<FeedItem[]>{
 }
 
 async function fetchViePubliqueReports():Promise<FeedItem[]>{
-  const response=await fetch("https://www.vie-publique.fr/bibliotheque-rapports-publics",{headers:{"User-Agent":"Mozilla/5.0 Myvor/1.0","Accept":"text/html,*/*"},next:{revalidate:600}});
-  if(!response.ok) throw new Error(`Vie-publique — Rapports: HTTP ${response.status}`);
-  const html=await responseText(response); const items:FeedItem[]=[];
-  const regex=/<a\b[^>]*href=["']([^"']*\/rapport\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-  for(const match of html.matchAll(regex)){
-    const title=decodeHtml(match[2]); if(title.length<12)continue;
-    const href=match[1]; const source_url=href.startsWith("http")?href:`https://www.vie-publique.fr${href.startsWith("/")?"":"/"}${href}`;
-    items.push({title,nature:"Rapport",source_url,source_name:"Vie-publique — Rapports"});
-  }
-  return items.filter((x,i,a)=>a.findIndex(y=>y.source_url===x.source_url)===i).slice(0,15);
+  return fetchHtmlListing({name:"Vie-publique — Rapports",url:"https://www.vie-publique.fr/bibliotheque-rapports-publics",base:"https://www.vie-publique.fr",pathPattern:/\/rapport\//i,defaultNature:"Rapport",limit:15});
 }
 
 async function fetchConseilConstitutionnel():Promise<FeedItem[]>{
-  const response=await fetch("https://qpc360.conseil-constitutionnel.fr/",{headers:{"User-Agent":"Mozilla/5.0 Myvor/1.0","Accept":"text/html,*/*"},next:{revalidate:600}});
-  if(!response.ok) throw new Error(`Conseil constitutionnel: HTTP ${response.status}`);
-  const html=await responseText(response); const items:FeedItem[]=[];
-  const regex=/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?Décision[^<]{0,180})<\/a>/gi;
+  return fetchHtmlListing({name:"Conseil constitutionnel",url:"https://qpc360.conseil-constitutionnel.fr/",base:"https://qpc360.conseil-constitutionnel.fr",pathPattern:/(decision|decisions|qpc)/i,defaultNature:"Décision / jurisprudence",limit:12});
+}
+
+async function fetchCnil():Promise<FeedItem[]>{
+  return fetchHtmlListing({name:"CNIL",url:"https://www.cnil.fr/fr/actualite",base:"https://www.cnil.fr",pathPattern:/\/fr\//i,defaultNature:"Publication de régulateur",limit:15});
+}
+
+async function fetchArcep():Promise<FeedItem[]>{
+  return fetchHtmlListing({name:"ARCEP",url:"https://www.arcep.fr/actualites.html",base:"https://www.arcep.fr",pathPattern:/(actualites|communiques|consultations|uploads)/i,defaultNature:"Publication de régulateur",limit:15});
+}
+
+async function fetchEurLex():Promise<FeedItem[]>{
+  const response=await fetch("https://eur-lex.europa.eu/oj/direct-access.html?locale=fr",{headers:{"User-Agent":"Mozilla/5.0 Myvor/1.0","Accept":"text/html,*/*","Accept-Language":"fr-FR,fr;q=0.9"},next:{revalidate:600}});
+  if(!response.ok)throw new Error(`EUR-Lex: HTTP ${response.status}`);
+  const html=await responseText(response);const items:FeedItem[]=[];
+  const regex=/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
   for(const match of html.matchAll(regex)){
-    const title=decodeHtml(match[2]);
-    if(!/^décision/i.test(title)||title.length<12)continue;
-    const href=decodeHtml(match[1]);
-    const source_url=href.startsWith("http")?href:`https://qpc360.conseil-constitutionnel.fr${href.startsWith("/")?"":"/"}${href}`;
-    items.push({title,nature:"Décision / jurisprudence",source_url,source_name:"Conseil constitutionnel"});
+    const href=decodeHtml(match[1]); const title=decodeHtml(match[2]);
+    if(title.length<8)continue;
+    if(!/(legal-content|oj\/daily-view|oj\/direct-access)/i.test(href))continue;
+    if(!/(règlement|reglement|directive|décision|decision|journal officiel|législation|legislation)/i.test(title))continue;
+    const source_url=href.startsWith("http")?href:`https://eur-lex.europa.eu${href.startsWith("/")?"":"/"}${href}`;
+    items.push({title,nature:inferNature(title,"Acte de l’Union européenne"),source_url,source_name:"EUR-Lex"});
   }
-  return items.filter((x,i,a)=>a.findIndex(y=>y.source_url===x.source_url)===i).slice(0,12);
+  return items.filter((x,i,a)=>a.findIndex(y=>y.source_url===x.source_url)===i).slice(0,18);
 }
 
 export async function GET(){
   const feedSettled=await Promise.allSettled(SOURCES.map(fetchFeed));
-  const extraNames=["Légifrance — Journal officiel","Vie-publique — Rapports","Conseil constitutionnel"];
-  const extras=await Promise.allSettled([fetchLegifranceJorf(),fetchViePubliqueReports(),fetchConseilConstitutionnel()]);
-  const items=[...extras.flatMap(r=>r.status==="fulfilled"?r.value:[]),...feedSettled.flatMap(r=>r.status==="fulfilled"?r.value:[])].filter((x,i,a)=>a.findIndex(y=>y.source_url===x.source_url)===i).slice(0,120);
+  const extraNames=["Légifrance — Journal officiel","Vie-publique — Rapports","Conseil constitutionnel","CNIL","ARCEP","EUR-Lex"];
+  const extras=await Promise.allSettled([fetchLegifranceJorf(),fetchViePubliqueReports(),fetchConseilConstitutionnel(),fetchCnil(),fetchArcep(),fetchEurLex()]);
+  const items=[...extras.flatMap(r=>r.status==="fulfilled"?r.value:[]),...feedSettled.flatMap(r=>r.status==="fulfilled"?r.value:[])].filter((x,i,a)=>a.findIndex(y=>y.source_url===x.source_url)===i).slice(0,160);
   const active_sources=[...feedSettled.map((r,i)=>r.status==="fulfilled"?SOURCES[i].name:null).filter(Boolean),...extras.map((r,i)=>r.status==="fulfilled"?extraNames[i]:null).filter(Boolean)];
   const unavailable_sources=[...feedSettled.map((r,i)=>r.status==="rejected"?SOURCES[i].name:null).filter(Boolean),...extras.map((r,i)=>r.status==="rejected"?extraNames[i]:null).filter(Boolean)];
   const unavailable_details=[...feedSettled.map((r,i)=>r.status==="rejected"?`${SOURCES[i].name}: ${String(r.reason?.message||r.reason)}`:null).filter(Boolean),...extras.map((r,i)=>r.status==="rejected"?`${extraNames[i]}: ${String((r as PromiseRejectedResult).reason?.message||(r as PromiseRejectedResult).reason)}`:null).filter(Boolean)];
