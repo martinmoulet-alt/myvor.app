@@ -1,0 +1,56 @@
+name: Connect Note Builder
+
+on:
+  push:
+    paths:
+      - .github/workflows/connect-note-builder.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  connect-builder:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Connect BuilderModule to app
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("myvor-v1/app/page.tsx")
+          text = path.read_text()
+
+          radar_import = 'import RadarModule from "./RadarModule";'
+          builder_import = 'import BuilderModule from "./BuilderModule";'
+          if builder_import not in text:
+              text = text.replace(radar_import, radar_import + "\n" + builder_import)
+
+          old = '''          : tab==="radar"
+            ? <RadarModule dossiers={dossiers} watch={watch}/>
+            : <ModulePlaceholder tab={tab} dossiers={dossiers} watch={watch}/>;'''
+          new = '''          : tab==="radar"
+            ? <RadarModule dossiers={dossiers} watch={watch}/>
+            : tab==="builder"
+              ? <BuilderModule dossiers={dossiers} watch={watch}/>
+              : <ModulePlaceholder tab={tab} dossiers={dossiers} watch={watch}/>;'''
+
+          if old not in text and '<BuilderModule dossiers={dossiers} watch={watch}/>' not in text:
+              raise SystemExit("Builder insertion point not found")
+          text = text.replace(old, new)
+          path.write_text(text)
+          PY
+
+      - name: Commit connection
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add myvor-v1/app/page.tsx
+          if git diff --cached --quiet; then
+            echo "Note Builder already connected"
+          else
+            git commit -m "Connect Note Builder to Myvor navigation"
+            git push
+          fi
