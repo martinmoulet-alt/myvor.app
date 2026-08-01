@@ -51,8 +51,7 @@ export default function ImpactModule({dossiers,watch,onActions}:{dossiers:Dossie
     if(!items.length){setError("Aucun élément de veille n’est rattaché à ce dossier.");return;}
     setLoading(true);setError("");setSaveMessage("");setNote(null);
     try{
-      const endpoint=new URL("/api/impact",window.location.origin).toString();
-      const response=await fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dossier,items,depth})});
+      const response=await fetch("/api/impact",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dossier,items,depth})});
       const payload=await response.json();
       if(!response.ok)throw new Error(payload?.error||"Génération impossible");
       const nextNote=payload.note||null;
