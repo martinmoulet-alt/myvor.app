@@ -2,101 +2,122 @@ import { NextResponse } from "next/server";
 
 type Dossier={id:string;client:string;title:string;objective:string;context?:string};
 type WatchItem={id:string;title:string;nature:string;source_url?:string;urgency?:string};
-type Actor={id:string;name:string;role:string;orbit:1|2|3;position:"favorable"|"inconnue"|"reserve"|"opposition";influence:number;why:string;window:string;action:string};
+type Actor={id:string;name:string;role:string;orbit:1|2|3;position:"favorable"|"inconnue"|"reserve"|"opposition";influence:number;why:string;window:string;action:string;certainty:"confirme"|"probable"|"a_confirmer";evidence:string};
+type SourceExtraction={url:string;content:string;status:"fetched"|"unavailable"|"unsupported"};
 
-function cleanApiKey(raw:string){
-  const normalized=String(raw||"").normalize("NFKC");
-  const match=normalized.match(/sk-[A-Za-z0-9_-]+/);
-  return match?.[0]||"";
-}
-function extractOutputText(payload:any){
-  if(typeof payload?.output_text==="string")return payload.output_text;
-  const chunks=payload?.output?.flatMap((item:any)=>item?.content||[])||[];
-  return chunks.map((chunk:any)=>chunk?.text||"").join("");
-}
-function normalizeActor(a:any,index:number):Actor{
-  return {
-    id:String(a?.id||`actor-${index+1}`),
-    name:String(a?.name||"Acteur"),
-    role:String(a?.role||""),
-    orbit:[1,2,3].includes(Number(a?.orbit))?Number(a.orbit) as 1|2|3:3,
-    position:["favorable","inconnue","reserve","opposition"].includes(a?.position)?a.position:"inconnue",
-    influence:Math.max(1,Math.min(5,Math.round(Number(a?.influence)||3))),
-    why:String(a?.why||""),
-    window:String(a?.window||"À préciser"),
-    action:String(a?.action||"Approfondir la position et préparer une prise de contact."),
-  };
-}
-function localFallback(dossier:Dossier,items:WatchItem[]):Actor[]{
-  const corpus=`${dossier.title} ${dossier.objective} ${items.map(i=>`${i.title} ${i.nature}`).join(" ")}`.toLowerCase();
-  const actors:Actor[]=[];
-  const add=(name:string,role:string,orbit:1|2|3,influence:number,why:string,action:string)=>actors.push({id:`local-${actors.length+1}`,name,role,orbit,position:"inconnue",influence,why,window:"À préciser selon le calendrier du texte",action});
-  if(/loi|projet de loi|proposition de loi|amendement/.test(corpus)){
-    add("Rapporteur du texte","Parlement",1,5,"Pilote l’examen du texte et peut influer directement sur sa rédaction.","Préparer une prise de contact et un argumentaire ciblé.");
-    add("Commission compétente","Parlement",1,5,"Concentre l’expertise et les arbitrages avant la séance.","Identifier les membres clés et les amendements recevables.");
-    add("Gouvernement / ministère chef de file","Exécutif",1,5,"Porte ou arbitre la position gouvernementale sur le texte.","Cibler le cabinet et l’administration compétente.");
-    add("Groupes parlementaires","Parlement",2,4,"Structurent les positions de vote et les consignes politiques.","Cartographier les positions et prioriser les groupes charnières.");
-  }
-  if(/décret|arrêté|ordonnance|réglement/.test(corpus)){
-    add("Ministère compétent","Exécutif",1,5,"Détient la maîtrise du texte réglementaire et de son calendrier.","Identifier le service rédacteur et préparer une contribution technique.");
-    add("Direction d’administration centrale","Administration",1,4,"Rédige et sécurise techniquement le dispositif.","Préparer des arguments juridiques et opérationnels précis.");
-  }
-  if(/rapport|audition|mission|commission d.enquête/.test(corpus)){
-    add("Présidence / rapporteurs de la mission","Parlement",1,4,"Peuvent orienter les conclusions et recommandations publiques.","Transmettre une note courte avec preuves et propositions concrètes.");
-  }
-  add("Cabinet du client / fédération sectorielle","Écosystème sectoriel",2,4,"Peut coordonner les arguments, données et relais du secteur.","Aligner les éléments de langage et la séquence de contacts.");
-  add("Organisations professionnelles concernées","Parties prenantes",3,3,"Peuvent renforcer ou contester la position défendue dans le débat public.","Identifier les convergences et risques d’opposition.");
-  return actors.slice(0,8);
-}
+const OFFICIAL_HOSTS=[
+  "assemblee-nationale.fr","www.assemblee-nationale.fr",
+  "senat.fr","www.senat.fr",
+  "legifrance.gouv.fr","www.legifrance.gouv.fr",
+  "vie-publique.fr","www.vie-publique.fr",
+  "gouvernement.fr","www.gouvernement.fr",
+  "conseil-constitutionnel.fr","www.conseil-constitutionnel.fr",
+  "conseil-etat.fr","www.conseil-etat.fr",
+  "courdecassation.fr","www.courdecassation.fr",
+  "cnil.fr","www.cnil.fr",
+  "arcep.fr","www.arcep.fr",
+  "eur-lex.europa.eu",
+];
 
-export async function POST(request:Request){
-  const body=await request.json().catch(()=>null);
-  const dossier:Dossier|null=body?.dossier||null;
-  const items:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,8):[];
-  if(!dossier)return NextResponse.json({error:"Sélectionne un dossier client."},{status:400});
-  if(!items.length)return NextResponse.json({error:"Aucun texte n’est rattaché à ce dossier."},{status:400});
+function asText(value:unknown){return typeof value==="string"?value.trim():"";}
+function decodeHtml(value:string){return value.replace(/&nbsp;/gi," ").replace(/&amp;/gi,"&").replace(/&quot;/gi,'"').replace(/&#39;/gi,"'").replace(/&lt;/gi,"<").replace(/&gt;/gi,">");}
+function htmlToText(html:string){return decodeHtml(html.replace(/<script[\s\S]*?<\/script>/gi," ").replace(/<style[\s\S]*?<\/style>/gi," ").replace(/<noscript[\s\S]*?<\/noscript>/gi," ").replace(/<!--([\s\S]*?)-->/g," ").replace(/<br\s*\/?>/gi,"\n").replace(/<\/p>/gi,"\n").replace(/<\/li>/gi,"\n").replace(/<\/h[1-6]>/gi,"\n").replace(/<[^>]+>/g," ").replace(/[ \t]+/g," ").replace(/\n\s*\n+/g,"\n").trim());}
+function isOfficialUrl(rawUrl:string){try{const url=new URL(rawUrl);return url.protocol==="https:"&&OFFICIAL_HOSTS.includes(url.hostname.toLowerCase());}catch{return false;}}
 
-  const apiKey=cleanApiKey(process.env.OPENAI_API_KEY||"");
-  const fallback=localFallback(dossier,items);
-  if(!apiKey)return NextResponse.json({actors:fallback,engine:"local",warning:"Clé OpenAI indisponible : radar local généré."});
-
-  const prompt=[
-    "Myvor - radar d'influence affaires publiques.",
-    "Retourne seulement un JSON {actors:[...]}, maximum 8 acteurs vraiment pertinents.",
-    "Chaque acteur: id,name,role,orbit(1|2|3),position(favorable|inconnue|reserve|opposition),influence(1-5),why,window,action.",
-    "Position uniquement par rapport à l'objectif client. Si le nom d'une personne est incertain, utilise sa fonction/institution.",
-    `Client: ${dossier.client}`,
-    `Dossier: ${dossier.title}`,
-    `Objectif: ${dossier.objective}`,
-    `Textes: ${items.map(i=>`${i.nature}: ${i.title}`).join(" | ")}`,
-  ].join("\n");
-
+async function fetchOfficialSource(rawUrl:string,maxChars=18000):Promise<SourceExtraction>{
+  if(!rawUrl||!isOfficialUrl(rawUrl))return{url:rawUrl,content:"",status:"unsupported"};
   const controller=new AbortController();
   const timer=setTimeout(()=>controller.abort(),6500);
   try{
-    const response=await fetch("https://api.openai.com/v1/responses",{
-      method:"POST",
-      headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},
-      body:JSON.stringify({
-        model:process.env.OPENAI_MODEL||"gpt-5-mini",
-        input:prompt,
-        max_output_tokens:900,
-        text:{format:{type:"json_object"}},
-      }),
-      signal:controller.signal,
-    });
-    clearTimeout(timer);
-    if(!response.ok)return NextResponse.json({actors:fallback,engine:"local",warning:`OpenAI indisponible (${response.status}) : radar local généré.`});
-    const payload=await response.json();
-    const text=extractOutputText(payload);
-    let parsed:any={};
-    try{parsed=JSON.parse(text||"{}");}catch{return NextResponse.json({actors:fallback,engine:"local",warning:"Réponse IA invalide : radar local généré."});}
-    const actors=(Array.isArray(parsed?.actors)?parsed.actors:[]).slice(0,8).map(normalizeActor);
-    if(!actors.length)return NextResponse.json({actors:fallback,engine:"local",warning:"Aucun acteur IA exploitable : radar local généré."});
-    return NextResponse.json({actors,engine:"openai"});
+    const response=await fetch(rawUrl,{headers:{"User-Agent":"Myvor/1.0 influence-radar","Accept":"text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5"},redirect:"follow",signal:controller.signal,cache:"no-store"});
+    if(!response.ok)return{url:rawUrl,content:"",status:"unavailable"};
+    const contentType=response.headers.get("content-type")||"";
+    if(!contentType.includes("text/html")&&!contentType.includes("text/plain"))return{url:rawUrl,content:"",status:"unsupported"};
+    const raw=await response.text();
+    const text=contentType.includes("text/html")?htmlToText(raw):raw.trim();
+    return{url:rawUrl,content:text.slice(0,maxChars),status:text?"fetched":"unavailable"};
+  }catch{return{url:rawUrl,content:"",status:"unavailable"};}
+  finally{clearTimeout(timer);}
+}
+
+function normalizeActor(actor:any,index:number):Actor{
+  const orbit=[1,2,3].includes(Number(actor?.orbit))?Number(actor.orbit) as 1|2|3:3;
+  const position=["favorable","inconnue","reserve","opposition"].includes(actor?.position)?actor.position:"inconnue";
+  const certainty=["confirme","probable","a_confirmer"].includes(actor?.certainty)?actor.certainty:"a_confirmer";
+  return{
+    id:asText(actor?.id)||`actor-${index+1}`,
+    name:asText(actor?.name)||"Acteur à confirmer",
+    role:asText(actor?.role)||"information à confirmer",
+    orbit,
+    position,
+    influence:Math.max(1,Math.min(5,Math.round(Number(actor?.influence)||1))),
+    why:asText(actor?.why)||"information à confirmer",
+    window:asText(actor?.window)||"information à confirmer",
+    action:asText(actor?.action)||"Vérifier l'acteur et sa capacité d'influence avant toute prise de contact.",
+    certainty,
+    evidence:asText(actor?.evidence)||"information à confirmer",
+  };
+}
+
+export async function POST(request:Request){
+  try{
+    const body=await request.json().catch(()=>null);
+    const dossier:Dossier|null=body?.dossier||null;
+    const items:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,8):[];
+    if(!dossier)return NextResponse.json({error:"Sélectionne un dossier client."},{status:400});
+    if(!items.length)return NextResponse.json({error:"Aucun texte n’est rattaché à ce dossier."},{status:400});
+
+    const supabaseUrl=(process.env.NEXT_PUBLIC_SUPABASE_URL||"").replace(/\/$/,"");
+    const supabaseAnonKey=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY||"";
+    if(!supabaseUrl||!supabaseAnonKey)return NextResponse.json({error:"La connexion Supabase de Myvor n’est pas configurée."},{status:503});
+
+    const uniqueUrls=[...new Set(items.map(item=>item.source_url||"").filter(Boolean))].slice(0,3);
+    const extractions=await Promise.all(uniqueUrls.map(url=>fetchOfficialSource(url)));
+    const extractionByUrl=new Map(extractions.map(source=>[source.url,source]));
+
+    const sourceText=items.map((item,index)=>{
+      const extraction=item.source_url?extractionByUrl.get(item.source_url):undefined;
+      return [
+        `SOURCE ${index+1}`,
+        `Titre : ${item.title}`,
+        `Nature : ${item.nature}`,
+        item.source_url?`URL officielle : ${item.source_url}`:"",
+        extraction?.status==="fetched"?`CONTENU OFFICIEL RÉCUPÉRÉ :\n${extraction.content}`:`CONTENU OFFICIEL : non récupéré automatiquement (${extraction?.status||"aucune URL"}). Ne pas inventer son contenu.`,
+      ].filter(Boolean).join("\n");
+    }).join("\n\n====================\n\n");
+
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),30000);
+    try{
+      const response=await fetch(`${supabaseUrl}/functions/v1/influence-radar`,{
+        method:"POST",
+        headers:{Authorization:`Bearer ${supabaseAnonKey}`,apikey:supabaseAnonKey,"Content-Type":"application/json"},
+        body:JSON.stringify({
+          client:dossier.client,
+          dossier:dossier.title,
+          contexte:dossier.context||"",
+          objectif:dossier.objective,
+          texte:sourceText,
+          sources:items.map(item=>({title:item.title,url:item.source_url||""})),
+        }),
+        signal:controller.signal,
+      });
+      const raw=await response.text();
+      let payload:any=null;
+      try{payload=raw?JSON.parse(raw):null;}catch{return NextResponse.json({error:`influence-radar a retourné une réponse invalide (${response.status}).`},{status:502});}
+      if(!response.ok)return NextResponse.json({error:payload?.error||`La fonction influence-radar a échoué (${response.status}).`},{status:response.status>=400&&response.status<600?response.status:502});
+      const actors=(Array.isArray(payload?.actors)?payload.actors:[]).slice(0,10).map(normalizeActor);
+      if(!actors.length)return NextResponse.json({error:"Aucun acteur suffisamment étayé n’a pu être identifié à partir des sources disponibles."},{status:422});
+      return NextResponse.json({
+        actors,
+        engine:"supabase-influence-radar",
+        grounding:{official_sources_requested:uniqueUrls.length,official_sources_fetched:extractions.filter(source=>source.status==="fetched").length,statuses:extractions.map(source=>({url:source.url,status:source.status}))},
+      });
+    }catch(error:any){
+      if(error?.name==="AbortError")return NextResponse.json({error:"Le Radar d’influence a dépassé le temps de réponse disponible."},{status:504});
+      return NextResponse.json({error:error?.message||"Impossible de joindre la fonction influence-radar."},{status:502});
+    }finally{clearTimeout(timer);}
   }catch(error:any){
-    clearTimeout(timer);
-    const warning=error?.name==="AbortError"?"OpenAI trop lent : radar local généré immédiatement.":"Erreur OpenAI : radar local généré.";
-    return NextResponse.json({actors:fallback,engine:"local",warning});
+    return NextResponse.json({error:error?.message||"Erreur interne pendant la génération du Radar d’influence."},{status:500});
   }
 }
