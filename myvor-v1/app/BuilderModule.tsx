@@ -32,12 +32,23 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
     if(!related.length){setError("Aucun texte n’est rattaché à ce dossier.");return;}
     setLoading(true);setError("");setDocument(null);setCopied(false);
     try{
-      const response=await fetch("/api/builder",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dossier,items:related,format,audience,tone,instruction})});
-      const payload=await response.json();
-      if(!response.ok)throw new Error(payload?.error||"Génération impossible");
-      setDocument(payload.document||null);
-    }catch(err:any){setError(err?.message||"Génération impossible");}
-    finally{setLoading(false);}
+      const endpoint=new URL("/api/builder",window.location.origin).toString();
+      const response=await fetch(endpoint,{
+        method:"POST",
+        headers:new Headers({"Content-Type":"application/json;charset=UTF-8"}),
+        body:JSON.stringify({dossier,items:related,format,audience,tone,instruction}),
+        cache:"no-store",
+      });
+      const raw=await response.text();
+      let payload:any={};
+      try{payload=raw?JSON.parse(raw):{};}catch{throw new Error(`Réponse serveur invalide (${response.status}).`);}
+      if(!response.ok)throw new Error(payload?.error||`Génération impossible (${response.status})`);
+      if(!payload?.document)throw new Error("Le Note Builder n’a renvoyé aucun document.");
+      setDocument(payload.document);
+    }catch(err:any){
+      const message=String(err?.message||"");
+      setError(message.includes("expected pattern")?"Le navigateur a refusé la requête. Le correctif est en cours de déploiement, recharge la page puis réessaie.":message||"Génération impossible");
+    }finally{setLoading(false);}
   }
 
   async function copyDocument(){
