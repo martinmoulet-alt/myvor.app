@@ -16,6 +16,8 @@ type WatchItem = {
   source_url?: string;
 };
 
+type ImpactDepth = "express" | "standard" | "deep";
+
 type SourceExtraction = {
   url: string;
   content: string;
@@ -45,6 +47,12 @@ const OFFICIAL_HOSTS = [
   "www.arcep.fr",
   "eur-lex.europa.eu",
 ];
+
+const depthConfig:Record<ImpactDepth,{label:string;maxItems:number;maxUrls:number;sourceChars:number;instruction:string}>={
+  express:{label:"Express",maxItems:3,maxUrls:2,sourceChars:18000,instruction:"NOTE EXPRESS. Va à l'essentiel. Synthèse courte. Maximum 3 risques, 2 opportunités, 1 à 2 échéances et 3 recommandations prioritaires. Ne développe que les dispositions ayant un impact direct et immédiat pour le client."},
+  standard:{label:"Standard",maxItems:10,maxUrls:4,sourceChars:45000,instruction:"NOTE STANDARD. Produis une analyse complète pour le travail quotidien : synthèse exécutive, score argumenté, dispositions concernées, risques, opportunités, échéances et recommandations opérationnelles."},
+  deep:{label:"Approfondie",maxItems:20,maxUrls:8,sourceChars:70000,instruction:"NOTE APPROFONDIE. Analyse en profondeur toutes les sources disponibles. Distingue les dispositions, leurs effets juridiques, économiques et opérationnels, les incertitudes, scénarios d'évolution, échéances, marges d'action et recommandations hiérarchisées. Sois détaillé mais n'invente rien."},
+};
 
 function asText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
@@ -87,7 +95,7 @@ function isOfficialUrl(rawUrl: string) {
   }
 }
 
-async function fetchOfficialSource(rawUrl: string): Promise<SourceExtraction> {
+async function fetchOfficialSource(rawUrl: string, maxChars:number): Promise<SourceExtraction> {
   if (!rawUrl || !isOfficialUrl(rawUrl)) {
     return { url: rawUrl, content: "", status: "unsupported" };
   }
@@ -121,7 +129,7 @@ async function fetchOfficialSource(rawUrl: string): Promise<SourceExtraction> {
     const text = contentType.includes("text/html") ? htmlToText(raw) : raw.trim();
     return {
       url: rawUrl,
-      content: text.slice(0, 45000),
+      content: text.slice(0, maxChars),
       status: text ? "fetched" : "unavailable",
     };
   } catch {
@@ -130,20 +138,20 @@ async function fetchOfficialSource(rawUrl: string): Promise<SourceExtraction> {
   }
 }
 
-function mapImpactToNote(impact: any, dossier: Dossier, items: WatchItem[]) {
-  const risks = Array.isArray(impact?.risques)
+function mapImpactToNote(impact: any, dossier: Dossier, items: WatchItem[], depth:ImpactDepth) {
+  let risks = Array.isArray(impact?.risques)
     ? impact.risques.map((risk: any) =>
         [asText(risk?.titre), asText(risk?.description)].filter(Boolean).join(" — "),
       ).filter(Boolean)
     : [];
 
-  const opportunities = Array.isArray(impact?.opportunites)
+  let opportunities = Array.isArray(impact?.opportunites)
     ? impact.opportunites.map((opportunity: any) =>
         [asText(opportunity?.titre), asText(opportunity?.description)].filter(Boolean).join(" — "),
       ).filter(Boolean)
     : [];
 
-  const deadlines = Array.isArray(impact?.echeances)
+  let deadlines = Array.isArray(impact?.echeances)
     ? impact.echeances.map((deadline: any) =>
         [asText(deadline?.date), asText(deadline?.evenement), asText(deadline?.importance)]
           .filter(Boolean)
@@ -151,7 +159,7 @@ function mapImpactToNote(impact: any, dossier: Dossier, items: WatchItem[]) {
       ).filter(Boolean)
     : [];
 
-  const recommendations = Array.isArray(impact?.recommandations)
+  let recommendations = Array.isArray(impact?.recommandations)
     ? impact.recommandations.map((recommendation: any) =>
         [asText(recommendation?.action), asText(recommendation?.raison)]
           .filter(Boolean)
@@ -159,10 +167,17 @@ function mapImpactToNote(impact: any, dossier: Dossier, items: WatchItem[]) {
       ).filter(Boolean)
     : [];
 
+  if(depth==="express"){
+    risks=risks.slice(0,3);
+    opportunities=opportunities.slice(0,2);
+    deadlines=deadlines.slice(0,2);
+    recommendations=recommendations.slice(0,3);
+  }
+
   const level = asText(impact?.niveau).replaceAll("_", " ") || "moyen";
 
   return {
-    title: `Note d’impact — ${dossier.title}`,
+    title: `Note d’impact ${depthConfig[depth].label.toLowerCase()} — ${dossier.title}`,
     executive_summary: asText(impact?.synthese),
     score: Number(impact?.score) || 0,
     level,
@@ -182,13 +197,17 @@ function mapImpactToNote(impact: any, dossier: Dossier, items: WatchItem[]) {
     informations_a_confirmer: Array.isArray(impact?.informations_a_confirmer)
       ? impact.informations_a_confirmer
       : [],
+    depth,
   };
 }
 
 export async function POST(request: Request) {
   const body = await request.json().catch(() => null);
   const dossier: Dossier | null = body?.dossier || null;
-  const items: WatchItem[] = Array.isArray(body?.items) ? body.items.slice(0, 10) : [];
+  const requestedDepth = asText(body?.depth) as ImpactDepth;
+  const depth:ImpactDepth = requestedDepth in depthConfig ? requestedDepth : "standard";
+  const config=depthConfig[depth];
+  const items: WatchItem[] = Array.isArray(body?.items) ? body.items.slice(0, config.maxItems) : [];
 
   if (!dossier) {
     return NextResponse.json({ error: "Sélectionne un dossier client." }, { status: 400 });
@@ -211,12 +230,16 @@ export async function POST(request: Request) {
     );
   }
 
-  const uniqueUrls = [...new Set(items.map((item) => item.source_url || "").filter(Boolean))].slice(0, 4);
-  const extractions = await Promise.all(uniqueUrls.map(fetchOfficialSource));
+  const uniqueUrls = [...new Set(items.map((item) => item.source_url || "").filter(Boolean))].slice(0, config.maxUrls);
+  const extractions = await Promise.all(uniqueUrls.map(url=>fetchOfficialSource(url,config.sourceChars)));
   const extractionByUrl = new Map(extractions.map((source) => [source.url, source]));
 
-  const sourceText = items
-    .map((item, index) => {
+  const sourceText = [
+    `TYPE DE NOTE DEMANDÉE : ${config.label.toUpperCase()}`,
+    `INSTRUCTION DE PROFONDEUR : ${config.instruction}`,
+    "Cette instruction décrit le niveau de détail attendu. Elle ne doit jamais conduire à inventer des informations absentes des sources.",
+    "",
+    ...items.map((item, index) => {
       const extraction = item.source_url ? extractionByUrl.get(item.source_url) : undefined;
       const parts = [
         `SOURCE ${index + 1}`,
@@ -228,8 +251,8 @@ export async function POST(request: Request) {
           : `CONTENU OFFICIEL : non récupéré automatiquement (${extraction?.status || "aucune URL"}). Ne pas inventer le contenu du texte.`,
       ].filter(Boolean);
       return parts.join("\n");
-    })
-    .join("\n\n====================\n\n");
+    }),
+  ].join("\n\n====================\n\n");
 
   const firstSourceUrl = items.find((item) => item.source_url)?.source_url || "";
   const fetchedCount = extractions.filter((source) => source.status === "fetched").length;
@@ -243,6 +266,7 @@ export async function POST(request: Request) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
+        depth,
         client: dossier.client,
         contexte: dossier.context || "",
         objectif: dossier.objective,
@@ -274,8 +298,9 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({
-      note: mapImpactToNote(impact, dossier, items),
+      note: mapImpactToNote(impact, dossier, items, depth),
       engine: "supabase-impact-analysis",
+      depth,
       grounding: {
         official_sources_requested: uniqueUrls.length,
         official_sources_fetched: fetchedCount,
