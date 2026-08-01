@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo,useState } from "react";
+import { useEffect,useMemo,useState } from "react";
 import { AlertTriangle,Building2,CalendarDays,FileText,RefreshCw,Search,Sparkles } from "lucide-react";
 import styles from "./VeilleCorporate.module.css";
 
@@ -39,6 +39,8 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
   const [qualificationMessage,setQualificationMessage]=useState("");
   const [suggestions,setSuggestions]=useState<Suggestion[]>([]);
   const [ignored,setIgnored]=useState<string[]>([]);
+  const [focusId,setFocusId]=useState<string|null>(null);
+  useEffect(()=>{const target=sessionStorage.getItem("myvor:open-watch");if(!target)return;const item=items.find(entry=>entry.id===target);if(!item)return;sessionStorage.removeItem("myvor:open-watch");setQuery(item.title);setNature("all");setUrgency("all");setFocusId(item.id);setTimeout(()=>document.getElementById(`watch-${item.id}`)?.scrollIntoView({behavior:"smooth",block:"center"}),80);setTimeout(()=>setFocusId(null),2200);},[items]);
   const natures=useMemo(()=>Array.from(new Set(items.map(item=>item.nature))).sort(),[items]);
   const filtered=useMemo(()=>items.filter(item=>{
     const q=[item.title,item.nature].join(" ").toLowerCase().includes(query.toLowerCase());
@@ -70,6 +72,7 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
   async function acceptSuggestion(s:Suggestion){if(!s.dossier_id)return;await link(s.watch_id,s.dossier_id);setSuggestions(current=>current.filter(x=>x.watch_id!==s.watch_id));}
 
   return <div className={styles.page}>
+    <style jsx global>{`.myvor-watch-focus{outline:3px solid #f3bd3e;outline-offset:3px;box-shadow:0 0 0 8px rgba(243,189,62,.12)!important}`}</style>
     <div className={styles.head}>
       <div><div className={styles.kicker}>Sources institutionnelles</div><h1>Veille</h1><p>Centralisez les publications officielles et rattachez-les à vos dossiers clients.</p></div>
       <div className={styles.actions}>
@@ -105,7 +108,7 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
       const dossier=dossiers.find(d=>d.id===item.dossier_id);
       const suggestion=visibleSuggestions.find(s=>s.watch_id===item.id);
       const suggestedDossier=suggestion?dossiers.find(d=>d.id===suggestion.dossier_id):null;
-      return <article className={styles.card} key={item.id}>
+      return <article id={`watch-${item.id}`} className={`${styles.card} ${focusId===item.id?"myvor-watch-focus":""}`} key={item.id}>
         <div className={styles.top}><span className={styles.nature}>{item.nature}</span><span className={`${styles.urgency} ${styles[item.urgency.replaceAll(" ","-") as keyof typeof styles]||""}`}>{item.urgency}</span></div>
         <h3 className={styles.title}>{item.title}</h3>
         <div className={styles.meta}><span><CalendarDays size={14}/>{new Date(item.created_at).toLocaleDateString("fr-FR")}</span><span><Building2 size={14}/>{dossier?`${dossier.client} — ${dossier.title}`:"Aucun dossier"}</span></div>
