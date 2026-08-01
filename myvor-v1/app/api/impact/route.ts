@@ -22,11 +22,26 @@ function extractOutputText(payload: any) {
   return chunks.map((chunk: any) => chunk?.text || "").join("");
 }
 
+function cleanApiKey(raw: string) {
+  return raw
+    .replace(/^OPENAI_API_KEY\s*=\s*/i, "")
+    .replace(/^Bearer\s+/i, "")
+    .replace(/["'`]/g, "")
+    .replace(/\s+/g, "")
+    .trim();
+}
+
 export async function POST(request: Request) {
-  const apiKey = (process.env.OPENAI_API_KEY || "").trim();
+  const apiKey = cleanApiKey(process.env.OPENAI_API_KEY || "");
   if (!apiKey) {
     return NextResponse.json(
       { error: "OPENAI_API_KEY est absente dans Netlify." },
+      { status: 503 },
+    );
+  }
+  if (!apiKey.startsWith("sk-")) {
+    return NextResponse.json(
+      { error: "La clé OpenAI enregistrée dans Netlify n’a pas un format valide." },
       { status: 503 },
     );
   }
@@ -86,8 +101,12 @@ export async function POST(request: Request) {
 
     if (!response.ok) {
       const raw = await response.text();
+      let message = raw;
+      try {
+        message = JSON.parse(raw)?.error?.message || raw;
+      } catch {}
       return NextResponse.json(
-        { error: `OpenAI a refusé la requête (${response.status}) : ${raw.slice(0, 300)}` },
+        { error: `OpenAI a refusé la requête (${response.status}) : ${message.slice(0, 260)}` },
         { status: 502 },
       );
     }
