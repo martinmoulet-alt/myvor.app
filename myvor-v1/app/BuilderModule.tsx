@@ -2,7 +2,7 @@
 
 import { useMemo,useState } from "react";
 import { Copy,FileText,Sparkles } from "lucide-react";
-import { saveProduction } from "@/lib/productions";
+import { listProductions,saveProduction } from "@/lib/productions";
 import styles from "./BuilderCorporate.module.css";
 
 type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string};
@@ -35,17 +35,51 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
     if(!related.length){setError("Aucun texte n’est rattaché à ce dossier.");return;}
     setLoading(true);setError("");setSaveMessage("");setDocument(null);setCopied(false);
     try{
+      const {data:productions,error:productionsError}=await listProductions(dossier.id);
+      if(productionsError)throw new Error(`Impossible de récupérer les analyses du dossier : ${productionsError.message}`);
+
+      const latestImpact=productions.find(item=>item.type==="impact")?.content||null;
+      const latestRadar=productions.find(item=>item.type==="radar")?.content||null;
+
       const endpoint=new URL("/api/builder",window.location.origin).toString();
-      const response=await fetch(endpoint,{method:"POST",headers:new Headers({"Content-Type":"application/json;charset=UTF-8"}),body:JSON.stringify({dossier,items:related,format,audience,tone,instruction}),cache:"no-store"});
+      const response=await fetch(endpoint,{
+        method:"POST",
+        headers:new Headers({"Content-Type":"application/json;charset=UTF-8"}),
+        body:JSON.stringify({dossier,items:related,format,audience,tone,instruction,impact:latestImpact,radar:latestRadar}),
+        cache:"no-store",
+      });
       const raw=await response.text();
       let payload:any={};
       try{payload=raw?JSON.parse(raw):{};}catch{throw new Error(`Réponse serveur invalide (${response.status}).`);}
       if(!response.ok)throw new Error(payload?.error||`Génération impossible (${response.status})`);
       if(!payload?.document)throw new Error("Le Note Builder n’a renvoyé aucun document.");
+
       const nextDocument=payload.document as BuiltDocument;
       setDocument(nextDocument);
-      const saved=await saveProduction({dossier_id:dossier.id,type:"builder",title:nextDocument.title||`Document — ${dossier.title}`,content:{document:nextDocument,format,audience,tone,instruction,item_ids:related.map(i=>i.id)}});
-      setSaveMessage(saved.error?`Document généré, mais non enregistré : ${saved.error.message}`:"Document enregistré dans l’historique du dossier.");
+
+      const saved=await saveProduction({
+        dossier_id:dossier.id,
+        type:"builder",
+        title:nextDocument.title||`Document — ${dossier.title}`,
+        content:{
+          document:nextDocument,
+          format,
+          audience,
+          tone,
+          instruction,
+          item_ids:related.map(i=>i.id),
+          context_used:payload.context_used||null,
+        },
+      });
+
+      const contextUsed=payload.context_used||{};
+      const contextParts=[
+        `${Number(contextUsed.watch_items)||related.length} élément(s) de veille`,
+        contextUsed.impact?"dernière Note d’impact":null,
+        contextUsed.radar?"dernier Radar d’influence":null,
+      ].filter(Boolean).join(" + ");
+      const savedText=saved.error?`Document généré, mais non enregistré : ${saved.error.message}`:"Document enregistré dans l’historique du dossier.";
+      setSaveMessage(`${savedText} Contexte utilisé : ${contextParts}.`);
     }catch(err:any){
       const message=String(err?.message||"");
       setError(message.includes("expected pattern")?"Le navigateur a refusé la requête. Recharge la page puis réessaie.":message||"Génération impossible");
