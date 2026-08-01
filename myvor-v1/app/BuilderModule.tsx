@@ -2,6 +2,7 @@
 
 import { useMemo,useState } from "react";
 import { Copy,FileText,Sparkles } from "lucide-react";
+import { saveProduction } from "@/lib/productions";
 import styles from "./BuilderCorporate.module.css";
 
 type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string};
@@ -24,6 +25,7 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
   const [document,setDocument]=useState<BuiltDocument|null>(null);
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState("");
+  const [saveMessage,setSaveMessage]=useState("");
   const [copied,setCopied]=useState(false);
   const dossier=dossiers.find(d=>d.id===dossierId)||null;
   const related=useMemo(()=>watch.filter(w=>w.dossier_id===dossierId),[watch,dossierId]);
@@ -31,7 +33,7 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
   async function generate(){
     if(!dossier){setError("Sélectionne un dossier client.");return;}
     if(!related.length){setError("Aucun texte n’est rattaché à ce dossier.");return;}
-    setLoading(true);setError("");setDocument(null);setCopied(false);
+    setLoading(true);setError("");setSaveMessage("");setDocument(null);setCopied(false);
     try{
       const endpoint=new URL("/api/builder",window.location.origin).toString();
       const response=await fetch(endpoint,{method:"POST",headers:new Headers({"Content-Type":"application/json;charset=UTF-8"}),body:JSON.stringify({dossier,items:related,format,audience,tone,instruction}),cache:"no-store"});
@@ -40,7 +42,10 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
       try{payload=raw?JSON.parse(raw):{};}catch{throw new Error(`Réponse serveur invalide (${response.status}).`);}
       if(!response.ok)throw new Error(payload?.error||`Génération impossible (${response.status})`);
       if(!payload?.document)throw new Error("Le Note Builder n’a renvoyé aucun document.");
-      setDocument(payload.document);
+      const nextDocument=payload.document as BuiltDocument;
+      setDocument(nextDocument);
+      const saved=await saveProduction({dossier_id:dossier.id,type:"builder",title:nextDocument.title||`Document — ${dossier.title}`,content:{document:nextDocument,format,audience,tone,instruction,item_ids:related.map(i=>i.id)}});
+      setSaveMessage(saved.error?`Document généré, mais non enregistré : ${saved.error.message}`:"Document enregistré dans l’historique du dossier.");
     }catch(err:any){
       const message=String(err?.message||"");
       setError(message.includes("expected pattern")?"Le navigateur a refusé la requête. Recharge la page puis réessaie.":message||"Génération impossible");
@@ -60,7 +65,7 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
     <div className={styles.setup}>
       <section className={styles.panel}>
         <h2>1. Choisir la base</h2>
-        <div className={styles.field}><label>Dossier client</label><select value={dossierId} onChange={e=>{setDossierId(e.target.value);setDocument(null);setError("");}}><option value="">Sélectionner un dossier</option>{dossiers.map(d=><option key={d.id} value={d.id}>{d.client} — {d.title}</option>)}</select></div>
+        <div className={styles.field}><label>Dossier client</label><select value={dossierId} onChange={e=>{setDossierId(e.target.value);setDocument(null);setError("");setSaveMessage("");}}><option value="">Sélectionner un dossier</option>{dossiers.map(d=><option key={d.id} value={d.id}>{d.client} — {d.title}</option>)}</select></div>
         {dossier&&<div className={styles.summary}><b>Objectif client :</b><br/>{dossier.objective}<br/><br/><b>Textes liés :</b> {related.length}</div>}
       </section>
 
@@ -74,7 +79,7 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
     </div>
 
     <div className={styles.generate}><div><h3>Prêt à rédiger</h3><p>{related.length} texte(s) lié(s) au dossier sélectionné.</p></div><button onClick={generate} disabled={loading||!dossier||!related.length}><Sparkles size={17}/>{loading?"Rédaction en cours…":"Générer le document"}</button></div>
-    {error&&<div className={styles.error}>{error}</div>}
+    {error&&<div className={styles.error}>{error}</div>}{saveMessage&&<div className={styles.error}>{saveMessage}</div>}
 
     {document&&<section className={styles.document}>
       <div className={styles.documentHead}><div><div className={styles.eyebrow}>Document généré</div><h2>{document.title}</h2>{document.subject&&<div className={styles.subject}><b>Objet :</b> {document.subject}</div>}</div><button className={styles.copy} onClick={copyDocument}><Copy size={16}/>{copied?"Copié":"Copier"}</button></div>
