@@ -27,6 +27,9 @@ function extractOutputText(payload:any){
   if(typeof payload?.output_text==="string")return payload.output_text.trim();
   return (payload?.output||[]).flatMap((item:any)=>item?.content||[]).filter((part:any)=>part?.type==="output_text").map((part:any)=>part?.text||"").join("").trim();
 }
+function comparable(value:unknown){
+  return asText(value).normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+}
 
 async function fetchOfficialSource(rawUrl:string,maxChars=16000):Promise<SourceExtraction>{
   if(!rawUrl||!isOfficialUrl(rawUrl))return{url:rawUrl,content:"",status:"unsupported"};
@@ -63,6 +66,51 @@ function normalizeActor(actor:any,index:number):Actor{
   };
 }
 
+function isClientActor(actor:Actor,client:string){
+  const clientKey=comparable(client);
+  const actorKey=comparable(actor.name);
+  if(!clientKey||!actorKey)return false;
+  if(actorKey===clientKey)return true;
+  if(clientKey.length>=14&&actorKey.includes(clientKey))return true;
+  if(actorKey.length>=14&&clientKey.includes(actorKey))return true;
+  return false;
+}
+
+function isUnsubstantiatedGenericActor(actor:Actor){
+  if(actor.certainty==="confirme")return false;
+  const key=comparable(actor.name);
+  const genericPatterns=[
+    /^presidence de la republique$/,
+    /^president de la republique$/,
+    /^premier ministre$/,
+    /^matignon$/,
+    /^gouvernement$/,
+    /^assemblee nationale$/,
+    /^senat$/,
+    /^groupes parlementaires?$/,
+    /^partis politiques?$/,
+    /^medias?$/,
+    /^opinion publique$/,
+    /^organisations professionnelles?$/,
+    /^organisations professionnelles concernees$/,
+    /^associations?$/,
+    /^syndicats?$/,
+  ];
+  return genericPatterns.some(pattern=>pattern.test(key));
+}
+
+function keepRelevantActors(actors:Actor[],client:string){
+  const seen=new Set<string>();
+  return actors.filter(actor=>{
+    if(isClientActor(actor,client))return false;
+    if(isUnsubstantiatedGenericActor(actor))return false;
+    const key=comparable(actor.name);
+    if(!key||seen.has(key))return false;
+    seen.add(key);
+    return true;
+  }).slice(0,8);
+}
+
 export async function POST(request:Request){
   try{
     const body=await request.json().catch(()=>null);
@@ -91,7 +139,7 @@ export async function POST(request:Request){
 
     const prompt=`Tu es MYVOR, analyste senior français en affaires publiques et stratégie institutionnelle.
 
-Produis un RADAR D'INFLUENCE pour le dossier suivant.
+Produis un RADAR D'INFLUENCE professionnel pour le dossier suivant.
 
 CLIENT : ${dossier.client}
 DOSSIER : ${dossier.title}
@@ -101,6 +149,16 @@ OBJECTIF CLIENT : ${dossier.objective}
 SOURCES :
 ${sourceText}
 
+RÈGLE N°1 — LE CLIENT N'EST JAMAIS UN ACTEUR DU RADAR :
+- N'inclus jamais le client lui-même : ${dossier.client}.
+- N'inclus pas ses équipes internes, ses représentants ou sa propre fédération comme cible d'influence.
+- Le radar sert à cartographier les acteurs EXTERNES sur lesquels le client peut devoir agir ou qu'il doit surveiller.
+
+RÈGLE N°2 — PAS D'ACTEURS GÉNÉRIQUES NON ÉTAYÉS :
+- N'ajoute jamais la Présidence de la République, le Premier ministre, le Gouvernement, l'Assemblée nationale, le Sénat, des groupes parlementaires, des médias, l'opinion publique ou des organisations professionnelles génériques uniquement parce qu'ils pourraient théoriquement compter.
+- Un acteur de ce type ne peut apparaître que si les sources disponibles établissent un rôle concret et spécifique dans CE dossier.
+- Privilégie les acteurs directement reliés au processus : rapporteur ou fonction de rapporteur, commission réellement compétente, ministère ou direction réellement compétente, administration chargée du texte, groupe ou organisation explicitement impliqué.
+
 RÈGLES ABSOLUES :
 - Identifie uniquement des acteurs réellement pertinents pour CE dossier.
 - La position est toujours évaluée par rapport à l'objectif du client, jamais de manière absolue.
@@ -108,8 +166,8 @@ RÈGLES ABSOLUES :
 - Si le nom d'une personne n'est pas vérifiable, utilise sa fonction institutionnelle.
 - Si une position n'est pas établie, utilise \"inconnue\".
 - Si une date ou une fenêtre d'action n'est pas établie, écris \"information à confirmer\".
-- N'ajoute pas d'acteurs génériques uniquement pour remplir le radar.
-- Entre 4 et 10 acteurs seulement si les sources le justifient.
+- Ne remplis jamais artificiellement le radar : 3 acteurs bien étayés valent mieux que 8 acteurs génériques.
+- Maximum 8 acteurs.
 
 ORBITE :
 1 = décision directe : acteur capable de rédiger, arbitrer, modifier, rapporter, décider ou bloquer directement.
@@ -125,9 +183,14 @@ POSITION :
 - opposition
 
 CERTITUDE :
-- confirme : identité/fonction et rôle directement établis par les sources disponibles.
-- probable : acteur logiquement pertinent mais certaines informations restent à vérifier.
+- confirme : identité/fonction ET rôle dans ce dossier directement établis par les sources disponibles.
+- probable : acteur institutionnel logiquement pertinent au vu du processus, mais certaines informations restent à vérifier.
 - a_confirmer : informations insuffisantes.
+
+EXIGENCE SUR LA PREUVE :
+- evidence doit expliquer précisément pourquoi l'acteur est retenu dans CE dossier.
+- Une formule vague comme \"acteur important\" ou \"peut influencer\" n'est pas une preuve suffisante.
+- Si le lien au dossier n'est pas démontrable, n'inclus pas l'acteur.
 
 Pour chaque acteur, fournis :
 - id
@@ -140,7 +203,7 @@ Pour chaque acteur, fournis :
 - window : quand agir, sinon \"information à confirmer\"
 - action : action recommandée concrète
 - certainty
-- evidence : élément précis sur lequel repose l'identification, sinon \"information à confirmer\"
+- evidence : élément précis sur lequel repose l'identification
 
 Réponds UNIQUEMENT avec un JSON valide, sans markdown, sous cette forme :
 {"actors":[{"id":"actor-1","name":"","role":"","orbit":1,"position":"inconnue","influence":1,"why":"","window":"information à confirmer","action":"","certainty":"a_confirmer","evidence":""}]}`;
@@ -166,12 +229,14 @@ Réponds UNIQUEMENT avec un JSON valide, sans markdown, sous cette forme :
       let parsed:any=null;
       try{parsed=JSON.parse(outputText);}catch{return NextResponse.json({error:"Le moteur Radar a retourné un JSON invalide."},{status:502});}
 
-      const actors=(Array.isArray(parsed?.actors)?parsed.actors:[]).slice(0,10).map(normalizeActor);
-      if(!actors.length)return NextResponse.json({error:"Aucun acteur suffisamment étayé n’a pu être identifié à partir des sources disponibles."},{status:422});
+      const normalized=(Array.isArray(parsed?.actors)?parsed.actors:[]).slice(0,10).map(normalizeActor);
+      const actors=keepRelevantActors(normalized,dossier.client);
+      if(!actors.length)return NextResponse.json({error:"Aucun acteur externe suffisamment étayé n’a pu être identifié à partir des sources disponibles."},{status:422});
 
       return NextResponse.json({
         actors,
         engine:"openai-radar-direct",
+        quality:{client_excluded:true,generic_unsubstantiated_filtered:true},
         grounding:{official_sources_requested:uniqueUrls.length,official_sources_fetched:extractions.filter(source=>source.status==="fetched").length,statuses:extractions.map(source=>({url:source.url,status:source.status}))},
       });
     }catch(error:any){
