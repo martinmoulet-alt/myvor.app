@@ -1,86 +1,25 @@
 import { NextResponse } from "next/server";
 
-export const maxDuration = 30;
-
+export const maxDuration=20;
 type Dossier={id:string;client:string;title:string;objective:string;context?:string};
 type WatchItem={id:string;title:string;nature:string;source_url?:string;urgency?:string};
-
 function cleanApiKey(raw:string){const normalized=String(raw||"").normalize("NFKC");const match=normalized.match(/sk-[A-Za-z0-9_-]+/);return match?.[0]||"";}
 function extractOutputText(payload:any){if(typeof payload?.output_text==="string")return payload.output_text;const chunks=payload?.output?.flatMap((item:any)=>item?.content||[])||[];return chunks.map((chunk:any)=>chunk?.text||"").join("");}
+function fallbackDocument(dossier:Dossier,items:WatchItem[],format:string,audience:string,instruction:string){
+  const titles=items.slice(0,5).map(i=>`• ${i.title} (${i.nature})`).join("\n");
+  const next="Prochaines étapes : qualifier les points d’impact, mettre à jour le Radar d’influence et préparer les prises de contact prioritaires.";
+  const intro=`Dossier : ${dossier.title}\nClient : ${dossier.client}\nObjectif : ${dossier.objective}`;
+  const content=format==="email"?`Bonjour,\n\nVoici le point de situation sur ${dossier.title}. L’objectif poursuivi est : ${dossier.objective}.\n\nÉvolutions suivies :\n${titles}\n\n${instruction||next}\n\nBien cordialement,`:format==="argumentaire"?`${intro}\n\nMessage central\nDéfendre l’objectif client en s’appuyant sur les évolutions institutionnelles ci-dessous.\n\nÉléments d’appui\n${titles}\n\n${instruction||next}`:format==="rendez-vous"?`${intro}\n\nObjectif du rendez-vous\nFaire progresser la position du client sur le dossier.\n\nPoints à traiter\n${titles}\n\n${instruction||next}`:`${intro}\n\nSynthèse\nLes éléments suivants doivent être suivis en priorité :\n${titles}\n\nRecommandation\n${instruction||next}`;
+  return {title:format==="email"?`E-mail — ${dossier.title}`:`${format==="argumentaire"?"Argumentaire":format==="rendez-vous"?"Préparation de rendez-vous":"Note client"} — ${dossier.title}`,subject:format==="email"?`Point de situation — ${dossier.title}`:"",content,key_points:items.slice(0,5).map(i=>i.title),sources:items.slice(0,8).map(i=>({title:i.title,url:i.source_url||""})),audience};
+}
 
 export async function POST(request:Request){
-  const apiKey=cleanApiKey(process.env.OPENAI_API_KEY||"");
-  if(!apiKey)return NextResponse.json({error:"La clé OpenAI n’est pas configurée correctement dans Netlify."},{status:503});
-
-  const body=await request.json().catch(()=>null);
-  const dossier:Dossier|null=body?.dossier||null;
-  const items:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,10):[];
-  const format=String(body?.format||"note-client");
-  const audience=String(body?.audience||"Client").slice(0,120);
-  const tone=String(body?.tone||"professionnel et direct").slice(0,120);
-  const instruction=String(body?.instruction||"").slice(0,600);
-
-  if(!dossier)return NextResponse.json({error:"Sélectionne un dossier client."},{status:400});
-  if(!items.length)return NextResponse.json({error:"Aucun texte n’est rattaché à ce dossier."},{status:400});
-
-  const formatRules:Record<string,string>={
-    "note-client":"Note client : objet, synthèse, impacts, recommandations, prochaines étapes.",
-    "argumentaire":"Argumentaire : message central, 5 arguments, objections/réponses, résultat recherché.",
-    "email":"E-mail prêt à envoyer : objet, ouverture, message concis, appel à l’action.",
-    "rendez-vous":"Fiche rendez-vous : objectif, messages clés, questions, vigilances, résultat recherché.",
-  };
-
-  const prompt=[
-    "Tu es le Note Builder de Myvor. Rédige en français un document directement exploitable.",
-    formatRules[format]||formatRules["note-client"],
-    `Public : ${audience}. Ton : ${tone}.`,
-    instruction?`Consigne : ${instruction}`:"",
-    "N’invente aucun fait. Signale brièvement les incertitudes. Reste synthétique : 700 mots maximum.",
-    "Réponds uniquement en JSON valide :",
-    JSON.stringify({title:"string",subject:"string",content:"string",key_points:["string"],sources:[{title:"string",url:"string"}]}),
-    "Dossier :",JSON.stringify({client:dossier.client,title:dossier.title,objective:dossier.objective,context:dossier.context||""}),
-    "Textes :",JSON.stringify(items.map(item=>({title:item.title,nature:item.nature,urgency:item.urgency,source_url:item.source_url}))),
-  ].filter(Boolean).join("\n");
-
-  const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),24000);
-
-  try{
-    const response=await fetch("https://api.openai.com/v1/responses",{
-      method:"POST",
-      headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},
-      body:JSON.stringify({
-        model:process.env.OPENAI_BUILDER_MODEL||"gpt-4.1-mini",
-        input:prompt,
-        max_output_tokens:1400,
-        text:{format:{type:"json_object"}},
-      }),
-      signal:controller.signal,
-    });
-
-    if(!response.ok){
-      const raw=await response.text();
-      let message=raw;
-      try{message=JSON.parse(raw)?.error?.message||raw;}catch{}
-      return NextResponse.json({error:`OpenAI a refusé la requête (${response.status}) : ${String(message).slice(0,260)}`},{status:502});
-    }
-
-    const payload=await response.json();
-    let document:any={};
-    try{document=JSON.parse(extractOutputText(payload)||"{}");}
-    catch{return NextResponse.json({error:"La réponse IA du Note Builder n’était pas exploitable. Réessaie."},{status:502});}
-
-    return NextResponse.json({document:{
-      title:String(document.title||"Document Myvor"),
-      subject:String(document.subject||""),
-      content:String(document.content||""),
-      key_points:Array.isArray(document.key_points)?document.key_points.map(String).slice(0,8):[],
-      sources:Array.isArray(document.sources)?document.sources.slice(0,10):[],
-    }});
-  }catch(error:any){
-    if(error?.name==="AbortError")return NextResponse.json({error:"La génération a pris trop de temps. Réessaie avec une consigne plus courte."},{status:504});
-    return NextResponse.json({error:`Erreur du Note Builder : ${error?.message||"inconnue"}`},{status:500});
-  }finally{
-    clearTimeout(timer);
-  }
+  const body=await request.json().catch(()=>null);const dossier:Dossier|null=body?.dossier||null;const items:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,8):[];const format=String(body?.format||"note-client");const audience=String(body?.audience||"Client").slice(0,120);const tone=String(body?.tone||"professionnel et direct").slice(0,120);const instruction=String(body?.instruction||"").slice(0,500);
+  if(!dossier)return NextResponse.json({error:"Sélectionne un dossier client."},{status:400});if(!items.length)return NextResponse.json({error:"Aucun texte n’est rattaché à ce dossier."},{status:400});
+  const fallback=fallbackDocument(dossier,items,format,audience,instruction);const apiKey=cleanApiKey(process.env.OPENAI_API_KEY||"");if(!apiKey)return NextResponse.json({document:fallback,engine:"local",warning:"Clé OpenAI indisponible : document local généré."});
+  const rules:Record<string,string>={"note-client":"note client : synthèse, impacts, recommandations, prochaines étapes","argumentaire":"argumentaire : message central, arguments, objections/réponses, résultat recherché","email":"e-mail prêt à envoyer, concis, avec objet et appel à l’action","rendez-vous":"fiche rendez-vous : objectif, messages clés, questions, vigilances"};
+  const prompt=["Tu es le Note Builder de Myvor.",`Rédige en français un ${rules[format]||rules["note-client"]}.`,`Public: ${audience}. Ton: ${tone}.`,instruction?`Consigne: ${instruction}`:"","N’invente aucun fait. 500 mots maximum. JSON uniquement: {title,subject,content,key_points[],sources[{title,url}]}",`Dossier: ${dossier.title} | ${dossier.objective}`,`Textes: ${items.map(i=>`${i.nature}: ${i.title}`).join(" | ")}`].filter(Boolean).join("\n");
+  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),9000);
+  try{const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:process.env.OPENAI_BUILDER_MODEL||"gpt-4.1-mini",input:prompt,max_output_tokens:900,text:{format:{type:"json_object"}}}),signal:controller.signal});clearTimeout(timer);if(!response.ok)return NextResponse.json({document:fallback,engine:"local",warning:`OpenAI indisponible (${response.status}) : document local généré.`});const payload=await response.json();let document:any={};try{document=JSON.parse(extractOutputText(payload)||"{}");}catch{return NextResponse.json({document:fallback,engine:"local",warning:"Réponse IA invalide : document local généré."});}if(!document?.content)return NextResponse.json({document:fallback,engine:"local",warning:"Réponse IA incomplète : document local généré."});return NextResponse.json({document:{title:String(document.title||fallback.title),subject:String(document.subject||""),content:String(document.content||""),key_points:Array.isArray(document.key_points)?document.key_points.map(String).slice(0,8):[],sources:Array.isArray(document.sources)?document.sources.slice(0,8):[]},engine:"openai"});}
+  catch(error:any){clearTimeout(timer);return NextResponse.json({document:fallback,engine:"local",warning:error?.name==="AbortError"?"OpenAI trop lent : document local généré immédiatement.":"Erreur OpenAI : document local généré."});}
 }
