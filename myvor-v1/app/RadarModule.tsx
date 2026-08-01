@@ -26,7 +26,8 @@ export default function RadarModule({dossiers,watch}:{dossiers:Dossier[];watch:W
     if(!related.length){setError("Aucun texte n’est rattaché à ce dossier.");return;}
     setLoading(true);setError("");setActors([]);setSelected(null);
     try{
-      const response=await fetch("/api/radar",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dossier,items:related})});
+      const endpoint=new URL("/api/radar",window.location.origin).toString();
+      const response=await fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dossier,items:related})});
       const payload=await response.json();
       if(!response.ok)throw new Error(payload?.error||"Génération impossible");
       setActors(payload.actors||[]);
