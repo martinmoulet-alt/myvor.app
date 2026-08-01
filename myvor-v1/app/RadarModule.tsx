@@ -2,6 +2,7 @@
 
 import { useMemo,useState } from "react";
 import { ExternalLink,Orbit,Sparkles,X } from "lucide-react";
+import styles from "./RadarCorporate.module.css";
 
 type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string};
 type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string};
@@ -33,27 +34,43 @@ export default function RadarModule({dossiers,watch}:{dossiers:Dossier[];watch:W
     finally{setLoading(false);}
   }
 
-  return <>
-    <div className="toolbar"><div><div className="eyebrow">Cartographie stratégique</div><h1 className="h1">Radar d’influence</h1><p className="lead">Plus un acteur est proche du centre, plus il est proche de la décision.</p></div></div>
-    <div className="grid two">
-      <div className="card"><h2>Dossier analysé</h2><div className="field"><label>Dossier client</label><select value={dossierId} onChange={e=>{setDossierId(e.target.value);setActors([]);setSelected(null);setError("");}}><option value="">Sélectionner un dossier</option>{dossiers.map(d=><option key={d.id} value={d.id}>{d.client} — {d.title}</option>)}</select></div>{dossier&&<div className="notice small"><b>Objectif :</b> {dossier.objective}</div>}</div>
-      <div className="card"><h2>Lecture des orbites</h2><div className="list"><div className="row"><b>1re orbite</b><span className="muted small">Décision directe</span></div><div className="row"><b>2e orbite</b><span className="muted small">Influence forte</span></div><div className="row"><b>3e orbite</b><span className="muted small">Influence indirecte</span></div></div></div>
+  return <div className={styles.page}>
+    <div className={styles.head}><div><div className={styles.kicker}>Cartographie stratégique</div><h1>Radar d’influence</h1><p>Visualisez les acteurs, leur proximité avec la décision, leur influence et leur position face à l’objectif client.</p></div></div>
+
+    <div className={styles.setup}>
+      <section className={styles.panel}>
+        <h2>Dossier analysé</h2>
+        <div className={styles.field}><label>Dossier client</label><select value={dossierId} onChange={e=>{setDossierId(e.target.value);setActors([]);setSelected(null);setError("");}}><option value="">Sélectionner un dossier</option>{dossiers.map(d=><option key={d.id} value={d.id}>{d.client} — {d.title}</option>)}</select></div>
+        {dossier&&<div className={styles.objective}><b>Objectif client :</b><br/>{dossier.objective}</div>}
+      </section>
+      <section className={styles.panel}>
+        <h2>Lecture des orbites</h2>
+        <div className={styles.orbitList}><div className={styles.orbitRow}><b>1re orbite</b><span>Décision directe</span></div><div className={styles.orbitRow}><b>2e orbite</b><span>Influence forte</span></div><div className={styles.orbitRow}><b>3e orbite</b><span>Influence indirecte</span></div></div>
+      </section>
     </div>
-    <div className="card" style={{marginTop:16}}><button className="btn primary" onClick={generate} disabled={loading||!dossier||!related.length}><Sparkles size={17}/>{loading?" Cartographie en cours…":" Générer le radar d’influence"}</button>{error&&<div className="notice" style={{marginTop:12}}>{error}</div>}</div>
-    <div className="card" style={{marginTop:16,overflow:"hidden"}}>
-      <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:14}}><Legend color={COLORS.favorable} label="Favorable"/><Legend color={COLORS.inconnue} label="Neutre ou inconnue"/><Legend color={COLORS.reserve} label="Réserves"/><Legend color={COLORS.opposition} label="Opposition forte"/></div>
-      <div style={{position:"relative",width:"100%",maxWidth:720,aspectRatio:"1 / 1",margin:"0 auto",borderRadius:24,background:"linear-gradient(180deg,#fbfcff,#f4f6fa)"}}>
-        {[3,2,1].map(orbit=><div key={orbit} style={{position:"absolute",left:"50%",top:"50%",width:ORBIT_RADII[orbit as 1|2|3]*2,height:ORBIT_RADII[orbit as 1|2|3]*2,transform:"translate(-50%,-50%)",border:"1.5px solid #cfd5df",borderRadius:"50%",boxSizing:"border-box"}}><span style={{position:"absolute",top:-11,left:"50%",transform:"translateX(-50%)",background:"#f7f8fb",padding:"2px 7px",fontSize:11,color:"#687080"}}>Orbite {orbit}</span></div>)}
-        <svg viewBox="0 0 720 720" style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none"}}>{actors.map((actor,index)=>{const p=positionFor(actor,index,actors);return <line key={actor.id} x1="360" y1="360" x2={p.x} y2={p.y} stroke="#aeb6c2" strokeWidth="1.4" strokeDasharray={actor.orbit===3?"5 5":"0"}/>;})}</svg>
-        <button onClick={()=>source?.source_url&&window.open(source.source_url,"_blank")} style={{position:"absolute",left:"50%",top:"50%",transform:"translate(-50%,-50%)",width:150,height:150,borderRadius:"50%",border:"4px solid white",boxShadow:"0 10px 30px rgba(15,25,45,.22)",background:"#111c35",color:"white",padding:16,cursor:source?.source_url?"pointer":"default",display:"grid",placeItems:"center",textAlign:"center",zIndex:3}}><span><Orbit size={24}/><b style={{display:"block",fontSize:13,marginTop:6}}>{dossier?.title||"Dossier"}</b>{source?.source_url&&<small style={{display:"block",marginTop:5,opacity:.8}}>Lire le texte original</small>}</span></button>
-        {actors.map((actor,index)=>{const p=positionFor(actor,index,actors);const size=52+actor.influence*8;return <button key={actor.id} onClick={()=>setSelected(actor)} title={actor.name} style={{position:"absolute",left:`${p.x/7.2}%`,top:`${p.y/7.2}%`,transform:"translate(-50%,-50%)",width:size,height:size,borderRadius:"50%",border:"4px solid white",boxShadow:"0 7px 18px rgba(15,25,45,.18)",background:COLORS[actor.position],color:"white",padding:7,cursor:"pointer",zIndex:4,fontSize:11,fontWeight:800,lineHeight:1.1,overflow:"hidden"}}>{actor.name}</button>;})}
-      </div>
-    </div>
-    {selected&&<div className="modal" onClick={()=>setSelected(null)}><div className="modalbox" onClick={e=>e.stopPropagation()}><div className="toolbar" style={{marginTop:0}}><div><div className="eyebrow">Acteur — orbite {selected.orbit}</div><h2>{selected.name}</h2><p className="muted">{selected.role}</p></div><button className="btn ghost" onClick={()=>setSelected(null)}><X size={18}/></button></div><div className="grid two"><Info title="Pourquoi il compte" text={selected.why}/><Info title="Fenêtre d’action" text={selected.window}/><Info title="Action recommandée" text={selected.action}/><div className="card"><h3>Lecture stratégique</h3><p><b>Influence :</b> {selected.influence}/5</p><p><b>Proximité décisionnelle :</b> orbite {selected.orbit}</p><p><b>Position :</b> {labelPosition(selected.position)}</p></div></div>{source?.source_url&&<a className="btn dark" style={{marginTop:14,display:"inline-flex"}} href={source.source_url} target="_blank" rel="noreferrer"><ExternalLink size={16}/> Lire le texte original</a>}</div></div>}
-  </>;
+
+    <div className={styles.generate}><div><h3>Prêt à cartographier</h3><p>{related.length} texte(s) lié(s) au dossier sélectionné.</p></div><button onClick={generate} disabled={loading||!dossier||!related.length}><Sparkles size={17}/>{loading?"Cartographie en cours…":"Générer le radar d’influence"}</button></div>
+    {error&&<div className={styles.error}>{error}</div>}
+
+    <section className={styles.radarCard}>
+      <div className={styles.legend}><Legend color={COLORS.favorable} label="Favorable"/><Legend color={COLORS.inconnue} label="Neutre ou inconnue"/><Legend color={COLORS.reserve} label="Réserves"/><Legend color={COLORS.opposition} label="Opposition forte"/></div>
+      {actors.length?<div className={styles.canvas}>
+        {[3,2,1].map(orbit=><div key={orbit} className={styles.orbit} style={{width:ORBIT_RADII[orbit as 1|2|3]*2,height:ORBIT_RADII[orbit as 1|2|3]*2}}><span className={styles.orbitLabel}>Orbite {orbit}</span></div>)}
+        <svg viewBox="0 0 720 720" style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none"}}>{actors.map((actor,index)=>{const p=positionFor(actor,index,actors);return <line key={actor.id} x1="360" y1="360" x2={p.x} y2={p.y} stroke="#9fb2ca" strokeWidth="1.4" strokeDasharray={actor.orbit===3?"5 5":"0"}/>;})}</svg>
+        <button className={styles.center} onClick={()=>source?.source_url&&window.open(source.source_url,"_blank")} style={{cursor:source?.source_url?"pointer":"default"}}><span><Orbit size={24}/><b>{dossier?.title||"Dossier"}</b>{source?.source_url&&<small>Lire le texte original</small>}</span></button>
+        {actors.map((actor,index)=>{const p=positionFor(actor,index,actors);const size=52+actor.influence*8;return <button key={actor.id} className={styles.actor} onClick={()=>setSelected(actor)} title={actor.name} style={{left:`${p.x/7.2}%`,top:`${p.y/7.2}%`,width:size,height:size,background:COLORS[actor.position]}}>{actor.name}</button>;})}
+      </div>:<div className={styles.empty}><Orbit size={36}/><h3>Le radar est prêt</h3><p>Sélectionnez un dossier puis générez la cartographie des acteurs.</p></div>}
+    </section>
+
+    {selected&&<div className={styles.modal} onClick={()=>setSelected(null)}><div className={styles.modalBox} onClick={e=>e.stopPropagation()}>
+      <div className={styles.modalHead}><div><div className={styles.eyebrow}>Acteur — orbite {selected.orbit}</div><h2>{selected.name}</h2><p>{selected.role}</p></div><button className={styles.close} onClick={()=>setSelected(null)}><X size={18}/></button></div>
+      <div className={styles.infoGrid}><Info title="Pourquoi il compte" text={selected.why}/><Info title="Fenêtre d’action" text={selected.window}/><Info title="Action recommandée" text={selected.action}/><div className={styles.info}><h3>Lecture stratégique</h3><p><b>Influence :</b> {selected.influence}/5<br/><b>Proximité décisionnelle :</b> orbite {selected.orbit}<br/><b>Position :</b> {labelPosition(selected.position)}</p></div></div>
+      {source?.source_url&&<a className={styles.source} href={source.source_url} target="_blank" rel="noreferrer"><ExternalLink size={16}/> Lire le texte original</a>}
+    </div></div>}
+  </div>;
 }
 
 function positionFor(actor:Actor,index:number,actors:Actor[]){const same=actors.filter(a=>a.orbit===actor.orbit);const rank=same.findIndex(a=>a.id===actor.id);const angle=((Math.PI*2)/Math.max(1,same.length))*rank-(Math.PI/2)+(actor.orbit*0.22);const radius=ORBIT_RADII[actor.orbit];return{x:360+Math.cos(angle)*radius,y:360+Math.sin(angle)*radius};}
-function Legend({color,label}:{color:string;label:string}){return <span className="small" style={{display:"inline-flex",alignItems:"center",gap:6}}><i style={{width:10,height:10,borderRadius:"50%",background:color,display:"inline-block"}}/>{label}</span>;}
-function Info({title,text}:{title:string;text:string}){return <div className="card"><h3>{title}</h3><p>{text||"À préciser."}</p></div>;}
+function Legend({color,label}:{color:string;label:string}){return <span className={styles.legendItem}><i className={styles.legendDot} style={{background:color}}/>{label}</span>;}
+function Info({title,text}:{title:string;text:string}){return <div className={styles.info}><h3>{title}</h3><p>{text||"À préciser."}</p></div>;}
 function labelPosition(value:Actor["position"]){return value==="favorable"?"Favorable":value==="inconnue"?"Neutre ou inconnue":value==="reserve"?"Réserves ou opposition probable":"Opposition forte ou capacité de blocage";}
