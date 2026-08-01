@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo,useState } from "react";
+import { useEffect,useMemo,useState } from "react";
 import { AlertTriangle,BriefcaseBusiness,CalendarDays,FileText,Search,Sparkles } from "lucide-react";
 import styles from "./DossiersCorporate.module.css";
 
@@ -10,6 +10,7 @@ type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:st
 export default function DossiersCorporate({items,watch,add,search,searching,messages,open}:{items:Dossier[];watch:Watch[];add:()=>void;search:(d:Dossier)=>void;searching:string|null;messages:Record<string,string>;open:(d:Dossier)=>void}){
   const [query,setQuery]=useState("");
   const [filter,setFilter]=useState<"all"|"active"|"urgent">("all");
+  useEffect(()=>{const target=sessionStorage.getItem("myvor:open-dossier");if(!target)return;const dossier=items.find(item=>item.id===target);if(dossier){sessionStorage.removeItem("myvor:open-dossier");open(dossier);}},[items,open]);
   const filtered=useMemo(()=>items.filter(d=>{const matchesQuery=[d.client,d.title,d.objective,d.context].join(" ").toLowerCase().includes(query.toLowerCase());const dossierWatch=watch.filter(w=>w.dossier_id===d.id);const urgent=dossierWatch.some(w=>["fort","absolument urgent"].includes(w.urgency));const matchesFilter=filter==="all"||(filter==="active"&&d.status.toLowerCase()==="actif")||(filter==="urgent"&&urgent);return matchesQuery&&matchesFilter;}),[items,watch,query,filter]);
   const urgentCount=items.filter(d=>watch.some(w=>w.dossier_id===d.id&&["fort","absolument urgent"].includes(w.urgency))).length;
   const linkedCount=items.filter(d=>watch.some(w=>w.dossier_id===d.id)).length;
