@@ -201,6 +201,11 @@ function mapImpactToNote(impact: any, dossier: Dossier, items: WatchItem[], dept
   };
 }
 
+async function readJsonResponse(response:Response){
+  const raw=await response.text();
+  try{return raw?JSON.parse(raw):null;}catch{return {error:`Réponse non JSON de impact-analysis (${response.status}).`,details:raw.slice(0,500)};}
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => null);
@@ -209,6 +214,8 @@ export async function POST(request: Request) {
     const depth:ImpactDepth = requestedDepth in depthConfig ? requestedDepth : "standard";
     const config=depthConfig[depth];
     const items: WatchItem[] = Array.isArray(body?.items) ? body.items.slice(0, config.maxItems) : [];
+    const wantsAsync=depth==="deep"&&body?.async===true;
+    const productionId=asText(body?.production_id);
 
     if (!dossier) {
       return NextResponse.json({ error: "Sélectionne un dossier client." }, { status: 400 });
@@ -219,6 +226,10 @@ export async function POST(request: Request) {
         { error: "Aucun élément de veille n’est rattaché à ce dossier." },
         { status: 400 },
       );
+    }
+
+    if(wantsAsync&&!productionId){
+      return NextResponse.json({error:"production_id est obligatoire pour une Note approfondie en arrière-plan."},{status:400});
     }
 
     const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
@@ -257,6 +268,50 @@ export async function POST(request: Request) {
 
     const firstSourceUrl = items.find((item) => item.source_url)?.source_url || "";
     const fetchedCount = extractions.filter((source) => source.status === "fetched").length;
+    const invokeBody={
+      depth,
+      client:dossier.client,
+      contexte:dossier.context||"",
+      objectif:dossier.objective,
+      titre:items.length===1?items[0].title:`${dossier.title} — ${items.length} textes analysés`,
+      lien_officiel:firstSourceUrl,
+      texte:sourceText,
+      async:wantsAsync,
+      production_id:productionId||undefined,
+      dossier_title:dossier.title,
+      item_ids:items.map(item=>item.id),
+      sources:items.map(item=>({title:item.title,url:item.source_url||""})),
+    };
+
+    if(wantsAsync){
+      const controller=new AbortController();
+      const timer=setTimeout(()=>controller.abort(),12000);
+      try{
+        const response=await fetch(`${supabaseUrl}/functions/v1/impact-analysis`,{
+          method:"POST",
+          headers:{Authorization:`Bearer ${supabaseAnonKey}`,apikey:supabaseAnonKey,"Content-Type":"application/json"},
+          body:JSON.stringify(invokeBody),
+          signal:controller.signal,
+        });
+        const payload=await readJsonResponse(response);
+        if(!response.ok){
+          return NextResponse.json({error:payload?.error||`La fonction impact-analysis a échoué (${response.status}).`},{status:response.status>=400&&response.status<600?response.status:502});
+        }
+        if(payload?.accepted!==true){
+          return NextResponse.json({error:"La fonction impact-analysis n’a pas accepté le traitement en arrière-plan."},{status:502});
+        }
+        return NextResponse.json({
+          accepted:true,
+          production_id:productionId,
+          engine:"supabase-impact-analysis-background",
+          depth,
+          grounding:{official_sources_requested:uniqueUrls.length,official_sources_fetched:fetchedCount,statuses:extractions.map(source=>({url:source.url,status:source.status}))},
+        },{status:202});
+      }catch(error:any){
+        if(error?.name==="AbortError")return NextResponse.json({error:"Le lancement de la Note approfondie n’a pas répondu à temps."},{status:504});
+        return NextResponse.json({error:error?.message||"Impossible de lancer la Note approfondie."},{status:502});
+      }finally{clearTimeout(timer);}
+    }
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 52000);
@@ -269,39 +324,15 @@ export async function POST(request: Request) {
           apikey: supabaseAnonKey,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          depth,
-          client: dossier.client,
-          contexte: dossier.context || "",
-          objectif: dossier.objective,
-          titre: items.length === 1 ? items[0].title : `${dossier.title} — ${items.length} textes analysés`,
-          lien_officiel: firstSourceUrl,
-          texte: sourceText,
-        }),
+        body: JSON.stringify(invokeBody),
         signal: controller.signal,
       });
 
-      const rawPayload = await response.text();
-      let payload:any = null;
-      try {
-        payload = rawPayload ? JSON.parse(rawPayload) : null;
-      } catch {
-        return NextResponse.json(
-          {
-            error: `impact-analysis a retourné une réponse non JSON (${response.status}).`,
-            details: rawPayload.slice(0, 500),
-          },
-          { status: 502 },
-        );
-      }
+      const payload = await readJsonResponse(response);
 
       if (!response.ok) {
         return NextResponse.json(
-          {
-            error:
-              payload?.error ||
-              `La fonction impact-analysis a échoué (${response.status}).`,
-          },
+          { error: payload?.error || `La fonction impact-analysis a échoué (${response.status}).` },
           { status: response.status >= 400 && response.status < 600 ? response.status : 502 },
         );
       }
@@ -327,11 +358,7 @@ export async function POST(request: Request) {
     } catch (error:any) {
       if (error?.name === "AbortError") {
         return NextResponse.json(
-          {
-            error: depth === "deep"
-              ? "La Note approfondie dépasse le temps de réponse disponible. Myvor a arrêté proprement l’analyse avant le timeout."
-              : "L’analyse dépasse le temps de réponse disponible.",
-          },
+          { error: "L’analyse dépasse le temps de réponse disponible." },
           { status: 504 },
         );
       }
@@ -344,10 +371,7 @@ export async function POST(request: Request) {
     }
   } catch (error:any) {
     return NextResponse.json(
-      {
-        error: "Erreur interne pendant la préparation de la Note d’impact.",
-        details: error?.message || String(error),
-      },
+      { error: "Erreur interne pendant la préparation de la Note d’impact.", details: error?.message || String(error) },
       { status: 500 },
     );
   }
