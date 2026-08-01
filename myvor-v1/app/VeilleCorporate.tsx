@@ -91,7 +91,7 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
       {qualificationMessage&&<div className={styles.syncMessage}>{qualificationMessage}</div>}
     </section>
 
-    <div className={styles.sourceNotice}><b>Sources automatiques :</b> Assemblée nationale, Sénat, Journal officiel / Légifrance, Vie-publique, Ministère de l’Économie, Transition écologique, Direction générale du Trésor, Conseil d’État, Conseil constitutionnel et Cour des comptes.</div>
+    <div className={styles.sourceNotice}><b>Sources automatiques :</b> institutions parlementaires et gouvernementales, juridictions, Cour des comptes, CNIL, ARCEP et EUR-Lex.</div>
     {syncMessage&&<div className={styles.syncMessage}>{syncMessage}</div>}
 
     <div className={styles.toolbar}>
