@@ -10,6 +10,15 @@ type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:st
 type Action={id:string;dossier_id:string|null;type:string;title:string;description:string|null;actor_name:string|null;priority:string;status:string;due_date:string|null;created_at:string;updated_at:string};
 type DailyAction={id:string;title:string;detail:string;level:"critical"|"high"|"medium";tab:Tab;cta:string};
 
+const ACTION_COLUMNS="id,dossier_id,type,title,description,actor_name,priority,status,due_date,created_at,updated_at";
+
+function explainActionsError(message:string){
+  const text=String(message||"");
+  if(/permission denied/i.test(text))return "Droits Supabase incomplets sur actions (GRANT SELECT / RLS authenticated).";
+  if(/row-level security|rls/i.test(text))return "La règle RLS de la table actions bloque la session connectée.";
+  return text||"Impossible de charger les actions.";
+}
+
 export default function DashboardCorporate({dossiers,watch,go}:{dossiers:Dossier[];watch:Watch[];go:(tab:Tab)=>void}){
   const [actions,setActions]=useState<Action[]>([]);
   const [actionsLoading,setActionsLoading]=useState(true);
@@ -17,22 +26,37 @@ export default function DashboardCorporate({dossiers,watch,go}:{dossiers:Dossier
 
   useEffect(()=>{
     let active=true;
+    async function queryActions(){
+      if(!supabase)return {data:null,error:{message:"Supabase non configuré"} as any};
+      return supabase.from("actions").select(ACTION_COLUMNS).order("created_at",{ascending:false});
+    }
     async function loadActions(){
-      if(!supabase){setActionsLoading(false);return;}
-      const {data,error}=await supabase.from("actions").select("*").order("created_at",{ascending:false});
+      if(!supabase){if(active){setActionsLoading(false);setActionsError("Supabase non configuré.");}return;}
+      setActionsLoading(true);
+      const {data:sessionData}=await supabase.auth.getSession();
       if(!active)return;
-      if(error){setActionsError(error.message);setActions([]);}else{setActions((data||[]) as Action[]);setActionsError("");}
+      if(!sessionData.session){setActions([]);setActionsError("Session Supabase absente. Reconnecte-toi.");setActionsLoading(false);return;}
+
+      let result=await queryActions();
+      if(result.error&&/jwt|token|session/i.test(result.error.message||"")){
+        await supabase.auth.refreshSession();
+        result=await queryActions();
+      }
+      if(!active)return;
+      if(result.error){setActionsError(explainActionsError(result.error.message));setActions([]);}
+      else{setActions((result.data||[]) as Action[]);setActionsError("");}
       setActionsLoading(false);
     }
     loadActions();
-    return()=>{active=false;};
+    const {data:authListener}=supabase?.auth.onAuthStateChange((event)=>{
+      if(["SIGNED_IN","TOKEN_REFRESHED"].includes(event))loadActions();
+    })||{data:null as any};
+    return()=>{active=false;authListener?.subscription?.unsubscribe?.();};
   },[]);
 
   const openActions=useMemo(()=>actions.filter(action=>action.status!=="termine"),[actions]);
   const urgentItems=watch.filter(item=>["fort","absolument urgent"].includes(item.urgency));
-  const urgent=urgentItems.length;
   const linked=watch.filter(item=>item.dossier_id).length;
-  const unlinked=watch.filter(item=>!item.dossier_id).length;
   const sevenDaysAgo=Date.now()-7*24*60*60*1000;
   const newRisks=urgentItems.filter(item=>{const created=new Date(item.created_at).getTime();return Number.isFinite(created)&&created>=sevenDaysAgo;}).length;
 
