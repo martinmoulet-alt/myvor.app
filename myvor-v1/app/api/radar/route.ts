@@ -3,12 +3,21 @@ import { NextResponse } from "next/server";
 type Dossier={id:string;client:string;title:string;objective:string;context?:string};
 type WatchItem={id:string;title:string;nature:string;source_url?:string;urgency?:string};
 
-function cleanApiKey(raw:string){return raw.replace(/^OPENAI_API_KEY\s*=\s*/i,"").replace(/^Bearer\s+/i,"").replace(/["'`]/g,"").replace(/\s+/g,"").trim();}
-function extractOutputText(payload:any){if(typeof payload?.output_text==="string")return payload.output_text;const chunks=payload?.output?.flatMap((item:any)=>item?.content||[])||[];return chunks.map((chunk:any)=>chunk?.text||"").join("");}
+function cleanApiKey(raw:string){
+  const normalized=String(raw||"").normalize("NFKC");
+  const match=normalized.match(/sk-[A-Za-z0-9_-]+/);
+  return match?.[0]||"";
+}
+function extractOutputText(payload:any){
+  if(typeof payload?.output_text==="string")return payload.output_text;
+  const chunks=payload?.output?.flatMap((item:any)=>item?.content||[])||[];
+  return chunks.map((chunk:any)=>chunk?.text||"").join("");
+}
 
 export async function POST(request:Request){
   const apiKey=cleanApiKey(process.env.OPENAI_API_KEY||"");
-  if(!apiKey.startsWith("sk-"))return NextResponse.json({error:"La clé OpenAI n’est pas configurée correctement."},{status:503});
+  if(!apiKey)return NextResponse.json({error:"La clé OpenAI n’est pas configurée correctement dans Netlify."},{status:503});
+
   const body=await request.json().catch(()=>null);
   const dossier:Dossier|null=body?.dossier||null;
   const items:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,20):[];
@@ -31,15 +40,39 @@ export async function POST(request:Request){
   ].join("\n");
 
   try{
-    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:process.env.OPENAI_MODEL||"gpt-5-mini",input:prompt,text:{format:{type:"json_object"}}})});
-    if(!response.ok){const raw=await response.text();let message=raw;try{message=JSON.parse(raw)?.error?.message||raw;}catch{}return NextResponse.json({error:`OpenAI a refusé la requête (${response.status}) : ${message.slice(0,260)}`},{status:502});}
+    const response=await fetch("https://api.openai.com/v1/responses",{
+      method:"POST",
+      headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},
+      body:JSON.stringify({model:process.env.OPENAI_MODEL||"gpt-5-mini",input:prompt,text:{format:{type:"json_object"}}}),
+    });
+
+    if(!response.ok){
+      const raw=await response.text();
+      let message=raw;
+      try{message=JSON.parse(raw)?.error?.message||raw;}catch{}
+      return NextResponse.json({error:`OpenAI a refusé la requête (${response.status}) : ${String(message).slice(0,260)}`},{status:502});
+    }
+
     const payload=await response.json();
-    const parsed=JSON.parse(extractOutputText(payload)||"{}");
+    const text=extractOutputText(payload);
+    let parsed:any={};
+    try{parsed=JSON.parse(text||"{}");}
+    catch{return NextResponse.json({error:"La réponse IA du radar n’était pas exploitable. Réessaie."},{status:502});}
+
     const actors=(Array.isArray(parsed?.actors)?parsed.actors:[]).slice(0,12).map((a:any,index:number)=>({
-      id:String(a.id||`actor-${index+1}`),name:String(a.name||"Acteur"),role:String(a.role||""),orbit:[1,2,3].includes(Number(a.orbit))?Number(a.orbit):3,
+      id:String(a.id||`actor-${index+1}`),
+      name:String(a.name||"Acteur"),
+      role:String(a.role||""),
+      orbit:[1,2,3].includes(Number(a.orbit))?Number(a.orbit):3,
       position:["favorable","inconnue","reserve","opposition"].includes(a.position)?a.position:"inconnue",
-      influence:Math.max(1,Math.min(5,Math.round(Number(a.influence)||3))),why:String(a.why||""),window:String(a.window||"À préciser"),action:String(a.action||"Approfondir la position et préparer une prise de contact."),
+      influence:Math.max(1,Math.min(5,Math.round(Number(a.influence)||3))),
+      why:String(a.why||""),
+      window:String(a.window||"À préciser"),
+      action:String(a.action||"Approfondir la position et préparer une prise de contact."),
     }));
+
     return NextResponse.json({actors});
-  }catch(error:any){return NextResponse.json({error:error?.message||"La génération du radar a échoué."},{status:500});}
+  }catch(error:any){
+    return NextResponse.json({error:`Erreur du moteur Radar : ${error?.message||"inconnue"}`},{status:500});
+  }
 }
