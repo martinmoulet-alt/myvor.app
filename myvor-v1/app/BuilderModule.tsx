@@ -2,6 +2,7 @@
 
 import { useMemo,useState } from "react";
 import { Copy,FileText,Sparkles } from "lucide-react";
+import styles from "./BuilderCorporate.module.css";
 
 type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string};
 type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string};
@@ -33,12 +34,7 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
     setLoading(true);setError("");setDocument(null);setCopied(false);
     try{
       const endpoint=new URL("/api/builder",window.location.origin).toString();
-      const response=await fetch(endpoint,{
-        method:"POST",
-        headers:new Headers({"Content-Type":"application/json;charset=UTF-8"}),
-        body:JSON.stringify({dossier,items:related,format,audience,tone,instruction}),
-        cache:"no-store",
-      });
+      const response=await fetch(endpoint,{method:"POST",headers:new Headers({"Content-Type":"application/json;charset=UTF-8"}),body:JSON.stringify({dossier,items:related,format,audience,tone,instruction}),cache:"no-store"});
       const raw=await response.text();
       let payload:any={};
       try{payload=raw?JSON.parse(raw):{};}catch{throw new Error(`Réponse serveur invalide (${response.status}).`);}
@@ -47,7 +43,7 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
       setDocument(payload.document);
     }catch(err:any){
       const message=String(err?.message||"");
-      setError(message.includes("expected pattern")?"Le navigateur a refusé la requête. Le correctif est en cours de déploiement, recharge la page puis réessaie.":message||"Génération impossible");
+      setError(message.includes("expected pattern")?"Le navigateur a refusé la requête. Recharge la page puis réessaie.":message||"Génération impossible");
     }finally{setLoading(false);}
   }
 
@@ -58,28 +54,33 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
     setCopied(true);setTimeout(()=>setCopied(false),1800);
   }
 
-  return <>
-    <div className="toolbar"><div><div className="eyebrow">Production opérationnelle</div><h1 className="h1">Note Builder</h1><p className="lead">Transformez un dossier et sa veille en document immédiatement exploitable.</p></div></div>
-    <div className="grid two">
-      <div className="card">
+  return <div className={styles.page}>
+    <div className={styles.head}><div><div className={styles.kicker}>Production opérationnelle</div><h1>Note Builder</h1><p>Transformez un dossier et sa veille en document immédiatement exploitable.</p></div></div>
+
+    <div className={styles.setup}>
+      <section className={styles.panel}>
         <h2>1. Choisir la base</h2>
-        <div className="field"><label>Dossier client</label><select value={dossierId} onChange={e=>{setDossierId(e.target.value);setDocument(null);setError("");}}><option value="">Sélectionner un dossier</option>{dossiers.map(d=><option key={d.id} value={d.id}>{d.client} — {d.title}</option>)}</select></div>
-        {dossier&&<div className="notice small"><b>Objectif :</b> {dossier.objective}<br/><b>Textes liés :</b> {related.length}</div>}
-      </div>
-      <div className="card">
+        <div className={styles.field}><label>Dossier client</label><select value={dossierId} onChange={e=>{setDossierId(e.target.value);setDocument(null);setError("");}}><option value="">Sélectionner un dossier</option>{dossiers.map(d=><option key={d.id} value={d.id}>{d.client} — {d.title}</option>)}</select></div>
+        {dossier&&<div className={styles.summary}><b>Objectif client :</b><br/>{dossier.objective}<br/><br/><b>Textes liés :</b> {related.length}</div>}
+      </section>
+
+      <section className={styles.panel}>
         <h2>2. Paramétrer le document</h2>
-        <div className="field"><label>Format</label><select value={format} onChange={e=>setFormat(e.target.value)}>{formats.map(([id,label])=><option value={id} key={id}>{label}</option>)}</select></div>
-        <div className="field"><label>Public visé</label><input value={audience} onChange={e=>setAudience(e.target.value)} placeholder="Client, député, cabinet ministériel…"/></div>
-        <div className="field"><label>Ton</label><select value={tone} onChange={e=>setTone(e.target.value)}><option>professionnel et direct</option><option>institutionnel et diplomatique</option><option>convaincant et offensif</option><option>pédagogique et synthétique</option></select></div>
-        <div className="field"><label>Instruction complémentaire</label><textarea value={instruction} onChange={e=>setInstruction(e.target.value)} placeholder="Ex. Insister sur le coût économique et proposer un rendez-vous avant l’examen en commission."/></div>
-      </div>
+        <div className={styles.formats}>{formats.map(([id,label])=><button type="button" key={id} className={`${styles.formatButton} ${format===id?styles.active:""}`} onClick={()=>setFormat(id)}>{label}</button>)}</div>
+        <div className={styles.field}><label>Public visé</label><input value={audience} onChange={e=>setAudience(e.target.value)} placeholder="Client, député, cabinet ministériel…"/></div>
+        <div className={styles.field}><label>Ton</label><select value={tone} onChange={e=>setTone(e.target.value)}><option>professionnel et direct</option><option>institutionnel et diplomatique</option><option>convaincant et offensif</option><option>pédagogique et synthétique</option></select></div>
+        <div className={styles.field}><label>Instruction complémentaire</label><textarea value={instruction} onChange={e=>setInstruction(e.target.value)} placeholder="Ex. Insister sur le coût économique et proposer un rendez-vous avant l’examen en commission."/></div>
+      </section>
     </div>
-    <div className="card" style={{marginTop:16}}><button className="btn primary" onClick={generate} disabled={loading||!dossier||!related.length}><Sparkles size={17}/>{loading?" Rédaction en cours…":" Générer le document"}</button>{error&&<div className="notice" style={{marginTop:12}}>{error}</div>}</div>
-    {document&&<div className="card" style={{marginTop:16}}>
-      <div className="toolbar" style={{marginTop:0}}><div><div className="eyebrow">Document généré</div><h2>{document.title}</h2>{document.subject&&<p className="muted"><b>Objet :</b> {document.subject}</p>}</div><button className="btn dark" onClick={copyDocument}><Copy size={16}/>{copied?" Copié":" Copier"}</button></div>
-      <div style={{whiteSpace:"pre-wrap",lineHeight:1.65,fontSize:15}}>{document.content}</div>
-      {!!document.key_points?.length&&<div className="card" style={{marginTop:16}}><h3>Points clés</h3><ul>{document.key_points.map((point,i)=><li key={i}>{point}</li>)}</ul></div>}
-      {!!document.sources?.length&&<div style={{marginTop:16}}><h3>Sources utilisées</h3><div className="list">{document.sources.map((source,i)=><div className="row" key={`${source.url}-${i}`}><span><FileText size={15} style={{marginRight:6,verticalAlign:"middle"}}/>{source.title}</span>{source.url&&<a className="small" href={source.url} target="_blank" rel="noreferrer">Lire la source</a>}</div>)}</div></div>}
-    </div>}
-  </>;
+
+    <div className={styles.generate}><div><h3>Prêt à rédiger</h3><p>{related.length} texte(s) lié(s) au dossier sélectionné.</p></div><button onClick={generate} disabled={loading||!dossier||!related.length}><Sparkles size={17}/>{loading?"Rédaction en cours…":"Générer le document"}</button></div>
+    {error&&<div className={styles.error}>{error}</div>}
+
+    {document&&<section className={styles.document}>
+      <div className={styles.documentHead}><div><div className={styles.eyebrow}>Document généré</div><h2>{document.title}</h2>{document.subject&&<div className={styles.subject}><b>Objet :</b> {document.subject}</div>}</div><button className={styles.copy} onClick={copyDocument}><Copy size={16}/>{copied?"Copié":"Copier"}</button></div>
+      <div className={styles.content}>{document.content}</div>
+      {!!document.key_points?.length&&<div className={styles.points}><h3>Points clés</h3><ul>{document.key_points.map((point,index)=><li key={index}>{point}</li>)}</ul></div>}
+      {!!document.sources?.length&&<div className={styles.sources}><h3>Sources utilisées</h3>{document.sources.map((source,index)=><div className={styles.sourceRow} key={`${source.url}-${index}`}><span><FileText size={15}/>{source.title}</span>{source.url&&<a href={source.url} target="_blank" rel="noreferrer">Lire la source</a>}</div>)}</div>}
+    </section>}
+  </div>;
 }
