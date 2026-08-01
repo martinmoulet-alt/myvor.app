@@ -1,132 +1,42 @@
 "use client";
 
-import { useEffect,useMemo,useState } from "react";
+import { useMemo } from "react";
 import { AlertTriangle,ArrowRight,BriefcaseBusiness,CalendarDays,FileText,Link2,Search,Sparkles,Target,UserRound,Zap } from "lucide-react";
-import { supabase } from "@/lib/supabase";
 
 type Tab="dashboard"|"dossiers"|"veille"|"impact"|"radar"|"builder";
 type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string};
 type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string};
-type Action={id:string;dossier_id:string|null;type:string;title:string;description:string|null;actor_name:string|null;priority:string;status:string;due_date:string|null;created_at:string;updated_at:string};
+export type Action={id:string;dossier_id:string|null;type:string;title:string;description:string|null;actor_name:string|null;priority:string;status:string;due_date:string|null;created_at:string;updated_at:string};
 type DailyAction={id:string;title:string;detail:string;level:"critical"|"high"|"medium";tab:Tab;cta:string};
 
-const ACTION_COLUMNS="id,dossier_id,type,title,description,actor_name,priority,status,due_date,created_at,updated_at";
-
-function explainActionsError(message:string){
-  const text=String(message||"");
-  if(/permission denied/i.test(text))return "Droits Supabase incomplets sur actions (GRANT SELECT / RLS authenticated).";
-  if(/row-level security|rls/i.test(text))return "La règle RLS de la table actions bloque la session connectée.";
-  return text||"Impossible de charger les actions.";
-}
-
-export default function DashboardCorporate({dossiers,watch,go}:{dossiers:Dossier[];watch:Watch[];go:(tab:Tab)=>void}){
-  const [actions,setActions]=useState<Action[]>([]);
-  const [actionsLoading,setActionsLoading]=useState(true);
-  const [actionsError,setActionsError]=useState("");
-
-  useEffect(()=>{
-    let active=true;
-    async function queryActions(){
-      if(!supabase)return {data:null,error:{message:"Supabase non configuré"} as any};
-      return supabase.from("actions").select(ACTION_COLUMNS).order("created_at",{ascending:false});
-    }
-    async function loadActions(){
-      if(!supabase){if(active){setActionsLoading(false);setActionsError("Supabase non configuré.");}return;}
-      setActionsLoading(true);
-      const {data:sessionData}=await supabase.auth.getSession();
-      if(!active)return;
-      if(!sessionData.session){setActions([]);setActionsError("Session Supabase absente. Reconnecte-toi.");setActionsLoading(false);return;}
-
-      let result=await queryActions();
-      if(result.error&&/jwt|token|session/i.test(result.error.message||"")){
-        await supabase.auth.refreshSession();
-        result=await queryActions();
-      }
-      if(!active)return;
-      if(result.error){setActionsError(explainActionsError(result.error.message));setActions([]);}
-      else{setActions((result.data||[]) as Action[]);setActionsError("");}
-      setActionsLoading(false);
-    }
-    loadActions();
-    const {data:authListener}=supabase?.auth.onAuthStateChange((event)=>{
-      if(["SIGNED_IN","TOKEN_REFRESHED"].includes(event))loadActions();
-    })||{data:null as any};
-    return()=>{active=false;authListener?.subscription?.unsubscribe?.();};
-  },[]);
-
+export default function DashboardCorporate({dossiers,watch,actions,actionsLoading,actionsError,go}:{dossiers:Dossier[];watch:Watch[];actions:Action[];actionsLoading:boolean;actionsError:string;go:(tab:Tab)=>void}){
   const openActions=useMemo(()=>actions.filter(action=>action.status!=="termine"),[actions]);
   const urgentItems=watch.filter(item=>["fort","absolument urgent"].includes(item.urgency));
   const linked=watch.filter(item=>item.dossier_id).length;
   const sevenDaysAgo=Date.now()-7*24*60*60*1000;
   const newRisks=urgentItems.filter(item=>{const created=new Date(item.created_at).getTime();return Number.isFinite(created)&&created>=sevenDaysAgo;}).length;
-
-  const priorityDossiers=new Set([
-    ...urgentItems.map(item=>item.dossier_id).filter(Boolean),
-    ...openActions.filter(action=>["fort","absolument urgent"].includes(action.priority)).map(action=>action.dossier_id).filter(Boolean),
-  ]).size;
-
-  const now=Date.now();
-  const sevenDays=now+7*24*60*60*1000;
+  const priorityDossiers=new Set([...urgentItems.map(item=>item.dossier_id).filter(Boolean),...openActions.filter(action=>["fort","absolument urgent"].includes(action.priority)).map(action=>action.dossier_id).filter(Boolean)]).size;
+  const sevenDays=Date.now()+7*24*60*60*1000;
   const criticalDeadlines=openActions.filter(action=>action.type==="echeance"&&action.due_date&&new Date(action.due_date).getTime()<=sevenDays).length;
   const contacts=openActions.filter(action=>action.type==="contact").length;
   const notesClient=openActions.filter(action=>action.type==="note_client").length;
   const amendments=openActions.filter(action=>action.type==="amendement").length;
-
   const dossierName=(id:string|null)=>id?dossiers.find(d=>d.id===id)?.title||"Dossier lié":"Sans dossier";
-  const actionRows:DailyAction[]=openActions.slice(0,5).map(action=>({
-    id:`action-${action.id}`,
-    title:action.title,
-    detail:[action.actor_name,dossierName(action.dossier_id),action.due_date?new Intl.DateTimeFormat("fr-FR",{day:"2-digit",month:"short"}).format(new Date(action.due_date)):null].filter(Boolean).join(" · "),
-    level:action.priority==="absolument urgent"?"critical":action.priority==="fort"?"high":"medium",
-    tab:action.type==="contact"?"radar":action.type==="note_client"||action.type==="amendement"?"builder":action.type==="analyse"?"impact":"dossiers",
-    cta:action.type==="contact"?"Voir l’acteur":action.type==="note_client"?"Rédiger la note":action.type==="amendement"?"Préparer":action.type==="echeance"?"Voir le dossier":"Ouvrir",
-  }));
-
-  const fallbackRows:DailyAction[]=[
-    ...urgentItems.slice(0,3).map(item=>({id:`impact-${item.id}`,title:item.title,detail:item.dossier_id?`Analyse prioritaire · ${item.nature}`:`Rattacher au bon dossier · ${item.nature}`,level:item.urgency==="absolument urgent"?"critical" as const:"high" as const,tab:item.dossier_id?"impact" as const:"veille" as const,cta:item.dossier_id?"Préparer la Note d’impact":"Rattacher le texte"})),
-    ...watch.filter(item=>!item.dossier_id&&!urgentItems.some(u=>u.id===item.id)).slice(0,2).map(item=>({id:`link-${item.id}`,title:item.title,detail:`Veille non rattachée · ${item.nature}`,level:"medium" as const,tab:"veille" as const,cta:"Qualifier"})),
-  ];
+  const actionRows:DailyAction[]=openActions.slice(0,5).map(action=>({id:`action-${action.id}`,title:action.title,detail:[action.actor_name,dossierName(action.dossier_id),action.due_date?new Intl.DateTimeFormat("fr-FR",{day:"2-digit",month:"short"}).format(new Date(action.due_date)):null].filter(Boolean).join(" · "),level:action.priority==="absolument urgent"?"critical":action.priority==="fort"?"high":"medium",tab:action.type==="contact"?"radar":action.type==="note_client"||action.type==="amendement"?"builder":action.type==="analyse"?"impact":"dossiers",cta:action.type==="contact"?"Voir l’acteur":action.type==="note_client"?"Rédiger la note":action.type==="amendement"?"Préparer":action.type==="echeance"?"Voir le dossier":"Ouvrir"}));
+  const fallbackRows:DailyAction[]=[...urgentItems.slice(0,3).map(item=>({id:`impact-${item.id}`,title:item.title,detail:item.dossier_id?`Analyse prioritaire · ${item.nature}`:`Rattacher au bon dossier · ${item.nature}`,level:item.urgency==="absolument urgent"?"critical" as const:"high" as const,tab:item.dossier_id?"impact" as const:"veille" as const,cta:item.dossier_id?"Préparer la Note d’impact":"Rattacher le texte"})),...watch.filter(item=>!item.dossier_id&&!urgentItems.some(u=>u.id===item.id)).slice(0,2).map(item=>({id:`link-${item.id}`,title:item.title,detail:`Veille non rattachée · ${item.nature}`,level:"medium" as const,tab:"veille" as const,cta:"Qualifier"}))];
   const dailyActions=(actionRows.length?actionRows:fallbackRows).slice(0,5);
-
-  const recentDossiers=dossiers.slice(0,4);
-  const recentWatch=watch.slice(0,4);
+  const recentDossiers=dossiers.slice(0,4);const recentWatch=watch.slice(0,4);
   const rank=(value:string)=>value==="absolument urgent"?4:value==="fort"?3:value==="moyen"?2:1;
   const topPriorityAction=[...openActions].sort((a,b)=>rank(b.priority)-rank(a.priority))[0];
   const topPriorityWatch=watch.find(item=>item.urgency==="absolument urgent")||watch.find(item=>item.urgency==="fort")||watch[0];
 
   return <div className="corp-dashboard">
     <div className="corp-head"><div><div className="corp-kicker">Vue d’ensemble</div><h1>Tableau de bord</h1><p>Votre cockpit opérationnel : ce qui compte, ce qui change et ce qu’il faut faire maintenant.</p></div><div className="corp-head-actions"><div className="corp-search"><Search size={17}/><span>Rechercher…</span></div><button className="corp-primary" onClick={()=>go("dossiers")}>+ Nouveau dossier</button></div></div>
-
-    <section className="today-panel">
-      <div className="today-head"><div><span className="today-kicker"><Zap size={14}/> Aujourd’hui</span><h2>Que dois-je faire aujourd’hui ?</h2><p>Myvor croise vos dossiers, votre veille et vos actions Supabase.</p></div><button className="today-review" onClick={()=>go("dossiers")}>Voir les dossiers <ArrowRight size={15}/></button></div>
-      <div className="today-metrics">
-        <button onClick={()=>go("dossiers")}><Target size={18}/><strong>{priorityDossiers}</strong><span>Dossiers prioritaires</span></button>
-        <button onClick={()=>go("veille")}><AlertTriangle size={18}/><strong>{newRisks}</strong><span>Risques nouveaux</span></button>
-        <button onClick={()=>go("dossiers")}><CalendarDays size={18}/><strong>{criticalDeadlines}</strong><span>Échéances critiques</span></button>
-        <button onClick={()=>go("radar")}><UserRound size={18}/><strong>{contacts}</strong><span>Acteurs à contacter</span></button>
-        <button onClick={()=>go("builder")}><FileText size={18}/><strong>{notesClient}</strong><span>Notes client à envoyer</span></button>
-        <button onClick={()=>go("builder")}><Sparkles size={18}/><strong>{amendments}</strong><span>Amendements à préparer</span></button>
-      </div>
-      <div className="today-actions">
-        <div className="today-actions-title"><span>Actions recommandées</span><small>{actionsLoading?"Synchronisation Supabase…":actionsError?`Erreur actions : ${actionsError}`:actions.length?`${actions.length} action(s) synchronisée(s) depuis Supabase`:"Aucune action Supabase"}</small></div>
-        {dailyActions.length?dailyActions.map(action=><button key={action.id} className="today-action" onClick={()=>go(action.tab)}><span className={`today-level ${action.level}`}/><span className="today-action-copy"><b>{action.title}</b><small>{action.detail}</small></span><span className="today-cta">{action.cta}</span><ArrowRight size={16}/></button>):<div className="today-clear"><Sparkles size={18}/><div><b>Aucune action prioritaire détectée.</b><span>Les prochaines actions apparaîtront ici automatiquement.</span></div></div>}
-      </div>
+    <section className="today-panel"><div className="today-head"><div><span className="today-kicker"><Zap size={14}/> Aujourd’hui</span><h2>Que dois-je faire aujourd’hui ?</h2><p>Myvor croise vos dossiers, votre veille et vos actions Supabase.</p></div><button className="today-review" onClick={()=>go("dossiers")}>Voir les dossiers <ArrowRight size={15}/></button></div>
+      <div className="today-metrics"><button onClick={()=>go("dossiers")}><Target size={18}/><strong>{priorityDossiers}</strong><span>Dossiers prioritaires</span></button><button onClick={()=>go("veille")}><AlertTriangle size={18}/><strong>{newRisks}</strong><span>Risques nouveaux</span></button><button onClick={()=>go("dossiers")}><CalendarDays size={18}/><strong>{criticalDeadlines}</strong><span>Échéances critiques</span></button><button onClick={()=>go("radar")}><UserRound size={18}/><strong>{contacts}</strong><span>Acteurs à contacter</span></button><button onClick={()=>go("builder")}><FileText size={18}/><strong>{notesClient}</strong><span>Notes client à envoyer</span></button><button onClick={()=>go("builder")}><Sparkles size={18}/><strong>{amendments}</strong><span>Amendements à préparer</span></button></div>
+      <div className="today-actions"><div className="today-actions-title"><span>Actions recommandées</span><small>{actionsLoading?"Synchronisation Supabase…":actionsError?`Erreur actions : ${actionsError}`:actions.length?`${actions.length} action(s) synchronisée(s) depuis Supabase`:"Aucune action Supabase"}</small></div>{dailyActions.length?dailyActions.map(action=><button key={action.id} className="today-action" onClick={()=>go(action.tab)}><span className={`today-level ${action.level}`}/><span className="today-action-copy"><b>{action.title}</b><small>{action.detail}</small></span><span className="today-cta">{action.cta}</span><ArrowRight size={16}/></button>):<div className="today-clear"><Sparkles size={18}/><div><b>Aucune action prioritaire détectée.</b><span>Les prochaines actions apparaîtront ici automatiquement.</span></div></div>}</div>
     </section>
-
-    <div className="corp-kpis">
-      <div className="corp-kpi"><span>Dossiers actifs</span><strong>{dossiers.length}</strong><small><BriefcaseBusiness size={15}/> Portefeuille client</small></div>
-      <div className="corp-kpi"><span>Textes suivis</span><strong>{watch.length}</strong><small><FileText size={15}/> Veille institutionnelle</small></div>
-      <div className="corp-kpi"><span>Textes rattachés</span><strong>{linked}</strong><small><Link2 size={15}/> Analyse exploitable</small></div>
-      <div className="corp-kpi alert"><span>Actions ouvertes</span><strong>{openActions.length}</strong><small><AlertTriangle size={15}/> À traiter</small></div>
-    </div>
-
-    <div className="corp-dashboard-grid">
-      <section className="corp-panel"><div className="corp-panel-head"><div><span>Dossiers récents</span><h2>Portefeuille client</h2></div><button onClick={()=>go("dossiers")}>Voir tout <ArrowRight size={15}/></button></div><div className="corp-list">{recentDossiers.length?recentDossiers.map(d=><button className="corp-list-row" key={d.id} onClick={()=>go("dossiers")}><span className="corp-avatar">{(d.client||d.title||"D").slice(0,2).toUpperCase()}</span><span className="corp-list-copy"><b>{d.title}</b><small>{d.client}</small></span><span className="corp-status">Actif</span><ArrowRight size={16}/></button>):<div className="corp-empty">Aucun dossier client pour le moment.</div>}</div></section>
-      <section className="corp-panel"><div className="corp-panel-head"><div><span>Veille récente</span><h2>Dernières évolutions</h2></div><button onClick={()=>go("veille")}>Voir tout <ArrowRight size={15}/></button></div><div className="corp-list">{recentWatch.length?recentWatch.map(item=><button className="corp-list-row" key={item.id} onClick={()=>go("veille")}><span className="corp-doc"><FileText size={18}/></span><span className="corp-list-copy"><b>{item.title}</b><small>{item.nature}</small></span><span className={`corp-impact ${item.urgency.replaceAll(" ","-")}`}>{item.urgency}</span></button>):<div className="corp-empty">Aucun élément de veille pour le moment.</div>}</div></section>
-      <aside className="corp-side-stack">
-        <section className="corp-panel corp-deadline"><div className="corp-panel-head"><div><span>Priorité</span><h2>Prochaine action</h2></div><CalendarDays size={19}/></div>{topPriorityAction?<><div className="corp-date-box"><b>{topPriorityAction.priority}</b><span>{topPriorityAction.type.replaceAll("_"," ")}</span></div><h3>{topPriorityAction.title}</h3><p>{topPriorityAction.actor_name?`Acteur : ${topPriorityAction.actor_name}`:dossierName(topPriorityAction.dossier_id)}</p><button onClick={()=>go(topPriorityAction.type==="contact"?"radar":"dossiers")}>Ouvrir</button></>:topPriorityWatch?<><div className="corp-date-box"><b>À traiter</b><span>{topPriorityWatch.nature}</span></div><h3>{topPriorityWatch.title}</h3><p>Niveau : {topPriorityWatch.urgency}</p><button onClick={()=>go(topPriorityWatch.dossier_id?"impact":"veille")}>{topPriorityWatch.dossier_id?"Ouvrir la Note d’impact":"Rattacher à un dossier"}</button></>:<div className="corp-empty">Aucune priorité détectée.</div>}</section>
-        <section className="corp-panel corp-score-card"><span>Capacité opérationnelle</span><div className="corp-score-line"><strong>{watch.length||actions.length?Math.min(100,45+linked*4+Math.min(openActions.length,8)*3):0}</strong><small>/100</small></div><p>Veille, dossiers et actions sont maintenant reliés à la même source de vérité.</p><button onClick={()=>go("builder")}>Ouvrir le Note Builder</button></section>
-      </aside>
-    </div>
+    <div className="corp-kpis"><div className="corp-kpi"><span>Dossiers actifs</span><strong>{dossiers.length}</strong><small><BriefcaseBusiness size={15}/> Portefeuille client</small></div><div className="corp-kpi"><span>Textes suivis</span><strong>{watch.length}</strong><small><FileText size={15}/> Veille institutionnelle</small></div><div className="corp-kpi"><span>Textes rattachés</span><strong>{linked}</strong><small><Link2 size={15}/> Analyse exploitable</small></div><div className="corp-kpi alert"><span>Actions ouvertes</span><strong>{openActions.length}</strong><small><AlertTriangle size={15}/> À traiter</small></div></div>
+    <div className="corp-dashboard-grid"><section className="corp-panel"><div className="corp-panel-head"><div><span>Dossiers récents</span><h2>Portefeuille client</h2></div><button onClick={()=>go("dossiers")}>Voir tout <ArrowRight size={15}/></button></div><div className="corp-list">{recentDossiers.length?recentDossiers.map(d=><button className="corp-list-row" key={d.id} onClick={()=>go("dossiers")}><span className="corp-avatar">{(d.client||d.title||"D").slice(0,2).toUpperCase()}</span><span className="corp-list-copy"><b>{d.title}</b><small>{d.client}</small></span><span className="corp-status">Actif</span><ArrowRight size={16}/></button>):<div className="corp-empty">Aucun dossier client pour le moment.</div>}</div></section><section className="corp-panel"><div className="corp-panel-head"><div><span>Veille récente</span><h2>Dernières évolutions</h2></div><button onClick={()=>go("veille")}>Voir tout <ArrowRight size={15}/></button></div><div className="corp-list">{recentWatch.length?recentWatch.map(item=><button className="corp-list-row" key={item.id} onClick={()=>go("veille")}><span className="corp-doc"><FileText size={18}/></span><span className="corp-list-copy"><b>{item.title}</b><small>{item.nature}</small></span><span className={`corp-impact ${item.urgency.replaceAll(" ","-")}`}>{item.urgency}</span></button>):<div className="corp-empty">Aucun élément de veille pour le moment.</div>}</div></section><aside className="corp-side-stack"><section className="corp-panel corp-deadline"><div className="corp-panel-head"><div><span>Priorité</span><h2>Prochaine action</h2></div><CalendarDays size={19}/></div>{topPriorityAction?<><div className="corp-date-box"><b>{topPriorityAction.priority}</b><span>{topPriorityAction.type.replaceAll("_"," ")}</span></div><h3>{topPriorityAction.title}</h3><p>{topPriorityAction.actor_name?`Acteur : ${topPriorityAction.actor_name}`:dossierName(topPriorityAction.dossier_id)}</p><button onClick={()=>go(topPriorityAction.type==="contact"?"radar":"dossiers")}>Ouvrir</button></>:topPriorityWatch?<><div className="corp-date-box"><b>À traiter</b><span>{topPriorityWatch.nature}</span></div><h3>{topPriorityWatch.title}</h3><p>Niveau : {topPriorityWatch.urgency}</p><button onClick={()=>go(topPriorityWatch.dossier_id?"impact":"veille")}>{topPriorityWatch.dossier_id?"Ouvrir la Note d’impact":"Rattacher à un dossier"}</button></>:<div className="corp-empty">Aucune priorité détectée.</div>}</section><section className="corp-panel corp-score-card"><span>Capacité opérationnelle</span><div className="corp-score-line"><strong>{watch.length||actions.length?Math.min(100,45+linked*4+Math.min(openActions.length,8)*3):0}</strong><small>/100</small></div><p>Veille, dossiers et actions sont reliés à la même source de vérité.</p><button onClick={()=>go("builder")}>Ouvrir le Note Builder</button></section></aside></div>
   </div>;
 }
