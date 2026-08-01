@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-export const maxDuration=30;
+export const maxDuration=45;
 
 type Dossier={id:string;client:string;title:string;objective:string;context?:string};
 type WatchItem={id:string;title:string;nature:string;source_url?:string;urgency?:string};
@@ -101,7 +101,7 @@ export async function POST(request:Request){
   ].filter(Boolean).join("\n");
 
   const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),27000);
+  const timer=setTimeout(()=>controller.abort(),44000);
 
   try{
     const response=await fetch("https://api.openai.com/v1/responses",{
