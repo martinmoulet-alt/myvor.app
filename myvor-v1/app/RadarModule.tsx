@@ -11,6 +11,25 @@ type Actor={id:string;name:string;role:string;orbit:1|2|3;position:"favorable"|"
 const COLORS={favorable:"#2f8f5b",inconnue:"#d9a514",reserve:"#d97706",opposition:"#b42318"};
 const ORBIT_RADII={1:112,2:190,3:268};
 
+function postJson<T>(url:string,body:unknown):Promise<T>{
+  return new Promise((resolve,reject)=>{
+    const xhr=new XMLHttpRequest();
+    xhr.open("POST",url,true);
+    xhr.setRequestHeader("Content-Type","application/json;charset=UTF-8");
+    xhr.responseType="text";
+    xhr.onload=()=>{
+      let payload:any={};
+      try{payload=xhr.responseText?JSON.parse(xhr.responseText):{};}catch{}
+      if(xhr.status>=200&&xhr.status<300)resolve(payload as T);
+      else reject(new Error(payload?.error||`Erreur réseau (${xhr.status})`));
+    };
+    xhr.onerror=()=>reject(new Error("Impossible de contacter le moteur Radar."));
+    xhr.ontimeout=()=>reject(new Error("Le moteur Radar a mis trop de temps à répondre."));
+    xhr.timeout=60000;
+    xhr.send(JSON.stringify(body));
+  });
+}
+
 export default function RadarModule({dossiers,watch}:{dossiers:Dossier[];watch:Watch[]}){
   const [dossierId,setDossierId]=useState(dossiers[0]?.id||"");
   const [actors,setActors]=useState<Actor[]>([]);
@@ -26,10 +45,7 @@ export default function RadarModule({dossiers,watch}:{dossiers:Dossier[];watch:W
     if(!related.length){setError("Aucun texte n’est rattaché à ce dossier.");return;}
     setLoading(true);setError("");setActors([]);setSelected(null);
     try{
-      const endpoint=new URL("/api/radar",window.location.origin).toString();
-      const response=await fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dossier,items:related})});
-      const payload=await response.json();
-      if(!response.ok)throw new Error(payload?.error||"Génération impossible");
+      const payload=await postJson<{actors?:Actor[]}>("/api/radar",{dossier,items:related});
       setActors(payload.actors||[]);
     }catch(err:any){setError(err?.message||"Génération impossible");}
     finally{setLoading(false);}
