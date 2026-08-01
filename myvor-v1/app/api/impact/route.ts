@@ -191,6 +191,7 @@ function mapImpactToNote(impact: any, dossier: Dossier, items: WatchItem[], dept
       url: item.source_url || "",
     })),
     score_detail: impact?.score_detail || null,
+    score_justifications: impact?.score_justifications || null,
     dispositions_concernees: Array.isArray(impact?.dispositions_concernees)
       ? impact.dispositions_concernees
       : [],
