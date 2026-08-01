@@ -3,6 +3,7 @@
 import { useMemo,useState } from "react";
 import { Copy,FileText,Sparkles } from "lucide-react";
 import { listProductions,saveProduction } from "@/lib/productions";
+import { supabase } from "@/lib/supabase";
 import styles from "./BuilderCorporate.module.css";
 
 type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string};
@@ -15,6 +16,16 @@ const formats=[
   ["email","E-mail"],
   ["rendez-vous","Préparation de rendez-vous"],
 ] as const;
+
+async function edgeFunctionError(error:any){
+  const fallback=String(error?.message||"La fonction Supabase note-builder a échoué.");
+  const response=error?.context;
+  if(!response)return fallback;
+  try{
+    const payload=await response.clone().json();
+    return String(payload?.error||fallback);
+  }catch{return fallback;}
+}
 
 export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch:Watch[]}){
   const [dossierId,setDossierId]=useState(dossiers[0]?.id||"");
@@ -33,6 +44,7 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
   async function generate(){
     if(!dossier){setError("Sélectionne un dossier client.");return;}
     if(!related.length){setError("Aucun texte n’est rattaché à ce dossier.");return;}
+    if(!supabase){setError("Supabase n’est pas configuré.");return;}
     setLoading(true);setError("");setSaveMessage("");setDocument(null);setCopied(false);
     try{
       const {data:productions,error:productionsError}=await listProductions(dossier.id);
@@ -41,17 +53,12 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
       const latestImpact=productions.find(item=>item.type==="impact")?.content||null;
       const latestRadar=productions.find(item=>item.type==="radar")?.content||null;
 
-      const endpoint=new URL("/api/builder",window.location.origin).toString();
-      const response=await fetch(endpoint,{
-        method:"POST",
-        headers:new Headers({"Content-Type":"application/json;charset=UTF-8"}),
-        body:JSON.stringify({dossier,items:related,format,audience,tone,instruction,impact:latestImpact,radar:latestRadar}),
-        cache:"no-store",
+      const {data:payload,error:invokeError}=await supabase.functions.invoke("note-builder",{
+        body:{dossier,items:related,format,audience,tone,instruction,impact:latestImpact,radar:latestRadar},
       });
-      const raw=await response.text();
-      let payload:any={};
-      try{payload=raw?JSON.parse(raw):{};}catch{throw new Error(`Réponse serveur invalide (${response.status}).`);}
-      if(!response.ok)throw new Error(payload?.error||`Génération impossible (${response.status})`);
+
+      if(invokeError)throw new Error(await edgeFunctionError(invokeError));
+      if(payload?.error)throw new Error(String(payload.error));
       if(!payload?.document)throw new Error("Le Note Builder n’a renvoyé aucun document.");
 
       const nextDocument=payload.document as BuiltDocument;
@@ -69,6 +76,7 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
           instruction,
           item_ids:related.map(i=>i.id),
           context_used:payload.context_used||null,
+          engine:payload.engine||"supabase-note-builder",
         },
       });
 
@@ -79,10 +87,10 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
         contextUsed.radar?"dernier Radar d’influence":null,
       ].filter(Boolean).join(" + ");
       const savedText=saved.error?`Document généré, mais non enregistré : ${saved.error.message}`:"Document enregistré dans l’historique du dossier.";
-      setSaveMessage(`${savedText} Contexte utilisé : ${contextParts}.`);
+      setSaveMessage(`${savedText} Moteur Supabase actif. Contexte utilisé : ${contextParts}.`);
     }catch(err:any){
       const message=String(err?.message||"");
-      setError(message.includes("expected pattern")?"Le navigateur a refusé la requête. Recharge la page puis réessaie.":message||"Génération impossible");
+      setError(message.includes("Failed to send a request")?"Impossible de joindre la fonction Supabase note-builder. Vérifie qu’elle est bien déployée.":message||"Génération impossible");
     }finally{setLoading(false);}
   }
 
