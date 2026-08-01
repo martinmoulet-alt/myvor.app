@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, BarChart3, BriefcaseBusiness, LogOut, Plus, Radar, RefreshCw, Search, Sparkles, X } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import ImpactModule from "./ImpactModule";
 
 type Tab = "dashboard" | "dossiers" | "veille" | "impact" | "radar" | "builder";
 type Dossier = { id:string; client:string; title:string; objective:string; context:string; status:string; created_at:string };
@@ -145,7 +146,9 @@ export default function Home(){
       ? <Dossiers items={dossiers} add={()=>setModal("dossier")} search={findRelevantForDossier} searching={searchingDossier} messages={dossierMessages}/>
       : tab==="veille"
         ? <Veille items={watch} dossiers={dossiers} add={()=>setModal("watch")} sync={syncSources} syncing={syncing} syncMessage={syncMessage} link={linkWatchToDossier}/>
-        : <ModulePlaceholder tab={tab} dossiers={dossiers} watch={watch}/>;
+        : tab==="impact"
+          ? <ImpactModule dossiers={dossiers} watch={watch}/>
+          : <ModulePlaceholder tab={tab} dossiers={dossiers} watch={watch}/>;
 
   return <div className="app"><header className="topbar"><div className="brand"><div className="logo">M</div>Myvor</div><button className="logout" onClick={()=>supabase?.auth.signOut()}><LogOut size={16}/></button></header><div className="shell"><aside className="sidebar">{nav.map(([id,label,Icon])=><button key={id} className={`navbtn ${tab===id?"active":""}`} onClick={()=>setTab(id)}><Icon size={18}/>{label}</button>)}</aside><main className="main">{content}</main></div><nav className="mobile-nav">{nav.slice(0,5).map(([id,label,Icon])=><button key={id} className={tab===id?"active":""} onClick={()=>setTab(id)}><Icon size={19}/>{label.split(" ")[0]}</button>)}</nav>{modal==="dossier"&&<DossierModal close={()=>setModal(null)} done={()=>{setModal(null);loadData();}}/>}{modal==="watch"&&<WatchModal dossiers={dossiers} close={()=>setModal(null)} done={()=>{setModal(null);loadData();}}/>}</div>;
 }
