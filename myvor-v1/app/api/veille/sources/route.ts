@@ -7,6 +7,10 @@ const SOURCES: Source[] = [
   { name:"Assemblée nationale", url:"http://www2.assemblee-nationale.fr/feeds/detail/documents-parlementaires", defaultNature:"Publication parlementaire" },
   { name:"Sénat — Textes", url:"https://www.senat.fr/rss/textes.rss", defaultNature:"Texte parlementaire" },
   { name:"Sénat — Rapports", url:"https://www.senat.fr/rss/rapports.rss", defaultNature:"Rapport" },
+  { name:"Économie — Actualités", url:"https://www.economie.gouv.fr/rss/toutesactualites", defaultNature:"Communiqué institutionnel" },
+  { name:"Transition écologique — Actualités", url:"https://www.ecologie.gouv.fr/rss-actualites.xml", defaultNature:"Communiqué institutionnel" },
+  { name:"Transition écologique — Presse", url:"https://www.ecologie.gouv.fr/rss-presse.xml", defaultNature:"Communiqué institutionnel" },
+  { name:"Direction générale du Trésor", url:"https://www.tresor.economie.gouv.fr/Flux/Atom/Articles/Home", defaultNature:"Publication institutionnelle" },
 ];
 
 function decodeHtml(value:string){
@@ -59,6 +63,8 @@ function inferNature(title:string,fallback:string){
   if(t.includes("rapport")) return "Rapport";
   if(t.includes("question")) return "Question parlementaire";
   if(t.includes("résolution")) return "Résolution";
+  if(t.includes("consultation")) return "Consultation publique";
+  if(t.includes("communiqué")||t.includes("communique")) return "Communiqué institutionnel";
   return fallback;
 }
 
@@ -73,9 +79,13 @@ function parseFeed(xml:string,source:Source):FeedItem[]{
 }
 
 async function fetchFeed(source:Source){
-  const response=await fetch(source.url,{headers:{"User-Agent":"Mozilla/5.0 Myvor/1.0","Accept":"application/rss+xml,application/xml,text/xml,*/*"},next:{revalidate:300}});
-  if(!response.ok) throw new Error(`${source.name}: HTTP ${response.status}`);
-  return parseFeed(await responseText(response),source).slice(0,12);
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),6500);
+  try{
+    const response=await fetch(source.url,{headers:{"User-Agent":"Mozilla/5.0 Myvor/1.0","Accept":"application/rss+xml,application/atom+xml,application/xml,text/xml,*/*"},next:{revalidate:300},signal:controller.signal});
+    if(!response.ok) throw new Error(`${source.name}: HTTP ${response.status}`);
+    return parseFeed(await responseText(response),source).slice(0,12);
+  }finally{clearTimeout(timer);}
 }
 
 async function fetchLegifranceJorf():Promise<FeedItem[]>{
@@ -105,25 +115,42 @@ async function fetchLegifranceJorf():Promise<FeedItem[]>{
   return items.filter((x,i,a)=>a.findIndex(y=>y.source_url===x.source_url)===i).slice(0,20);
 }
 
+async function fetchViePubliqueReports():Promise<FeedItem[]>{
+  const response=await fetch("https://www.vie-publique.fr/bibliotheque-rapports-publics",{headers:{"User-Agent":"Mozilla/5.0 Myvor/1.0","Accept":"text/html,*/*"},next:{revalidate:600}});
+  if(!response.ok) throw new Error(`Vie-publique — Rapports: HTTP ${response.status}`);
+  const html=await responseText(response);
+  const items:FeedItem[]=[];
+  const regex=/<a\b[^>]*href=["']([^"']*\/rapport\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  for(const match of html.matchAll(regex)){
+    const title=decodeHtml(match[2]);
+    if(title.length<12)continue;
+    const href=match[1];
+    const source_url=href.startsWith("http")?href:`https://www.vie-publique.fr${href.startsWith("/")?"":"/"}${href}`;
+    items.push({title,nature:"Rapport",source_url,source_name:"Vie-publique — Rapports"});
+  }
+  return items.filter((x,i,a)=>a.findIndex(y=>y.source_url===x.source_url)===i).slice(0,15);
+}
+
 export async function GET(){
   const feedSettled=await Promise.allSettled(SOURCES.map(fetchFeed));
-  const legifrance=await Promise.allSettled([fetchLegifranceJorf()]);
+  const extras=await Promise.allSettled([fetchLegifranceJorf(),fetchViePubliqueReports()]);
   const items=[
-    ...legifrance.flatMap(r=>r.status==="fulfilled"?r.value:[]),
+    ...extras.flatMap(r=>r.status==="fulfilled"?r.value:[]),
     ...feedSettled.flatMap(r=>r.status==="fulfilled"?r.value:[]),
-  ].filter((x,i,a)=>a.findIndex(y=>y.source_url===x.source_url)===i).slice(0,45);
+  ].filter((x,i,a)=>a.findIndex(y=>y.source_url===x.source_url)===i).slice(0,90);
 
+  const extraNames=["Légifrance — Journal officiel","Vie-publique — Rapports"];
   const active_sources=[
     ...feedSettled.map((r,i)=>r.status==="fulfilled"?SOURCES[i].name:null).filter(Boolean),
-    ...(legifrance[0]?.status==="fulfilled"?["Légifrance — Journal officiel"]:[]),
+    ...extras.map((r,i)=>r.status==="fulfilled"?extraNames[i]:null).filter(Boolean),
   ];
   const unavailable_sources=[
     ...feedSettled.map((r,i)=>r.status==="rejected"?SOURCES[i].name:null).filter(Boolean),
-    ...(legifrance[0]?.status==="rejected"?["Légifrance — Journal officiel"]:[]),
+    ...extras.map((r,i)=>r.status==="rejected"?extraNames[i]:null).filter(Boolean),
   ];
   const unavailable_details=[
     ...feedSettled.map((r,i)=>r.status==="rejected"?`${SOURCES[i].name}: ${String(r.reason?.message||r.reason)}`:null).filter(Boolean),
-    ...(legifrance[0]?.status==="rejected"?[`Légifrance — Journal officiel: ${String((legifrance[0] as PromiseRejectedResult).reason?.message||(legifrance[0] as PromiseRejectedResult).reason)}`]:[]),
+    ...extras.map((r,i)=>r.status==="rejected"?`${extraNames[i]}: ${String((r as PromiseRejectedResult).reason?.message||(r as PromiseRejectedResult).reason)}`:null).filter(Boolean),
   ];
 
   return NextResponse.json({synced_at:new Date().toISOString(),active_sources,unavailable_sources,unavailable_details,items});
