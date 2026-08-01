@@ -52,8 +52,13 @@ export default function ImpactModule({dossiers,watch,onActions}:{dossiers:Dossie
     setLoading(true);setError("");setSaveMessage("");setNote(null);
     try{
       const response=await fetch("/api/impact",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dossier,items,depth})});
-      const payload=await response.json();
-      if(!response.ok)throw new Error(payload?.error||"Génération impossible");
+      const raw=await response.text();
+      let payload:any=null;
+      try{payload=raw?JSON.parse(raw):null;}catch{
+        if(response.status===504)throw new Error("La Note approfondie a dépassé le temps de réponse du serveur. Réessaie après le redéploiement en cours.");
+        throw new Error(`Le serveur Myvor a renvoyé une réponse invalide (${response.status}).`);
+      }
+      if(!response.ok)throw new Error(payload?.error||`Génération impossible (${response.status})`);
       const nextNote=payload.note||null;
       setNote(nextNote);
       if(nextNote){
