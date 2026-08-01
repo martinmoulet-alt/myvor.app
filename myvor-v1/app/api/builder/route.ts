@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-export const maxDuration=20;
+export const maxDuration=30;
 
 type Dossier={id:string;client:string;title:string;objective:string;context?:string};
 type WatchItem={id:string;title:string;nature:string;source_url?:string;urgency?:string};
@@ -17,49 +17,54 @@ function extractOutputText(payload:any){
   return chunks.map((chunk:any)=>chunk?.text||"").join("");
 }
 
+function clip(value:unknown,max:number){
+  return String(value??"").slice(0,max);
+}
+
 function compactImpact(value:any){
   const note=value?.note||value||null;
   if(!note)return null;
   return {
-    title:note.title||"",
-    executive_summary:note.executive_summary||"",
+    executive_summary:clip(note.executive_summary,1600),
     score:note.score??null,
-    level:note.level||"",
-    rationale:note.rationale||"",
-    risks:Array.isArray(note.risks)?note.risks.slice(0,8):[],
-    opportunities:Array.isArray(note.opportunities)?note.opportunities.slice(0,8):[],
-    deadlines:Array.isArray(note.deadlines)?note.deadlines.slice(0,8):[],
-    recommendations:Array.isArray(note.recommendations)?note.recommendations.slice(0,8):[],
-    dispositions_concernees:Array.isArray(note.dispositions_concernees)?note.dispositions_concernees.slice(0,10):[],
-    informations_a_confirmer:Array.isArray(note.informations_a_confirmer)?note.informations_a_confirmer.slice(0,8):[],
+    level:clip(note.level,80),
+    rationale:clip(note.rationale,1000),
+    risks:Array.isArray(note.risks)?note.risks.slice(0,5).map((x:any)=>clip(x,450)):[],
+    opportunities:Array.isArray(note.opportunities)?note.opportunities.slice(0,5).map((x:any)=>clip(x,450)):[],
+    deadlines:Array.isArray(note.deadlines)?note.deadlines.slice(0,5).map((x:any)=>clip(x,350)):[],
+    recommendations:Array.isArray(note.recommendations)?note.recommendations.slice(0,6).map((x:any)=>clip(x,500)):[],
+    dispositions_concernees:Array.isArray(note.dispositions_concernees)?note.dispositions_concernees.slice(0,6).map((item:any)=>({
+      disposition:clip(item?.disposition,500),
+      impact_client:clip(item?.impact_client,700),
+      niveau:clip(item?.niveau,80),
+    })):[],
   };
 }
 
 function compactRadar(value:any){
   const actors=Array.isArray(value?.actors)?value.actors:Array.isArray(value)?value:[];
   if(!actors.length)return null;
-  return actors.slice(0,12).map((actor:any)=>({
-    name:actor.name||"",
-    role:actor.role||"",
+  return actors.slice(0,8).map((actor:any)=>({
+    name:clip(actor.name,180),
+    role:clip(actor.role,240),
     orbit:actor.orbit??null,
-    position:actor.position||"",
+    position:clip(actor.position,80),
     influence:actor.influence??null,
-    why:actor.why||"",
-    window:actor.window||"",
-    action:actor.action||"",
-    certainty:actor.certainty||"",
-    evidence:actor.evidence||"",
+    why:clip(actor.why,550),
+    window:clip(actor.window,350),
+    action:clip(actor.action,450),
+    certainty:clip(actor.certainty,80),
   }));
 }
 
 export async function POST(request:Request){
   const body=await request.json().catch(()=>null);
   const dossier:Dossier|null=body?.dossier||null;
-  const items:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,12):[];
+  const items:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,8):[];
   const format=String(body?.format||"note-client");
   const audience=String(body?.audience||"Client").slice(0,120);
   const tone=String(body?.tone||"professionnel et direct").slice(0,120);
-  const instruction=String(body?.instruction||"").slice(0,1200);
+  const instruction=String(body?.instruction||"").slice(0,1000);
   const impact=compactImpact(body?.impact);
   const radar=compactRadar(body?.radar);
 
@@ -70,48 +75,42 @@ export async function POST(request:Request){
   if(!apiKey)return NextResponse.json({error:"La clé OpenAI n’est pas configurée correctement dans Netlify."},{status:503});
 
   const formatRules:Record<string,string>={
-    "note-client":"Rédige une note client prête à envoyer : objet, synthèse exécutive, situation institutionnelle, dispositions ou évolutions importantes, conséquences concrètes pour le client, risques, opportunités, acteurs et fenêtres d’action utiles, recommandations opérationnelles hiérarchisées et prochaines étapes.",
-    "argumentaire":"Rédige un argumentaire de rendez-vous prêt à l’emploi : objectif, message central, arguments étayés, éléments de preuve disponibles, objections probables et réponses, acteurs à convaincre, demandes précises et résultat recherché.",
-    "email":"Rédige un e-mail prêt à envoyer : objet, ouverture, message essentiel, implications pour le destinataire, demande ou recommandation précise et appel à l’action. Reste concis.",
-    "rendez-vous":"Rédige une fiche de préparation de rendez-vous : contexte, objectif, profil et position des interlocuteurs disponibles, messages clés, arguments, questions à poser, points de vigilance, fenêtre d’action et résultat recherché.",
+    "note-client":"Rédige une note client prête à envoyer : objet, synthèse exécutive, situation institutionnelle, conséquences concrètes pour le client, risques/opportunités, acteurs utiles, fenêtres d’action, recommandations hiérarchisées et prochaines étapes.",
+    "argumentaire":"Rédige un argumentaire de rendez-vous prêt à l’emploi : objectif, message central, arguments étayés, objections/réponses, acteurs à convaincre, demandes précises et résultat recherché.",
+    "email":"Rédige un e-mail prêt à envoyer : objet, ouverture, message essentiel, implications, demande précise et appel à l’action. Reste concis.",
+    "rendez-vous":"Rédige une fiche de préparation de rendez-vous : contexte, objectif, interlocuteurs, messages clés, arguments, questions, vigilances, fenêtre d’action et résultat recherché.",
   };
 
   const prompt=[
-    "Tu es le Note Builder de Myvor, un outil professionnel d’affaires publiques.",
-    "Ta mission est de transformer les analyses déjà produites dans Myvor en un document réellement exploitable par un consultant, pas en une simple liste de données.",
+    "Tu es le Note Builder de Myvor, outil professionnel d’affaires publiques.",
+    "Transforme les analyses existantes en un document directement exploitable par un consultant.",
     formatRules[format]||formatRules["note-client"],
-    `Public visé : ${audience}.`,
-    `Ton attendu : ${tone}.`,
-    instruction?`Instruction complémentaire de l’utilisateur : ${instruction}`:"",
-    "Hiérarchie de travail : 1) objectif et contexte du dossier, 2) Note d’impact lorsqu’elle existe, 3) Radar d’influence lorsqu’il existe, 4) éléments de veille liés.",
-    "Ne crée aucun fait, date, chiffre, position d’acteur ou disposition qui ne figure pas dans les données fournies. Si une information reste incertaine, formule-la explicitement comme telle.",
-    "Les recommandations stratégiques peuvent être déduites des éléments fournis, mais elles doivent être clairement formulées comme recommandations et non comme faits établis.",
-    "Évite les formulations génériques du type 'suivre le dossier' ou 'mettre à jour le radar' lorsqu’une action plus précise peut être tirée du contexte.",
-    "N’évoque pas les noms internes des modules Myvor dans le document final, sauf si c’est nécessaire à la compréhension du lecteur.",
-    "Pour une note client, vise environ 700 à 1000 mots si le contexte est suffisamment riche. Pour les autres formats, adapte la longueur à l’usage.",
+    `Public visé : ${audience}. Ton : ${tone}.`,
+    instruction?`Instruction utilisateur : ${instruction}`:"",
+    "Priorité des sources : dossier et objectif > Note d’impact > Radar d’influence > veille.",
+    "N’invente aucun fait, date, chiffre ou position. Toute incertitude doit être explicitement signalée.",
+    "Les recommandations peuvent être déduites du contexte, mais doivent être présentées comme recommandations.",
+    "Évite les conseils génériques lorsqu’une action précise ressort des données.",
+    "Pour une note client, vise environ 550 à 750 mots afin de rester opérationnel et rapide.",
     "Réponds uniquement en JSON valide avec exactement cette structure :",
     JSON.stringify({title:"string",subject:"string",content:"string",key_points:["string"]}),
-    "DOSSIER :",
-    JSON.stringify({client:dossier.client,title:dossier.title,objective:dossier.objective,context:dossier.context||""}),
-    "NOTE D'IMPACT DISPONIBLE :",
-    JSON.stringify(impact),
-    "RADAR D'INFLUENCE DISPONIBLE :",
-    JSON.stringify(radar),
-    "ÉLÉMENTS DE VEILLE LIÉS :",
-    JSON.stringify(items.map(item=>({title:item.title,nature:item.nature,urgency:item.urgency||"",source_url:item.source_url||""}))),
+    "DOSSIER :",JSON.stringify({client:clip(dossier.client,300),title:clip(dossier.title,300),objective:clip(dossier.objective,1200),context:clip(dossier.context,1600)}),
+    "NOTE D'IMPACT :",JSON.stringify(impact),
+    "RADAR D'INFLUENCE :",JSON.stringify(radar),
+    "VEILLE :",JSON.stringify(items.map(item=>({title:clip(item.title,450),nature:clip(item.nature,100),urgency:clip(item.urgency,80)}))),
   ].filter(Boolean).join("\n");
 
   const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),17000);
+  const timer=setTimeout(()=>controller.abort(),27000);
 
   try{
     const response=await fetch("https://api.openai.com/v1/responses",{
       method:"POST",
       headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},
       body:JSON.stringify({
-        model:process.env.OPENAI_BUILDER_MODEL||"gpt-4.1-mini",
+        model:"gpt-4.1-mini",
         input:prompt,
-        max_output_tokens:2200,
+        max_output_tokens:1700,
         text:{format:{type:"json_object"}},
       }),
       signal:controller.signal,
