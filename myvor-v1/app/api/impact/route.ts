@@ -51,7 +51,7 @@ const OFFICIAL_HOSTS = [
 const depthConfig:Record<ImpactDepth,{label:string;maxItems:number;maxUrls:number;sourceChars:number;instruction:string}>={
   express:{label:"Express",maxItems:3,maxUrls:2,sourceChars:18000,instruction:"NOTE EXPRESS. Va à l'essentiel. Synthèse courte. Maximum 3 risques, 2 opportunités, 1 à 2 échéances et 3 recommandations prioritaires. Ne développe que les dispositions ayant un impact direct et immédiat pour le client."},
   standard:{label:"Standard",maxItems:10,maxUrls:4,sourceChars:45000,instruction:"NOTE STANDARD. Produis une analyse complète pour le travail quotidien : synthèse exécutive, score argumenté, dispositions concernées, risques, opportunités, échéances et recommandations opérationnelles."},
-  deep:{label:"Approfondie",maxItems:20,maxUrls:6,sourceChars:32000,instruction:"NOTE APPROFONDIE. Analyse en profondeur toutes les sources disponibles. Distingue les dispositions, leurs effets juridiques, économiques et opérationnels, les incertitudes, scénarios d'évolution, échéances, marges d'action et recommandations hiérarchisées. Justifie séparément chacun des six critères de notation. Sois détaillé mais n'invente rien."},
+  deep:{label:"Approfondie",maxItems:8,maxUrls:2,sourceChars:14000,instruction:"NOTE APPROFONDIE RAPIDE. Conserve une vraie valeur de conseil mais reste concise pour une génération sous la minute : synthèse 180 à 250 mots, justification séparée des six critères en 1 à 2 phrases chacun, maximum 4 dispositions, 4 risques, 3 opportunités, 3 échéances et 5 recommandations. Priorise les éléments directement utiles au client et n'invente rien."},
 };
 
 function asText(value: unknown) {
@@ -101,7 +101,7 @@ async function fetchOfficialSource(rawUrl: string, maxChars:number): Promise<Sou
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 6500);
+  const timer = setTimeout(() => controller.abort(), 4500);
 
   try {
     const response = await fetch(rawUrl, {
@@ -173,6 +173,13 @@ function mapImpactToNote(impact: any, dossier: Dossier, items: WatchItem[], dept
     recommendations=recommendations.slice(0,3);
   }
 
+  if(depth==="deep"){
+    risks=risks.slice(0,4);
+    opportunities=opportunities.slice(0,3);
+    deadlines=deadlines.slice(0,3);
+    recommendations=recommendations.slice(0,5);
+  }
+
   const level = asText(impact?.niveau).replaceAll("_", " ") || "moyen";
 
   return {
@@ -192,7 +199,7 @@ function mapImpactToNote(impact: any, dossier: Dossier, items: WatchItem[], dept
     score_detail: impact?.score_detail || null,
     score_justifications: impact?.score_justifications || null,
     dispositions_concernees: Array.isArray(impact?.dispositions_concernees)
-      ? impact.dispositions_concernees
+      ? impact.dispositions_concernees.slice(0,depth==="deep"?4:impact.dispositions_concernees.length)
       : [],
     informations_a_confirmer: Array.isArray(impact?.informations_a_confirmer)
       ? impact.informations_a_confirmer
@@ -314,7 +321,7 @@ export async function POST(request: Request) {
     }
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 52000);
+    const timer = setTimeout(() => controller.abort(), 44000);
 
     try {
       const response = await fetch(`${supabaseUrl}/functions/v1/impact-analysis`, {
