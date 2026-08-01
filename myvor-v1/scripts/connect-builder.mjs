@@ -7,10 +7,12 @@ const radarImport = 'import RadarModule from "./RadarModule";';
 const builderImport = 'import BuilderModule from "./BuilderModule";';
 const dashboardImport = 'import DashboardCorporate from "./DashboardCorporate";';
 const dossiersImport = 'import DossiersCorporate from "./DossiersCorporate";';
+const veilleImport = 'import VeilleCorporate from "./VeilleCorporate";';
 
 if (!text.includes(builderImport)) text = text.replace(radarImport, `${radarImport}\n${builderImport}`);
 if (!text.includes(dashboardImport)) text = text.replace(builderImport, `${builderImport}\n${dashboardImport}`);
 if (!text.includes(dossiersImport)) text = text.replace(dashboardImport, `${dashboardImport}\n${dossiersImport}`);
+if (!text.includes(veilleImport)) text = text.replace(dossiersImport, `${dossiersImport}\n${veilleImport}`);
 
 const oldBlock = `          : tab==="radar"
             ? <RadarModule dossiers={dossiers} watch={watch}/>
@@ -28,6 +30,7 @@ if (!text.includes('<BuilderModule dossiers={dossiers} watch={watch}/>')) {
 
 text = text.replace('? <Dashboard dossiers={dossiers} watch={watch} go={setTab}/>', '? <DashboardCorporate dossiers={dossiers} watch={watch} go={setTab}/>');
 text = text.replace('? <Dossiers items={dossiers} add={()=>setModal("dossier")} search={findRelevantForDossier} searching={searchingDossier} messages={dossierMessages}/>', '? <DossiersCorporate items={dossiers} watch={watch} add={()=>setModal("dossier")} search={findRelevantForDossier} searching={searchingDossier} messages={dossierMessages}/>');
+text = text.replace('? <Veille items={watch} dossiers={dossiers} add={()=>setModal("watch")} sync={syncSources} syncing={syncing} syncMessage={syncMessage} link={linkWatchToDossier}/>', '? <VeilleCorporate items={watch} dossiers={dossiers} add={()=>setModal("watch")} sync={syncSources} syncing={syncing} syncMessage={syncMessage} link={linkWatchToDossier}/>');
 
 fs.writeFileSync(path, text);
-console.log("Corporate dashboard, client files and Note Builder connected to Myvor.");
+console.log("Corporate dashboard, client files, monitoring and Note Builder connected to Myvor.");
