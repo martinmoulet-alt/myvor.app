@@ -8,6 +8,29 @@ type Dossier={id:string;client:string;title:string;objective:string;context:stri
 type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string};
 type Suggestion={watch_id:string;dossier_id:string|null;confidence:number;reason:string};
 
+function sourceLabel(url:string){
+  try{
+    const host=new URL(url).hostname.replace(/^www\./,"");
+    if(host.includes("assemblee-nationale.fr"))return "Assemblée nationale";
+    if(host.includes("senat.fr"))return "Sénat";
+    if(host.includes("legifrance.gouv.fr"))return "Légifrance — Journal officiel";
+    if(host.includes("vie-publique.fr"))return "Vie-publique";
+    if(host.includes("economie.gouv.fr"))return "Ministère de l’Économie";
+    if(host.includes("ecologie.gouv.fr"))return "Transition écologique";
+    if(host.includes("tresor.economie.gouv.fr"))return "Direction générale du Trésor";
+    if(host.includes("conseil-etat.fr"))return "Conseil d’État";
+    if(host.includes("conseil-constitutionnel.fr"))return "Conseil constitutionnel";
+    if(host.includes("ccomptes.fr"))return "Cour des comptes";
+    if(host.includes("cnil.fr"))return "CNIL";
+    if(host.includes("arcep.fr"))return "ARCEP";
+    if(host.includes("cre.fr"))return "CRE";
+    if(host.includes("amf-france.org"))return "AMF";
+    if(host.includes("autoritedelaconcurrence.fr"))return "Autorité de la concurrence";
+    if(host.includes("eur-lex.europa.eu"))return "EUR-Lex";
+    return host;
+  }catch{return "Source officielle";}
+}
+
 export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMessage,link}:{items:Watch[];dossiers:Dossier[];add:()=>void;sync:()=>void;syncing:boolean;syncMessage:string;link:(watchId:string,dossierId:string|null)=>Promise<void>|void}){
   const [query,setQuery]=useState("");
   const [nature,setNature]=useState("all");
@@ -88,7 +111,7 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
         <div className={styles.meta}><span><CalendarDays size={14}/>{new Date(item.created_at).toLocaleDateString("fr-FR")}</span><span><Building2 size={14}/>{dossier?`${dossier.client} — ${dossier.title}`:"Aucun dossier"}</span></div>
         {suggestion&&suggestedDossier&&<div className={styles.suggestion}><div className={styles.suggestionTop}><b>Dossier suggéré : {suggestedDossier.client} — {suggestedDossier.title}</b><span className={styles.confidence}>{Math.round(suggestion.confidence*100)} %</span></div><p>{suggestion.reason}</p><div className={styles.suggestionActions}><button className={styles.accept} onClick={()=>acceptSuggestion(suggestion)}>Rattacher</button><button className={styles.ignore} onClick={()=>setIgnored(current=>[...current,item.id])}>Ignorer</button></div></div>}
         <div className={styles.dossier}><label>Dossier lié</label><select value={item.dossier_id||""} onChange={e=>link(item.id,e.target.value||null)}><option value="">Non rattaché</option>{dossiers.map(d=><option value={d.id} key={d.id}>{d.client} — {d.title}</option>)}</select></div>
-        <div className={styles.footer}>{item.source_url?<a className={styles.source} href={item.source_url} target="_blank" rel="noreferrer">Lire le texte original</a>:<span/>}<span className={styles.count}>Source officielle</span></div>
+        <div className={styles.footer}>{item.source_url?<a className={styles.source} href={item.source_url} target="_blank" rel="noreferrer">Lire le texte original</a>:<span/>}<span className={styles.count}>{sourceLabel(item.source_url)}</span></div>
       </article>;
     })}</div>:<div className={styles.empty}><FileText size={34}/><h2>Aucun texte trouvé</h2><p>Synchronisez les sources ou modifiez vos filtres.</p></div>}
   </div>;
