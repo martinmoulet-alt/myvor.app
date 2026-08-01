@@ -2,7 +2,7 @@
 
 import { useMemo,useState } from "react";
 import { AlertTriangle,CheckCircle2,Download,FileText,Sparkles,Target } from "lucide-react";
-import { getProduction,saveProduction,updateProductionContent } from "@/lib/productions";
+import { saveProduction } from "@/lib/productions";
 import styles from "./ImpactCorporate.module.css";
 
 type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string};
@@ -31,7 +31,6 @@ const scoreLabels:{key:keyof ScoreDetail;label:string;max:number}[]=[
 
 function escapeHtml(value:unknown){return String(value??"").replace(/[&<>'"]/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[char]||char));}
 function listHtml(items?:string[]){if(!items?.length)return "<p class='muted'>Aucun élément identifié.</p>";return `<ul>${items.map(item=>`<li>${escapeHtml(item)}</li>`).join("")}</ul>`;}
-function sleep(ms:number){return new Promise(resolve=>setTimeout(resolve,ms));}
 
 export default function ImpactModule({dossiers,watch,onActions}:{dossiers:Dossier[];watch:Watch[];onActions?:(drafts:ActionDraft[])=>Promise<void>|void}){
   const [dossierId,setDossierId]=useState(dossiers[0]?.id||"");
@@ -46,75 +45,35 @@ export default function ImpactModule({dossiers,watch,onActions}:{dossiers:Dossie
   const related=useMemo(()=>watch.filter(w=>w.dossier_id===dossierId),[watch,dossierId]);
   const effectiveIds=selectedIds.length?selectedIds:related.map(w=>w.id);
 
-  async function createActions(nextNote:Note){
-    if(!dossier||!onActions)return;
-    const priority=String(nextNote.level||"moyen");
-    const drafts:ActionDraft[]=[{dossier_id:dossier.id,type:"note_client",title:`Envoyer la note d’impact — ${dossier.title}`,description:String(nextNote.executive_summary||"Note d’impact prête à partager avec le client."),priority}];
-    if(Array.isArray(nextNote.deadlines)&&nextNote.deadlines.length){drafts.push({dossier_id:dossier.id,type:"echeance",title:`Vérifier la prochaine échéance — ${dossier.title}`,description:String(nextNote.deadlines[0]),priority,due_date:null});}
-    await onActions(drafts);
-  }
-
-  async function generateDeep(items:Watch[]){
-    if(!dossier)return;
-    const title=`Note d’impact approfondie — ${dossier.title}`;
-    const itemIds=items.map(item=>item.id);
-    const queued=await saveProduction({dossier_id:dossier.id,type:"impact",title,content:{status:"pending",depth:"deep",item_ids:itemIds,started_at:new Date().toISOString()}});
-    if(queued.error||!queued.data)throw new Error(queued.error?.message||"Impossible de créer la Note approfondie.");
-    const productionId=queued.data.id;
-    setSaveMessage("Note approfondie lancée. L’analyse continue en arrière-plan et apparaîtra ici dès qu’elle sera prête.");
-
-    try{
-      const response=await fetch("/api/impact",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dossier,items,depth:"deep",async:true,production_id:productionId})});
-      const raw=await response.text();
-      let payload:any=null;
-      try{payload=raw?JSON.parse(raw):null;}catch{throw new Error(`Le serveur Myvor a renvoyé une réponse invalide (${response.status}).`);}
-      if(!response.ok)throw new Error(payload?.error||`Impossible de lancer la Note approfondie (${response.status}).`);
-      if(payload?.accepted!==true)throw new Error("La Note approfondie n’a pas été acceptée en arrière-plan.");
-
-      for(let attempt=0;attempt<180;attempt++){
-        await sleep(2000);
-        const {data,error:readError}=await getProduction(productionId);
-        if(readError){if(attempt<4)continue;throw new Error(readError.message);}
-        const content:any=data?.content||{};
-        if(content.status==="failed")throw new Error(String(content.error||"La génération de la Note approfondie a échoué."));
-        if(content.status==="completed"&&content.note){
-          const nextNote=content.note as Note;
-          setNote(nextNote);
-          setSaveMessage("Note approfondie terminée et enregistrée dans l’historique du dossier.");
-          await createActions(nextNote);
-          return;
-        }
-      }
-      setSaveMessage("La Note approfondie est toujours en cours. Elle restera enregistrée dans le dossier dès que le traitement sera terminé.");
-    }catch(err:any){
-      await updateProductionContent(productionId,{status:"failed",depth:"deep",item_ids:itemIds,error:err?.message||"Génération impossible",failed_at:new Date().toISOString()});
-      throw err;
-    }
-  }
-
-  async function generateSync(items:Watch[]){
-    if(!dossier)return;
-    const response=await fetch("/api/impact",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dossier,items,depth})});
-    const raw=await response.text();
-    let payload:any=null;
-    try{payload=raw?JSON.parse(raw):null;}catch{throw new Error(`Le serveur Myvor a renvoyé une réponse invalide (${response.status}).`);}
-    if(!response.ok)throw new Error(payload?.error||`Génération impossible (${response.status})`);
-    const nextNote=payload.note||null;
-    setNote(nextNote);
-    if(nextNote){
-      const title=String(nextNote.title||`Note d’impact — ${dossier.title}`);
-      const saved=await saveProduction({dossier_id:dossier.id,type:"impact",title,content:{note:nextNote,item_ids:items.map(i=>i.id),depth}});
-      setSaveMessage(saved.error?`Note générée, mais non enregistrée : ${saved.error.message}`:`Note ${depthOptions.find(option=>option.value===depth)?.label.toLowerCase()} enregistrée dans l’historique du dossier.`);
-      await createActions(nextNote);
-    }
-  }
-
   async function generate(){
     if(!dossier){setError("Sélectionne un dossier client.");return;}
     const items=related.filter(w=>effectiveIds.includes(w.id));
     if(!items.length){setError("Aucun élément de veille n’est rattaché à ce dossier.");return;}
     setLoading(true);setError("");setSaveMessage("");setNote(null);
-    try{if(depth==="deep")await generateDeep(items);else await generateSync(items);}catch(err:any){setError(err?.message||"Génération impossible");}finally{setLoading(false);}
+    try{
+      const response=await fetch("/api/impact",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({dossier,items,depth})});
+      const raw=await response.text();
+      let payload:any=null;
+      try{payload=raw?JSON.parse(raw):null;}catch{
+        if(response.status===504)throw new Error("La Note approfondie a dépassé le temps de réponse du serveur.");
+        throw new Error(`Le serveur Myvor a renvoyé une réponse invalide (${response.status}).`);
+      }
+      if(!response.ok)throw new Error(payload?.error||`Génération impossible (${response.status})`);
+      const nextNote=payload.note||null;
+      setNote(nextNote);
+      if(nextNote){
+        const title=String(nextNote.title||`Note d’impact — ${dossier.title}`);
+        const saved=await saveProduction({dossier_id:dossier.id,type:"impact",title,content:{note:nextNote,item_ids:items.map(i=>i.id),depth}});
+        setSaveMessage(saved.error?`Note générée, mais non enregistrée : ${saved.error.message}`:`Note ${depthOptions.find(option=>option.value===depth)?.label.toLowerCase()} enregistrée dans l’historique du dossier.`);
+      }
+      if(nextNote&&onActions){
+        const priority=String(nextNote.level||"moyen");
+        const drafts:ActionDraft[]=[{dossier_id:dossier.id,type:"note_client",title:`Envoyer la note d’impact — ${dossier.title}`,description:String(nextNote.executive_summary||"Note d’impact prête à partager avec le client."),priority}];
+        if(Array.isArray(nextNote.deadlines)&&nextNote.deadlines.length){drafts.push({dossier_id:dossier.id,type:"echeance",title:`Vérifier la prochaine échéance — ${dossier.title}`,description:String(nextNote.deadlines[0]),priority,due_date:null});}
+        await onActions(drafts);
+      }
+    }catch(err:any){setError(err?.message||"Génération impossible");}
+    finally{setLoading(false);}
   }
 
   function toggle(id:string){const base=selectedIds.length?selectedIds:related.map(w=>w.id);setSelectedIds(base.includes(id)?base.filter(x=>x!==id):[...base,id]);}
@@ -147,7 +106,7 @@ export default function ImpactModule({dossiers,watch,onActions}:{dossiers:Dossie
 
     <section className={styles.depthPanel}><div className={styles.depthHead}><div><b>Type de note</b><span>Choisissez le niveau d’analyse adapté au dossier.</span></div></div><div className={styles.depthGrid}>{depthOptions.map(option=><button type="button" key={option.value} className={`${styles.depthOption} ${depth===option.value?styles.depthActive:""}`} onClick={()=>{setDepth(option.value);setNote(null);setError("");setSaveMessage("");}}><strong>{option.label}</strong><span>{option.description}</span></button>)}</div></section>
 
-    <section className={styles.launch}><div><div className={styles.launchIcon}><Sparkles size={20}/></div><div><b>Analyse prête — {depthOptions.find(option=>option.value===depth)?.label}</b><span>{effectiveIds.length} texte(s) sélectionné(s) pour {dossier?.client||"ce dossier"}.</span></div></div><button onClick={generate} disabled={loading||!dossier||!related.length}>{loading?(depth==="deep"?"Analyse approfondie en arrière-plan…":"Analyse en cours…"):`Générer la note ${depthOptions.find(option=>option.value===depth)?.label.toLowerCase()}`}</button></section>
+    <section className={styles.launch}><div><div className={styles.launchIcon}><Sparkles size={20}/></div><div><b>Analyse prête — {depthOptions.find(option=>option.value===depth)?.label}</b><span>{effectiveIds.length} texte(s) sélectionné(s) pour {dossier?.client||"ce dossier"}.</span></div></div><button onClick={generate} disabled={loading||!dossier||!related.length}>{loading?"Analyse en cours…":`Générer la note ${depthOptions.find(option=>option.value===depth)?.label.toLowerCase()}`}</button></section>
     {error&&<div className={styles.error}>{error}</div>}
     {saveMessage&&<div className={styles.error}>{saveMessage}</div>}
 
