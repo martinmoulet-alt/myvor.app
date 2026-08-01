@@ -51,7 +51,7 @@ const OFFICIAL_HOSTS = [
 const depthConfig:Record<ImpactDepth,{label:string;maxItems:number;maxUrls:number;sourceChars:number;instruction:string}>={
   express:{label:"Express",maxItems:3,maxUrls:2,sourceChars:18000,instruction:"NOTE EXPRESS. Va à l'essentiel. Synthèse courte. Maximum 3 risques, 2 opportunités, 1 à 2 échéances et 3 recommandations prioritaires. Ne développe que les dispositions ayant un impact direct et immédiat pour le client."},
   standard:{label:"Standard",maxItems:10,maxUrls:4,sourceChars:45000,instruction:"NOTE STANDARD. Produis une analyse complète pour le travail quotidien : synthèse exécutive, score argumenté, dispositions concernées, risques, opportunités, échéances et recommandations opérationnelles."},
-  deep:{label:"Approfondie",maxItems:20,maxUrls:8,sourceChars:70000,instruction:"NOTE APPROFONDIE. Analyse en profondeur toutes les sources disponibles. Distingue les dispositions, leurs effets juridiques, économiques et opérationnels, les incertitudes, scénarios d'évolution, échéances, marges d'action et recommandations hiérarchisées. Sois détaillé mais n'invente rien."},
+  deep:{label:"Approfondie",maxItems:20,maxUrls:6,sourceChars:32000,instruction:"NOTE APPROFONDIE. Analyse en profondeur toutes les sources disponibles. Distingue les dispositions, leurs effets juridiques, économiques et opérationnels, les incertitudes, scénarios d'évolution, échéances, marges d'action et recommandations hiérarchisées. Justifie séparément chacun des six critères de notation. Sois détaillé mais n'invente rien."},
 };
 
 function asText(value: unknown) {
@@ -101,7 +101,7 @@ async function fetchOfficialSource(rawUrl: string, maxChars:number): Promise<Sou
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 9000);
+  const timer = setTimeout(() => controller.abort(), 6500);
 
   try {
     const response = await fetch(rawUrl, {
@@ -113,8 +113,6 @@ async function fetchOfficialSource(rawUrl: string, maxChars:number): Promise<Sou
       signal: controller.signal,
       cache: "no-store",
     });
-
-    clearTimeout(timer);
 
     if (!response.ok) {
       return { url: rawUrl, content: "", status: "unavailable" };
@@ -133,8 +131,9 @@ async function fetchOfficialSource(rawUrl: string, maxChars:number): Promise<Sou
       status: text ? "fetched" : "unavailable",
     };
   } catch {
-    clearTimeout(timer);
     return { url: rawUrl, content: "", status: "unavailable" };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -203,115 +202,153 @@ function mapImpactToNote(impact: any, dossier: Dossier, items: WatchItem[], dept
 }
 
 export async function POST(request: Request) {
-  const body = await request.json().catch(() => null);
-  const dossier: Dossier | null = body?.dossier || null;
-  const requestedDepth = asText(body?.depth) as ImpactDepth;
-  const depth:ImpactDepth = requestedDepth in depthConfig ? requestedDepth : "standard";
-  const config=depthConfig[depth];
-  const items: WatchItem[] = Array.isArray(body?.items) ? body.items.slice(0, config.maxItems) : [];
-
-  if (!dossier) {
-    return NextResponse.json({ error: "Sélectionne un dossier client." }, { status: 400 });
-  }
-
-  if (!items.length) {
-    return NextResponse.json(
-      { error: "Aucun élément de veille n’est rattaché à ce dossier." },
-      { status: 400 },
-    );
-  }
-
-  const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-
-  if (!supabaseUrl || !supabaseAnonKey) {
-    return NextResponse.json(
-      { error: "La connexion Supabase de Myvor n’est pas configurée." },
-      { status: 503 },
-    );
-  }
-
-  const uniqueUrls = [...new Set(items.map((item) => item.source_url || "").filter(Boolean))].slice(0, config.maxUrls);
-  const extractions = await Promise.all(uniqueUrls.map(url=>fetchOfficialSource(url,config.sourceChars)));
-  const extractionByUrl = new Map(extractions.map((source) => [source.url, source]));
-
-  const sourceText = [
-    `TYPE DE NOTE DEMANDÉE : ${config.label.toUpperCase()}`,
-    `INSTRUCTION DE PROFONDEUR : ${config.instruction}`,
-    "Cette instruction décrit le niveau de détail attendu. Elle ne doit jamais conduire à inventer des informations absentes des sources.",
-    "",
-    ...items.map((item, index) => {
-      const extraction = item.source_url ? extractionByUrl.get(item.source_url) : undefined;
-      const parts = [
-        `SOURCE ${index + 1}`,
-        `Titre : ${item.title}`,
-        item.nature ? `Nature : ${item.nature}` : "",
-        item.source_url ? `URL officielle : ${item.source_url}` : "",
-        extraction?.status === "fetched"
-          ? `CONTENU OFFICIEL RÉCUPÉRÉ :\n${extraction.content}`
-          : `CONTENU OFFICIEL : non récupéré automatiquement (${extraction?.status || "aucune URL"}). Ne pas inventer le contenu du texte.`,
-      ].filter(Boolean);
-      return parts.join("\n");
-    }),
-  ].join("\n\n====================\n\n");
-
-  const firstSourceUrl = items.find((item) => item.source_url)?.source_url || "";
-  const fetchedCount = extractions.filter((source) => source.status === "fetched").length;
-
   try {
-    const response = await fetch(`${supabaseUrl}/functions/v1/impact-analysis`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${supabaseAnonKey}`,
-        apikey: supabaseAnonKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        depth,
-        client: dossier.client,
-        contexte: dossier.context || "",
-        objectif: dossier.objective,
-        titre: items.length === 1 ? items[0].title : `${dossier.title} — ${items.length} textes analysés`,
-        lien_officiel: firstSourceUrl,
-        texte: sourceText,
-      }),
-    });
+    const body = await request.json().catch(() => null);
+    const dossier: Dossier | null = body?.dossier || null;
+    const requestedDepth = asText(body?.depth) as ImpactDepth;
+    const depth:ImpactDepth = requestedDepth in depthConfig ? requestedDepth : "standard";
+    const config=depthConfig[depth];
+    const items: WatchItem[] = Array.isArray(body?.items) ? body.items.slice(0, config.maxItems) : [];
 
-    const payload = await response.json().catch(() => null);
+    if (!dossier) {
+      return NextResponse.json({ error: "Sélectionne un dossier client." }, { status: 400 });
+    }
 
-    if (!response.ok) {
+    if (!items.length) {
       return NextResponse.json(
-        {
-          error:
-            payload?.error ||
-            `La fonction impact-analysis a échoué (${response.status}).`,
-        },
-        { status: response.status >= 400 && response.status < 600 ? response.status : 502 },
+        { error: "Aucun élément de veille n’est rattaché à ce dossier." },
+        { status: 400 },
       );
     }
 
-    const impact = payload?.impact;
-    if (!impact || typeof impact?.score !== "number") {
+    const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+
+    if (!supabaseUrl || !supabaseAnonKey) {
       return NextResponse.json(
-        { error: "La fonction impact-analysis n’a pas retourné une Note d’impact exploitable." },
+        { error: "La connexion Supabase de Myvor n’est pas configurée." },
+        { status: 503 },
+      );
+    }
+
+    const uniqueUrls = [...new Set(items.map((item) => item.source_url || "").filter(Boolean))].slice(0, config.maxUrls);
+    const extractions = await Promise.all(uniqueUrls.map(url=>fetchOfficialSource(url,config.sourceChars)));
+    const extractionByUrl = new Map(extractions.map((source) => [source.url, source]));
+
+    const sourceText = [
+      `TYPE DE NOTE DEMANDÉE : ${config.label.toUpperCase()}`,
+      `INSTRUCTION DE PROFONDEUR : ${config.instruction}`,
+      "Cette instruction décrit le niveau de détail attendu. Elle ne doit jamais conduire à inventer des informations absentes des sources.",
+      "",
+      ...items.map((item, index) => {
+        const extraction = item.source_url ? extractionByUrl.get(item.source_url) : undefined;
+        const parts = [
+          `SOURCE ${index + 1}`,
+          `Titre : ${item.title}`,
+          item.nature ? `Nature : ${item.nature}` : "",
+          item.source_url ? `URL officielle : ${item.source_url}` : "",
+          extraction?.status === "fetched"
+            ? `CONTENU OFFICIEL RÉCUPÉRÉ :\n${extraction.content}`
+            : `CONTENU OFFICIEL : non récupéré automatiquement (${extraction?.status || "aucune URL"}). Ne pas inventer le contenu du texte.`,
+        ].filter(Boolean);
+        return parts.join("\n");
+      }),
+    ].join("\n\n====================\n\n");
+
+    const firstSourceUrl = items.find((item) => item.source_url)?.source_url || "";
+    const fetchedCount = extractions.filter((source) => source.status === "fetched").length;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 52000);
+
+    try {
+      const response = await fetch(`${supabaseUrl}/functions/v1/impact-analysis`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${supabaseAnonKey}`,
+          apikey: supabaseAnonKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          depth,
+          client: dossier.client,
+          contexte: dossier.context || "",
+          objectif: dossier.objective,
+          titre: items.length === 1 ? items[0].title : `${dossier.title} — ${items.length} textes analysés`,
+          lien_officiel: firstSourceUrl,
+          texte: sourceText,
+        }),
+        signal: controller.signal,
+      });
+
+      const rawPayload = await response.text();
+      let payload:any = null;
+      try {
+        payload = rawPayload ? JSON.parse(rawPayload) : null;
+      } catch {
+        return NextResponse.json(
+          {
+            error: `impact-analysis a retourné une réponse non JSON (${response.status}).`,
+            details: rawPayload.slice(0, 500),
+          },
+          { status: 502 },
+        );
+      }
+
+      if (!response.ok) {
+        return NextResponse.json(
+          {
+            error:
+              payload?.error ||
+              `La fonction impact-analysis a échoué (${response.status}).`,
+          },
+          { status: response.status >= 400 && response.status < 600 ? response.status : 502 },
+        );
+      }
+
+      const impact = payload?.impact;
+      if (!impact || typeof impact?.score !== "number") {
+        return NextResponse.json(
+          { error: "La fonction impact-analysis n’a pas retourné une Note d’impact exploitable." },
+          { status: 502 },
+        );
+      }
+
+      return NextResponse.json({
+        note: mapImpactToNote(impact, dossier, items, depth),
+        engine: "supabase-impact-analysis",
+        depth,
+        grounding: {
+          official_sources_requested: uniqueUrls.length,
+          official_sources_fetched: fetchedCount,
+          statuses: extractions.map((source) => ({ url: source.url, status: source.status })),
+        },
+      });
+    } catch (error:any) {
+      if (error?.name === "AbortError") {
+        return NextResponse.json(
+          {
+            error: depth === "deep"
+              ? "La Note approfondie dépasse le temps de réponse disponible. Myvor a arrêté proprement l’analyse avant le timeout."
+              : "L’analyse dépasse le temps de réponse disponible.",
+          },
+          { status: 504 },
+        );
+      }
+      return NextResponse.json(
+        { error: error?.message || "Impossible de joindre la fonction impact-analysis." },
         { status: 502 },
       );
+    } finally {
+      clearTimeout(timer);
     }
-
-    return NextResponse.json({
-      note: mapImpactToNote(impact, dossier, items, depth),
-      engine: "supabase-impact-analysis",
-      depth,
-      grounding: {
-        official_sources_requested: uniqueUrls.length,
-        official_sources_fetched: fetchedCount,
-        statuses: extractions.map((source) => ({ url: source.url, status: source.status })),
-      },
-    });
-  } catch (error: any) {
+  } catch (error:any) {
     return NextResponse.json(
-      { error: error?.message || "Impossible de joindre la fonction impact-analysis." },
-      { status: 502 },
+      {
+        error: "Erreur interne pendant la préparation de la Note d’impact.",
+        details: error?.message || String(error),
+      },
+      { status: 500 },
     );
   }
 }
