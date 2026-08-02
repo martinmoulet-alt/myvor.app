@@ -6,7 +6,7 @@ type WatchItem={id:string;user_id:string;title:string;nature:string;source_url:s
 type Setting={user_id:string;enabled:boolean;auto_link_threshold:number|string;review_threshold:number|string};
 type KeywordMatch={watch_id:string;dossier_id:string|null;confidence:number;matches:string[];reason:string};
 type AiQualification={watch_id:string;urgency:"faible"|"moyen"|"fort"|"absolument urgent";reason:string};
-type ScoreResult={score:number;matches:string[];priorityMatches:string[];blockedBy:string|null};
+type ScoreResult={score:number;matches:string[];priorityMatches:string[];blockedBy:string|null;explicitKeywords:boolean};
 
 const JSON_HEADERS={"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"};
 const VALID_URGENCIES=new Set(["faible","moyen","fort","absolument urgent"]);
@@ -34,13 +34,14 @@ function scoreKeywords(item:WatchItem,dossier:Dossier):ScoreResult{
   const normalizedItem=normalize(`${item.title} ${item.nature}`);
   const itemWords=new Set(keywords(normalizedItem));
   const excluded=cleanedList(dossier.watch_excluded_keywords);
+  const explicitKeywords=cleanedList(dossier.watch_keywords);
   const blockedBy=excluded.find(term=>containsPhrase(normalizedItem,term))||null;
-  if(blockedBy)return{score:0,matches:[],priorityMatches:[],blockedBy};
+  if(blockedBy)return{score:0,matches:[],priorityMatches:[],blockedBy,explicitKeywords:explicitKeywords.length>0};
 
   const priorityPhrases=cleanedList(dossier.watch_priority_phrases);
   const priorityMatches=priorityPhrases.filter(phrase=>containsPhrase(normalizedItem,phrase));
-  const explicitKeywords=cleanedList(dossier.watch_keywords);
-  const dossierWords=explicitKeywords.length
+  const hasExplicitKeywords=explicitKeywords.length>0;
+  const dossierWords=hasExplicitKeywords
     ? [...new Set(explicitKeywords.flatMap(value=>keywords(value)))]
     : keywords(`${dossier.title} ${dossier.objective||""} ${dossier.context||""}`);
 
@@ -50,12 +51,16 @@ function scoreKeywords(item:WatchItem,dossier:Dossier):ScoreResult{
   let score=0;
   if(priorityMatches.length>=2)score=0.99;
   else if(priorityMatches.length===1)score=0.97;
-  else if(unique.length>=4)score=0.99;
-  else if(unique.length===3)score=0.95;
-  else if(unique.length===2)score=0.86;
-  else if(unique.length===1)score=0.66;
-  if(points>=3.5)score=Math.max(score,0.97);
-  return{score,matches:unique.slice(0,8),priorityMatches:priorityMatches.slice(0,4),blockedBy:null};
+  else if(hasExplicitKeywords&&unique.length>=4)score=0.99;
+  else if(hasExplicitKeywords&&unique.length===3)score=0.96;
+  else if(hasExplicitKeywords&&unique.length===2)score=0.92;
+  else if(hasExplicitKeywords&&unique.length===1)score=0.66;
+  else if(unique.length>=4)score=0.98;
+  else if(unique.length===3)score=0.94;
+  else if(unique.length===2)score=0.82;
+  else if(unique.length===1)score=0.62;
+  if(points>=3.5)score=Math.max(score,hasExplicitKeywords?0.97:0.96);
+  return{score,matches:unique.slice(0,8),priorityMatches:priorityMatches.slice(0,4),blockedBy:null,explicitKeywords:hasExplicitKeywords};
 }
 
 function keywordMatch(item:WatchItem,dossiers:Dossier[]):KeywordMatch{
@@ -63,12 +68,12 @@ function keywordMatch(item:WatchItem,dossiers:Dossier[]):KeywordMatch{
   const best=ranked[0];const second=ranked[1];
   if(!best||best.score<0.55){
     const blocked=ranked.find(result=>result.blockedBy);
-    return{watch_id:item.id,dossier_id:null,confidence:0,matches:[],reason:blocked?`Règles dossier — Exclusion détectée : ${blocked.blockedBy}.`:"Règles dossier — Aucun mot-clé suffisamment pertinent détecté."};
+    return{watch_id:item.id,dossier_id:null,confidence:0,matches:[],reason:blocked?`Règles dossier v2 — Exclusion détectée : ${blocked.blockedBy}.`:"Règles dossier v2 — Aucun mot-clé suffisamment pertinent détecté."};
   }
   let confidence=best.score;
   if(second&&second.score>=0.55&&(best.score-second.score)<0.12)confidence=Math.min(confidence,0.88);
-  const parts=[best.priorityMatches.length?`Expression prioritaire : ${best.priorityMatches.join(", ")}.`:"",best.matches.length?`Mots-clés détectés : ${best.matches.join(", ")}.`:""].filter(Boolean);
-  return{watch_id:item.id,dossier_id:best.d.id,confidence:Number(confidence.toFixed(2)),matches:[...best.priorityMatches,...best.matches].slice(0,8),reason:`Règles dossier — ${parts.join(" ")||`Correspondance avec ${best.d.title}.`}`};
+  const parts=[best.priorityMatches.length?`Expression prioritaire : ${best.priorityMatches.join(", ")}.`:"",best.matches.length?`${best.explicitKeywords?"Mots-clés explicites":"Mots-clés détectés"} : ${best.matches.join(", ")}.`:""].filter(Boolean);
+  return{watch_id:item.id,dossier_id:best.d.id,confidence:Number(confidence.toFixed(2)),matches:[...best.priorityMatches,...best.matches].slice(0,8),reason:`Règles dossier v2 — ${parts.join(" ")||`Correspondance avec ${best.d.title}.`}`};
 }
 
 async function fetchJson(url:string,init:RequestInit={},timeoutMs=15000){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);try{const response=await fetch(url,{...init,signal:controller.signal});const text=await response.text();let payload:any={};try{payload=text?JSON.parse(text):{};}catch{payload={raw:text};}if(!response.ok)throw new Error(`HTTP ${response.status}: ${clip(payload?.error||payload?.raw||response.statusText,240)}`);return payload;}finally{clearTimeout(timer);}}
@@ -105,7 +110,7 @@ Deno.serve(async(req)=>{
   const sourceEndpoint=Deno.env.get("MYVOR_SOURCES_URL")||"https://myvor.app/api/veille/sources";
 
   let sourcePayload:any;
-  try{sourcePayload=await fetchJson(sourceEndpoint,{headers:{Accept:"application/json","User-Agent":"Myvor-Supabase-Veille/2.1"}},18000);}catch(error:any){return json({ok:false,error:`Collecte impossible: ${clip(error?.message,260)}`},502);}
+  try{sourcePayload=await fetchJson(sourceEndpoint,{headers:{Accept:"application/json","User-Agent":"Myvor-Supabase-Veille/2.2"}},18000);}catch(error:any){return json({ok:false,error:`Collecte impossible: ${clip(error?.message,260)}`},502);}
 
   const sources:SourceItem[]=(Array.isArray(sourcePayload?.items)?sourcePayload.items:[])
     .map((item:any)=>({title:clip(item?.title,800),nature:clip(item?.nature||"Publication institutionnelle",140),source_url:canonicalUrl(clip(item?.source_url,1200)),source_name:clip(item?.source_name,180)||undefined,published_at:clip(item?.published_at,100)||undefined}))
@@ -123,7 +128,7 @@ Deno.serve(async(req)=>{
     const {data:activeRun}=await supabase.from("veille_runs").select("id").eq("user_id",userId).eq("status","running").gte("started_at",tenMinutesAgo).limit(1).maybeSingle();
     if(activeRun){summaries.push({user_id:userId,status:"skipped",reason:"already_running"});continue;}
 
-    const engine=openAIKey?"dossier-keywords+openai":"dossier-keywords";
+    const engine=openAIKey?"dossier-keywords-v2+openai":"dossier-keywords-v2";
     const {data:run,error:runError}=await supabase.from("veille_runs").insert({user_id:userId,status:"running",sources_count:Array.isArray(sourcePayload?.active_sources)?sourcePayload.active_sources.length:0,fetched_count:sources.length,engine}).select("id").single();
     if(runError){summaries.push({user_id:userId,status:"error",message:"run_log_failed"});continue;}
     const runId=run.id as string;
@@ -146,7 +151,7 @@ Deno.serve(async(req)=>{
         inserted=(data||[]) as WatchItem[];
       }
 
-      const legacyUnlinked=existingItems.filter(item=>!item.dossier_id&&!String(item.qualification_reason||"").startsWith("Règles dossier —")).slice(0,100);
+      const legacyUnlinked=existingItems.filter(item=>!item.dossier_id&&!String(item.qualification_reason||"").startsWith("Règles dossier v2 —")).slice(0,100);
       const processItems=[...inserted,...legacyUnlinked];
       const allDossiers=(dossiers||[]) as Dossier[];
       const autoThreshold=Math.max(0.5,Math.min(1,Number(setting.auto_link_threshold)||0.9));
@@ -186,7 +191,7 @@ Deno.serve(async(req)=>{
       }
 
       const status=qualificationError?"partial":"success";
-      const message=qualificationError?`${fresh.length} nouveau(x) texte(s), ${processItems.length} analysé(s) avec les règles dossier. Qualification IA partielle: ${qualificationError}`:`${fresh.length} nouveau(x) texte(s) · ${processItems.length} analysé(s) · ${autoLinked} auto-rattaché(s) · ${review} à valider · ${actionsCreated} action(s) créée(s).`;
+      const message=qualificationError?`${fresh.length} nouveau(x) texte(s), ${processItems.length} analysé(s) avec les règles dossier v2. Qualification IA partielle: ${qualificationError}`:`${fresh.length} nouveau(x) texte(s) · ${processItems.length} analysé(s) · ${autoLinked} auto-rattaché(s) · ${review} à valider · ${actionsCreated} action(s) créée(s).`;
       await supabase.from("veille_runs").update({status,finished_at:new Date().toISOString(),new_count:fresh.length,auto_linked_count:autoLinked,review_count:review,actions_created_count:actionsCreated,engine,message}).eq("id",runId);
       await supabase.from("veille_settings").update({last_run_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq("user_id",userId);
       summaries.push({user_id:userId,status,new_items:fresh.length,processed:processItems.length,auto_linked:autoLinked,review,actions_created:actionsCreated,engine});
