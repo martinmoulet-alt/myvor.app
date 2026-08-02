@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect,useState } from "react";
+import { useEffect,useRef,useState } from "react";
 import { AlertTriangle,BarChart3,BriefcaseBusiness,LogOut,Radar,Search,Sparkles,X } from "lucide-react";
 import { isSupabaseConfigured,supabase } from "@/lib/supabase";
 import DashboardCorporate,{type Action} from "./DashboardCorporate";
@@ -22,10 +22,44 @@ const AUTO_LINK_THRESHOLD=0.75;
 function parseWatchList(value:string){return [...new Set(value.split(/[\n,;]+/).map(item=>item.trim()).filter(Boolean))].slice(0,60);}
 
 export default function Home(){
-  const [session,setSession]=useState<any>(null);const [loading,setLoading]=useState(true);const [tab,setTab]=useState<Tab>("dashboard");const [dossiers,setDossiers]=useState<Dossier[]>([]);const [watch,setWatch]=useState<Watch[]>([]);const [actions,setActions]=useState<Action[]>([]);const [actionsLoading,setActionsLoading]=useState(false);const [actionsError,setActionsError]=useState("");const [selectedDossier,setSelectedDossier]=useState<Dossier|null>(null);const [modal,setModal]=useState<"dossier"|"watch"|null>(null);const [authMode,setAuthMode]=useState<"login"|"signup">("login");const [email,setEmail]=useState("");const [password,setPassword]=useState("");const [message,setMessage]=useState("");const [syncing,setSyncing]=useState(false);const [syncMessage,setSyncMessage]=useState("");const [searchingDossier,setSearchingDossier]=useState<string|null>(null);const [dossierMessages,setDossierMessages]=useState<Record<string,string>>({});const [mobileMenuOpen,setMobileMenuOpen]=useState(false);
+  const [session,setSession]=useState<any>(null);const [loading,setLoading]=useState(true);const [tab,setTab]=useState<Tab>("dashboard");const [dossiers,setDossiers]=useState<Dossier[]>([]);const [watch,setWatch]=useState<Watch[]>([]);const [actions,setActions]=useState<Action[]>([]);const [actionsLoading,setActionsLoading]=useState(false);const [actionsError,setActionsError]=useState("");const [selectedDossier,setSelectedDossier]=useState<Dossier|null>(null);const [modal,setModal]=useState<"dossier"|"watch"|null>(null);const [authMode,setAuthMode]=useState<"login"|"signup">("login");const [email,setEmail]=useState("");const [password,setPassword]=useState("");const [message,setMessage]=useState("");const [syncing,setSyncing]=useState(false);const [syncMessage,setSyncMessage]=useState("");const [searchingDossier,setSearchingDossier]=useState<string|null>(null);const [dossierMessages,setDossierMessages]=useState<Record<string,string>>({});const [mobileMenuOpen,setMobileMenuOpen]=useState(false);const lastResumeRefreshAt=useRef(0);
 
   useEffect(()=>{if(!supabase){setLoading(false);return;}supabase.auth.getSession().then(({data})=>{setSession(data.session);setLoading(false);});const {data}=supabase.auth.onAuthStateChange((_e,s)=>setSession(s));return()=>data.subscription.unsubscribe();},[]);
   useEffect(()=>{if(session)loadData();else{setDossiers([]);setWatch([]);setActions([]);}},[session]);
+  useEffect(()=>{
+    if(!session||!supabase)return;
+    let cancelled=false;
+    const refreshOnResume=async()=>{
+      const now=Date.now();
+      if(now-lastResumeRefreshAt.current<1500)return;
+      lastResumeRefreshAt.current=now;
+      const [dRes,wRes,aRes]=await Promise.all([
+        supabase.from("dossiers").select("*").order("created_at",{ascending:false}),
+        supabase.from("watch_items").select("*").order("created_at",{ascending:false}),
+        supabase.from("actions").select("id,dossier_id,type,title,description,actor_name,priority,status,due_date,created_at,updated_at").order("created_at",{ascending:false}),
+      ]);
+      if(cancelled)return;
+      const nextDossiers=(dRes.data||[]) as Dossier[];
+      setDossiers(nextDossiers);
+      setWatch((wRes.data||[]) as Watch[]);
+      setActions((aRes.data||[]) as Action[]);
+      setActionsError(aRes.error?aRes.error.message:"");
+      setSelectedDossier(current=>current?(nextDossiers.find(dossier=>dossier.id===current.id)||null):null);
+    };
+    const requestRefresh=()=>{void refreshOnResume();};
+    const onVisibility=()=>{if(document.visibilityState==="visible")requestRefresh();};
+    window.addEventListener("focus",requestRefresh);
+    window.addEventListener("pageshow",requestRefresh);
+    window.addEventListener("online",requestRefresh);
+    document.addEventListener("visibilitychange",onVisibility);
+    return()=>{
+      cancelled=true;
+      window.removeEventListener("focus",requestRefresh);
+      window.removeEventListener("pageshow",requestRefresh);
+      window.removeEventListener("online",requestRefresh);
+      document.removeEventListener("visibilitychange",onVisibility);
+    };
+  },[session]);
 
   async function loadData(){
     if(!supabase)return;setActionsLoading(true);
