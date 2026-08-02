@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect,useMemo,useState } from "react";
+import { useEffect,useMemo,useRef,useState } from "react";
 import { AlertTriangle,Building2,CalendarDays,FileText,RefreshCw,Search,Sparkles } from "lucide-react";
 import styles from "./VeilleCorporate.module.css";
 
@@ -40,7 +40,20 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
   const [suggestions,setSuggestions]=useState<Suggestion[]>([]);
   const [ignored,setIgnored]=useState<string[]>([]);
   const [focusId,setFocusId]=useState<string|null>(null);
+  const autoSyncStarted=useRef(false);
+  const autoQualificationBatch=useRef("");
+
   useEffect(()=>{const target=sessionStorage.getItem("myvor:open-watch");if(!target)return;const item=items.find(entry=>entry.id===target);if(!item)return;sessionStorage.removeItem("myvor:open-watch");setQuery(item.title);setNature("all");setUrgency("all");setFocusId(item.id);setTimeout(()=>document.getElementById(`watch-${item.id}`)?.scrollIntoView({behavior:"smooth",block:"center"}),80);setTimeout(()=>setFocusId(null),2200);},[items]);
+  useEffect(()=>{
+    if(autoSyncStarted.current)return;
+    autoSyncStarted.current=true;
+    const last=Number(localStorage.getItem("myvor:veille:last-auto-sync")||0);
+    if(Number.isFinite(last)&&Date.now()-last<15*60*1000)return;
+    localStorage.setItem("myvor:veille:last-auto-sync",String(Date.now()));
+    const timer=setTimeout(()=>sync(),250);
+    return()=>clearTimeout(timer);
+  },[sync]);
+
   const natures=useMemo(()=>Array.from(new Set(items.map(item=>item.nature))).sort(),[items]);
   const filtered=useMemo(()=>items.filter(item=>{
     const q=[item.title,item.nature].join(" ").toLowerCase().includes(query.toLowerCase());
@@ -50,22 +63,31 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
   const linked=items.filter(item=>item.dossier_id).length;
   const unlinkedItems=items.filter(item=>!item.dossier_id);
   const unlinked=unlinkedItems.length;
+  const qualificationBatchKey=unlinkedItems.slice(0,40).map(item=>item.id).join("|");
   const visibleSuggestions=suggestions.filter(s=>!ignored.includes(s.watch_id)&&!items.find(i=>i.id===s.watch_id)?.dossier_id&&s.dossier_id);
 
-  async function qualify(){
+  useEffect(()=>{
+    if(!qualificationBatchKey||!dossiers.length||qualifying)return;
+    if(autoQualificationBatch.current===qualificationBatchKey)return;
+    autoQualificationBatch.current=qualificationBatchKey;
+    const timer=setTimeout(()=>{void qualify(true);},650);
+    return()=>clearTimeout(timer);
+  },[qualificationBatchKey,dossiers.length,qualifying]);
+
+  async function qualify(automatic=false){
     if(qualifying||!unlinkedItems.length||!dossiers.length)return;
-    setQualifying(true);setQualificationMessage("");setSuggestions([]);setIgnored([]);
+    setQualifying(true);setQualificationMessage(automatic?"Qualification automatique des nouvelles publications…":"");setSuggestions([]);setIgnored([]);
     try{
-      const response=await fetch("/api/veille/assign",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:unlinkedItems.slice(0,40).map(i=>({id:i.id,title:i.title,nature:i.nature})),dossiers:dossiers.map(d=>({id:d.id,title:d.title,objective:d.objective}))})});
+      const response=await fetch("/api/veille/assign",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:unlinkedItems.slice(0,40).map(i=>({id:i.id,title:i.title,nature:i.nature})),dossiers:dossiers.map(d=>({id:d.id,title:d.title,objective:d.objective,context:d.context}))})});
       const payload=await response.json();if(!response.ok)throw new Error(payload?.error||"Qualification impossible");
       const results=(Array.isArray(payload.assignments)?payload.assignments:[]) as Suggestion[];
-      const automatic=results.filter(s=>s.dossier_id&&Number(s.confidence)>=0.90);
+      const automaticLinks=results.filter(s=>s.dossier_id&&Number(s.confidence)>=0.90);
       let autoLinked=0;
-      for(const s of automatic){await link(s.watch_id,s.dossier_id);autoLinked++;}
+      for(const s of automaticLinks){await link(s.watch_id,s.dossier_id);autoLinked++;}
       const review=results.filter(s=>s.dossier_id&&Number(s.confidence)>=0.55&&Number(s.confidence)<0.90);
       setSuggestions(review);
       const noMatch=results.filter(s=>!s.dossier_id||Number(s.confidence)<0.55).length;
-      setQualificationMessage(`${autoLinked} rattachement(s) automatique(s) · ${review.length} suggestion(s) à valider · ${noMatch} sans correspondance solide. Moteur : ${payload.engine||"Myvor"}.`);
+      setQualificationMessage(`${automatic?"Automatisation terminée":"Qualification terminée"} · ${autoLinked} rattachement(s) automatique(s) · ${review.length} suggestion(s) à valider · ${noMatch} sans correspondance solide. Moteur : ${payload.engine||"Myvor"}.`);
     }catch(error:any){setQualificationMessage(`Qualification impossible : ${error?.message||"erreur inconnue"}`);}finally{setQualifying(false);}
   }
 
@@ -76,7 +98,7 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
     <div className={styles.head}>
       <div><div className={styles.kicker}>Sources institutionnelles</div><h1>Veille</h1><p>Centralisez les publications officielles et rattachez-les à vos dossiers clients.</p></div>
       <div className={styles.actions}>
-        <button className={styles.secondary} onClick={sync} disabled={syncing}><RefreshCw size={16}/> {syncing?"Synchronisation…":"Synchroniser"}</button>
+        <button className={styles.secondary} onClick={sync} disabled={syncing}><RefreshCw size={16}/> {syncing?"Synchronisation…":"Synchroniser maintenant"}</button>
         <button className={styles.primary} onClick={add}>+ Ajouter un texte</button>
       </div>
     </div>
@@ -89,12 +111,12 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
     </div>
 
     <section className={styles.qualification}>
-      <div className={styles.qualificationHead}><div><h2>Qualification assistée</h2><p>Myvor propose le dossier probable, explique pourquoi et rattache automatiquement uniquement les correspondances très sûres.</p></div><button className={styles.qualificationButton} onClick={qualify} disabled={qualifying||!unlinked||!dossiers.length}><Sparkles size={15}/> {qualifying?"Analyse en cours…":`Qualifier ${Math.min(unlinked,40)} texte(s)`}</button></div>
-      <div className={styles.qualificationStats}><span>Auto-rattachement ≥ 90 %</span><span>Validation manuelle 55–89 %</span><span>En dessous : aucun rattachement</span></div>
+      <div className={styles.qualificationHead}><div><h2><Sparkles size={17}/> Mode automatique</h2><p>À l’ouverture, Myvor synchronise les sources si nécessaire, analyse les nouveaux textes et rattache automatiquement uniquement les correspondances très sûres.</p></div><button className={styles.qualificationButton} onClick={()=>qualify(false)} disabled={qualifying||!unlinked||!dossiers.length}><Sparkles size={15}/> {qualifying?"Analyse en cours…":"Relancer l’analyse"}</button></div>
+      <div className={styles.qualificationStats}><span>Synchronisation auto toutes les 15 min à l’ouverture</span><span>Auto-rattachement ≥ 90 %</span><span>Validation manuelle 55–89 %</span></div>
       {qualificationMessage&&<div className={styles.syncMessage}>{qualificationMessage}</div>}
     </section>
 
-    <div className={styles.sourceNotice}><b>Sources automatiques :</b> institutions parlementaires et gouvernementales, juridictions, Cour des comptes, CNIL, ARCEP et EUR-Lex.</div>
+    <div className={styles.sourceNotice}><b>Collecte automatique :</b> institutions parlementaires et gouvernementales, juridictions, Cour des comptes, CNIL, ARCEP et EUR-Lex.</div>
     {syncMessage&&<div className={styles.syncMessage}>{syncMessage}</div>}
 
     <div className={styles.toolbar}>
