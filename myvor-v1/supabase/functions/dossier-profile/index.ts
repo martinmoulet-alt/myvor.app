@@ -184,6 +184,7 @@ Deno.serve(async (req) => {
     "Les textes de référence doivent rester vides si aucun texte identifiable n'est fourni.",
     "Les échéances doivent rester vides si aucune échéance fiable n'est fournie.",
     "Tous les champs du format de sortie doivent être présents. Utilise une chaîne vide ou une liste vide quand l'information est absente.",
+    "Réponds de façon concise : maximum 5 éléments par liste et une phrase courte par élément.",
     "DOSSIER :",
     JSON.stringify({
       client: clip(dossier.client, 300),
@@ -209,6 +210,8 @@ Deno.serve(async (req) => {
   const timer = setTimeout(() => controller.abort(), 40000);
 
   try {
+    const model = Deno.env.get("OPENAI_MODEL") || "gpt-5-mini";
+    const supportsReasoning = model.startsWith("gpt-5") || /^o\d/.test(model);
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
@@ -216,9 +219,10 @@ Deno.serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: Deno.env.get("OPENAI_MODEL") || "gpt-5-mini",
+        model,
         input: prompt,
-        max_output_tokens: 3000,
+        max_output_tokens: 5000,
+        ...(supportsReasoning ? { reasoning: { effort: "minimal" } } : {}),
         store: false,
         text: {
           format: {
@@ -277,7 +281,7 @@ Deno.serve(async (req) => {
         key_deadlines: cleanList(profile.key_deadlines),
         internal_notes: clip(profile.internal_notes, 1600),
       },
-      engine: "myvor-dossier-profile-ai-v4-structured",
+      engine: "myvor-dossier-profile-ai-v5-efficient-structured",
     });
   } catch (error: any) {
     if (error?.name === "AbortError") {
