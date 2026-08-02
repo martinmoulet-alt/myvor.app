@@ -48,6 +48,16 @@ set search_path = public
 as $$
 begin
   new.watch_rules_updated_at := now();
+
+  update public.watch_items
+  set
+    suggested_dossier_id = null,
+    qualification_confidence = null,
+    qualification_reason = null,
+    qualified_at = null
+  where user_id = new.user_id
+    and dossier_id is null;
+
   return new;
 end;
 $$;
