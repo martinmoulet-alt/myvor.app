@@ -16,7 +16,7 @@ alter table public.watch_items add column if not exists qualified_at timestamptz
 create table if not exists public.veille_settings (
   user_id uuid primary key references auth.users(id) on delete cascade,
   enabled boolean not null default true,
-  auto_link_threshold numeric(4,3) not null default 0.900 check (auto_link_threshold between 0 and 1),
+  auto_link_threshold numeric(4,3) not null default 0.750 check (auto_link_threshold between 0 and 1),
   review_threshold numeric(4,3) not null default 0.550 check (review_threshold between 0 and 1),
   last_run_at timestamptz,
   updated_at timestamptz not null default now(),
