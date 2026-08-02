@@ -7,6 +7,9 @@ create table if not exists public.dossiers (
   title text not null,
   objective text not null,
   context text not null default '',
+  watch_keywords text[] not null default '{}'::text[],
+  watch_priority_phrases text[] not null default '{}'::text[],
+  watch_excluded_keywords text[] not null default '{}'::text[],
   status text not null default 'Actif',
   created_at timestamptz not null default now()
 );
@@ -33,3 +36,6 @@ create policy "watch_select_own" on public.watch_items for select using (auth.ui
 create policy "watch_insert_own" on public.watch_items for insert with check (auth.uid() = user_id);
 create policy "watch_update_own" on public.watch_items for update using (auth.uid() = user_id);
 create policy "watch_delete_own" on public.watch_items for delete using (auth.uid() = user_id);
+
+create index if not exists dossiers_watch_keywords_gin_idx
+  on public.dossiers using gin (watch_keywords);
