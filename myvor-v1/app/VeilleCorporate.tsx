@@ -2,10 +2,11 @@
 
 import { useEffect,useMemo,useRef,useState } from "react";
 import { AlertTriangle,Building2,CalendarDays,FileText,RefreshCw,Search,Sparkles } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 import styles from "./VeilleCorporate.module.css";
 
 type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string;watch_keywords?:string[];watch_priority_phrases?:string[];watch_excluded_keywords?:string[]};
-type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string};
+type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string;suggested_dossier_id?:string|null;qualification_confidence?:number|null;qualification_reason?:string|null};
 type Suggestion={watch_id:string;dossier_id:string|null;confidence:number;reason:string};
 
 const AUTO_LINK_THRESHOLD=0.75;
@@ -21,9 +22,25 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
 
   const natures=useMemo(()=>Array.from(new Set(items.map(item=>item.nature))).sort(),[items]);
   const filtered=useMemo(()=>items.filter(item=>{const q=[item.title,item.nature].join(" ").toLowerCase().includes(query.toLowerCase());return q&&(nature==="all"||item.nature===nature)&&(urgency==="all"||item.urgency===urgency);}),[items,query,nature,urgency]);
-  const urgent=items.filter(item=>["fort","absolument urgent"].includes(item.urgency)).length;const linked=items.filter(item=>item.dossier_id).length;const unlinkedItems=items.filter(item=>!item.dossier_id);const unlinked=unlinkedItems.length;const qualificationBatchKey=unlinkedItems.length?`${unlinkedItems.length}|${unlinkedItems.slice(0,8).map(item=>item.id).join("|")}|${unlinkedItems.slice(-8).map(item=>item.id).join("|")}`:"";const visibleSuggestions=suggestions.filter(s=>!ignored.includes(s.watch_id)&&!items.find(i=>i.id===s.watch_id)?.dossier_id&&s.dossier_id);
+  const urgent=items.filter(item=>["fort","absolument urgent"].includes(item.urgency)).length;
+  const linked=items.filter(item=>item.dossier_id).length;
+  const unlinkedItems=items.filter(item=>!item.dossier_id);
+  const unlinked=unlinkedItems.length;
+  const qualificationBatchKey=unlinkedItems.length?`${unlinkedItems.length}|${unlinkedItems.slice(0,8).map(item=>item.id).join("|")}|${unlinkedItems.slice(-8).map(item=>item.id).join("|")}`:"";
+  const persistedSuggestions:Suggestion[]=items.filter(item=>!item.dossier_id&&item.suggested_dossier_id&&Number(item.qualification_confidence)>=REVIEW_THRESHOLD&&Number(item.qualification_confidence)<AUTO_LINK_THRESHOLD).map(item=>({watch_id:item.id,dossier_id:item.suggested_dossier_id||null,confidence:Number(item.qualification_confidence)||0,reason:item.qualification_reason||"Correspondance à valider."}));
+  const combinedSuggestions=[...suggestions,...persistedSuggestions].filter((suggestion,index,array)=>array.findIndex(candidate=>candidate.watch_id===suggestion.watch_id)===index);
+  const visibleSuggestions=combinedSuggestions.filter(s=>!ignored.includes(s.watch_id)&&!items.find(i=>i.id===s.watch_id)?.dossier_id&&s.dossier_id);
 
   useEffect(()=>{if(!qualificationBatchKey||!dossiers.length||qualifying)return;if(autoQualificationBatch.current===qualificationBatchKey)return;autoQualificationBatch.current=qualificationBatchKey;const timer=setTimeout(()=>{void qualify(true);},650);return()=>clearTimeout(timer);},[qualificationBatchKey,dossiers.length,qualifying]);
+
+  async function persistReviewSuggestions(review:Suggestion[]){
+    if(!supabase)return;
+    const qualifiedAt=new Date().toISOString();
+    for(const suggestion of review){
+      const {error}=await supabase.from("watch_items").update({suggested_dossier_id:suggestion.dossier_id,qualification_confidence:suggestion.confidence,qualification_reason:suggestion.reason.slice(0,500),qualified_at:qualifiedAt}).eq("id",suggestion.watch_id);
+      if(error)throw error;
+    }
+  }
 
   async function qualify(automatic=false){
     if(qualifying||!unlinkedItems.length||!dossiers.length)return;
@@ -39,7 +56,10 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
       }
       const automaticLinks=allResults.filter(s=>s.dossier_id&&Number(s.confidence)>=AUTO_LINK_THRESHOLD);let autoLinked=0;
       for(const s of automaticLinks){await link(s.watch_id,s.dossier_id);autoLinked++;}
-      const review=allResults.filter(s=>s.dossier_id&&Number(s.confidence)>=REVIEW_THRESHOLD&&Number(s.confidence)<AUTO_LINK_THRESHOLD);setSuggestions(review);const noMatch=allResults.filter(s=>!s.dossier_id||Number(s.confidence)<REVIEW_THRESHOLD).length;
+      const review=allResults.filter(s=>s.dossier_id&&Number(s.confidence)>=REVIEW_THRESHOLD&&Number(s.confidence)<AUTO_LINK_THRESHOLD);
+      await persistReviewSuggestions(review);
+      setSuggestions(review);
+      const noMatch=allResults.filter(s=>!s.dossier_id||Number(s.confidence)<REVIEW_THRESHOLD).length;
       const readLabel=fullTextChars>=1_000_000?`${(fullTextChars/1_000_000).toFixed(1)} M caractères lus`:fullTextChars>=1_000?`${Math.round(fullTextChars/1_000)} k caractères lus`:`${fullTextChars} caractères lus`;
       setQualificationMessage(`${automatic?"Automatisation terminée":"Qualification terminée"} · ${allResults.length} analysé(s) · ${enriched} texte(s) officiel(s) lu(s) · ${readLabel} · ${autoLinked} rattachement(s) automatique(s) · ${review.length} suggestion(s) à valider · ${noMatch} sans correspondance solide. Seuil RA : 75 %. Moteur : ${engine}.`);
     }catch(error:any){setQualificationMessage(`Qualification impossible : ${error?.message||"erreur inconnue"}`);}finally{setQualifying(false);}
