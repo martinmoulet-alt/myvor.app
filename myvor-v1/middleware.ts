@@ -1,9 +1,13 @@
 import {NextRequest,NextResponse} from "next/server";
 
-const protectedFeatures:Record<string,string|null>={
-  "/api/radar":"radar",
-  "/api/impact":null,
-  "/api/builder":"note-builder",
+type ProtectedRoute={feature:string|null;methods:string[]};
+
+const protectedRoutes:Record<string,ProtectedRoute>={
+  "/api/radar":{feature:"radar",methods:["POST"]},
+  "/api/impact":{feature:null,methods:["POST"]},
+  "/api/builder":{feature:"note-builder",methods:["POST"]},
+  "/api/veille/assign":{feature:null,methods:["POST"]},
+  "/api/veille/sources":{feature:null,methods:["GET"]},
 };
 
 function json(error:string,status:number){
@@ -11,9 +15,8 @@ function json(error:string,status:number){
 }
 
 export async function middleware(request:NextRequest){
-  if(request.method!=="POST")return NextResponse.next();
-  const feature=protectedFeatures[request.nextUrl.pathname];
-  if(feature===undefined)return NextResponse.next();
+  const route=protectedRoutes[request.nextUrl.pathname];
+  if(!route||!route.methods.includes(request.method))return NextResponse.next();
 
   const supabaseUrl=(process.env.NEXT_PUBLIC_SUPABASE_URL||"").replace(/\/$/,"");
   const anonKey=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY||"";
@@ -32,11 +35,11 @@ export async function middleware(request:NextRequest){
     const user=await userResponse.json().catch(()=>null);
     if(!user?.id)return json("Session Myvor invalide ou expirée.",401);
 
-    if(feature){
+    if(route.feature){
       const quotaResponse=await fetch(`${supabaseUrl}/rest/v1/rpc/consume_ai_quota`,{
         method:"POST",
         headers:{apikey:anonKey,Authorization:authorization,"Content-Type":"application/json"},
-        body:JSON.stringify({p_feature:feature}),
+        body:JSON.stringify({p_feature:route.feature}),
         cache:"no-store",
       });
       if(!quotaResponse.ok)return json("Impossible de vérifier le quota IA Myvor.",503);
@@ -51,5 +54,5 @@ export async function middleware(request:NextRequest){
 }
 
 export const config={
-  matcher:["/api/radar","/api/impact","/api/builder"],
+  matcher:["/api/radar","/api/impact","/api/builder","/api/veille/assign","/api/veille/sources"],
 };
