@@ -44,25 +44,25 @@ function normalizeImpact(raw:any,depth:ImpactDepth){
   const detailTotal=Object.values(detail).reduce((sum,value)=>sum+value,0);
   const score=detailTotal>0?detailTotal:clampNumber(raw?.score,0,100);
   const niveau=score>=85?"absolument_urgent":score>=60?"fort":score>=35?"moyen":"faible";
-  const limits=depth==="express"?{disp:3,risks:3,opps:2,deadlines:2,recs:3,confirm:5}:depth==="deep"?{disp:4,risks:4,opps:3,deadlines:3,recs:5,confirm:8}:{disp:7,risks:6,opps:5,deadlines:5,recs:7,confirm:8};
-  const dispositions=Array.isArray(raw?.dispositions_concernees)?raw.dispositions_concernees.slice(0,limits.disp).map((item:any)=>({disposition:clip(item?.disposition,700),impact_client:clip(item?.impact_client,1000),niveau:clip(item?.niveau,80)||"moyen"})).filter((item:any)=>item.disposition||item.impact_client):[];
-  const risks=Array.isArray(raw?.risques)?raw.risques.slice(0,limits.risks).map((item:any)=>({titre:clip(item?.titre,220),description:clip(item?.description,900),niveau:clip(item?.niveau,80)||"moyen"})).filter((item:any)=>item.titre||item.description):[];
-  const opportunities=Array.isArray(raw?.opportunites)?raw.opportunites.slice(0,limits.opps).map((item:any)=>({titre:clip(item?.titre,220),description:clip(item?.description,900)})).filter((item:any)=>item.titre||item.description):[];
-  const deadlines=Array.isArray(raw?.echeances)?raw.echeances.slice(0,limits.deadlines).map((item:any)=>({date:clip(item?.date,160),evenement:clip(item?.evenement,500),importance:clip(item?.importance,500)})).filter((item:any)=>item.date||item.evenement):[];
-  const recommendations=Array.isArray(raw?.recommandations)?raw.recommandations.slice(0,limits.recs).map((item:any)=>({action:clip(item?.action,600),raison:clip(item?.raison,800),priorite:clip(item?.priorite,80)})).filter((item:any)=>item.action):[];
+  const limits=depth==="express"?{disp:3,risks:3,opps:2,deadlines:2,recs:3,confirm:5}:depth==="deep"?{disp:4,risks:4,opps:3,deadlines:3,recs:5,confirm:8}:{disp:6,risks:5,opps:4,deadlines:4,recs:6,confirm:8};
+  const dispositions=Array.isArray(raw?.dispositions_concernees)?raw.dispositions_concernees.slice(0,limits.disp).map((item:any)=>({disposition:clip(item?.disposition,650),impact_client:clip(item?.impact_client,850),niveau:clip(item?.niveau,80)||"moyen"})).filter((item:any)=>item.disposition||item.impact_client):[];
+  const risks=Array.isArray(raw?.risques)?raw.risques.slice(0,limits.risks).map((item:any)=>({titre:clip(item?.titre,220),description:clip(item?.description,700),niveau:clip(item?.niveau,80)||"moyen"})).filter((item:any)=>item.titre||item.description):[];
+  const opportunities=Array.isArray(raw?.opportunites)?raw.opportunites.slice(0,limits.opps).map((item:any)=>({titre:clip(item?.titre,220),description:clip(item?.description,700)})).filter((item:any)=>item.titre||item.description):[];
+  const deadlines=Array.isArray(raw?.echeances)?raw.echeances.slice(0,limits.deadlines).map((item:any)=>({date:clip(item?.date,160),evenement:clip(item?.evenement,420),importance:clip(item?.importance,420)})).filter((item:any)=>item.date||item.evenement):[];
+  const recommendations=Array.isArray(raw?.recommandations)?raw.recommandations.slice(0,limits.recs).map((item:any)=>({action:clip(item?.action,520),raison:clip(item?.raison,650),priorite:clip(item?.priorite,80)})).filter((item:any)=>item.action):[];
   const justifications={
-    juridique:clip(raw?.score_justifications?.juridique,700),
-    economique_operationnel:clip(raw?.score_justifications?.economique_operationnel,700),
-    urgence:clip(raw?.score_justifications?.urgence,700),
-    probabilite:clip(raw?.score_justifications?.probabilite,700),
-    politique_reputation:clip(raw?.score_justifications?.politique_reputation,700),
-    capacite_action:clip(raw?.score_justifications?.capacite_action,700),
+    juridique:clip(raw?.score_justifications?.juridique,600),
+    economique_operationnel:clip(raw?.score_justifications?.economique_operationnel,600),
+    urgence:clip(raw?.score_justifications?.urgence,600),
+    probabilite:clip(raw?.score_justifications?.probabilite,600),
+    politique_reputation:clip(raw?.score_justifications?.politique_reputation,600),
+    capacite_action:clip(raw?.score_justifications?.capacite_action,600),
   };
   return{
-    synthese:clip(raw?.synthese,depth==="deep"?2600:1800),
+    synthese:clip(raw?.synthese,depth==="deep"?2200:1600),
     score,
     niveau,
-    justification_score:clip(raw?.justification_score,1400),
+    justification_score:clip(raw?.justification_score,1200),
     score_detail:detail,
     score_justifications:justifications,
     dispositions_concernees:dispositions,
@@ -70,7 +70,7 @@ function normalizeImpact(raw:any,depth:ImpactDepth){
     opportunites:opportunities,
     echeances:deadlines,
     recommandations:recommendations,
-    informations_a_confirmer:cleanArray(raw?.informations_a_confirmer,limits.confirm,500).map((item:any)=>clip(item,500)),
+    informations_a_confirmer:cleanArray(raw?.informations_a_confirmer,limits.confirm,450).map((item:any)=>clip(item,450)),
   };
 }
 
@@ -86,17 +86,17 @@ Deno.serve(async(req)=>{
   if(body?.async===true)return json({error:"Le mode asynchrone n’est pas activé sur cette version sécurisée."},400);
 
   const client=clip(body?.client,300);
-  const contexte=clip(body?.contexte,3000);
-  const objectif=clip(body?.objectif,1800);
+  const contexte=clip(body?.contexte,2600);
+  const objectif=clip(body?.objectif,1600);
   const titre=clip(body?.titre,600);
   const lienOfficiel=clip(body?.lien_officiel,900);
-  const texte=clip(body?.texte,depth==="deep"?60000:depth==="standard"?90000:45000);
+  const texte=clip(body?.texte,depth==="express"?30000:45000);
   if(!client||!objectif||!titre||!texte)return json({error:"Client, objectif, titre et corpus sont obligatoires."},400);
 
   const apiKey=cleanApiKey(Deno.env.get("OPENAI_API_KEY")||"");
   if(!apiKey)return json({error:"Le secret OPENAI_API_KEY n’est pas configuré dans Supabase."},503);
 
-  const depthRule=depth==="express"?"Analyse express : va à l’essentiel, priorise les signaux décisionnels et les actions immédiates.":depth==="deep"?"Analyse approfondie mais concise : justifie séparément chacun des six critères de score et explicite les incertitudes.":"Analyse standard complète et opérationnelle.";
+  const depthRule=depth==="express"?"Analyse express : va à l’essentiel, priorise les signaux décisionnels et les actions immédiates.":depth==="deep"?"Analyse approfondie mais concise : justifie séparément chacun des six critères de score et explicite les incertitudes en restant synthétique.":"Analyse standard complète, concise et opérationnelle.";
   const prompt=[
     "Tu es le moteur de Note d’impact de Myvor, spécialisé en affaires publiques françaises et européennes.",
     depthRule,
@@ -117,16 +117,27 @@ Deno.serve(async(req)=>{
   ].filter(Boolean).join("\n\n");
 
   const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),45000);
+  const timer=setTimeout(()=>controller.abort(),36000);
   try{
-    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:Deno.env.get("OPENAI_MODEL")||"gpt-5-mini",input:prompt,max_output_tokens:depth==="deep"?3600:depth==="standard"?3000:2200,text:{format:{type:"json_object"}}}),signal:controller.signal});
+    const response=await fetch("https://api.openai.com/v1/responses",{
+      method:"POST",
+      headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},
+      body:JSON.stringify({
+        model:Deno.env.get("OPENAI_IMPACT_MODEL")||"gpt-4.1-mini",
+        input:prompt,
+        max_output_tokens:depth==="deep"?2600:depth==="standard"?2200:1600,
+        text:{format:{type:"json_object"}},
+        store:false,
+      }),
+      signal:controller.signal,
+    });
     if(!response.ok){const raw=await response.text();let message=raw;try{message=JSON.parse(raw)?.error?.message||raw;}catch{}return json({error:`OpenAI a refusé la Note d’impact (${response.status}) : ${String(message).slice(0,280)}`},502);}
     const payload=await response.json();
     const parsed=parseJson(extractOutputText(payload));
     if(!parsed)return json({error:"La réponse IA de la Note d’impact n’était pas exploitable."},502);
     const impact=normalizeImpact(parsed,depth);
     if(!impact.synthese)return json({error:"La réponse IA de la Note d’impact est incomplète."},502);
-    return json({impact,engine:"myvor-impact-authenticated-v1",depth});
-  }catch(error:any){if(error?.name==="AbortError")return json({error:"La Note d’impact a dépassé 45 secondes. Réessaie."},504);return json({error:`Erreur de Note d’impact : ${error?.message||"inconnue"}`},500);}
+    return json({impact,engine:"myvor-impact-authenticated-fast-v2",depth});
+  }catch(error:any){if(error?.name==="AbortError")return json({error:"La Note d’impact a dépassé 36 secondes. Réessaie avec moins de textes ou en mode Express."},504);return json({error:`Erreur de Note d’impact : ${error?.message||"inconnue"}`},500);}
   finally{clearTimeout(timer);}
 });
