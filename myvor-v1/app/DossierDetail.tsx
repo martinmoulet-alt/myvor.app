@@ -40,12 +40,38 @@ export default function DossierDetail({dossier,watch,actions,back,go,onUpdate}:{
   useEffect(()=>{const raw=sessionStorage.getItem("myvor:focus-action");if(!raw)return;try{const action=JSON.parse(raw);if(action?.id&&openActions.some(item=>item.id===action.id)){setFocusActionId(action.id);sessionStorage.removeItem("myvor:focus-action");setTimeout(()=>document.getElementById(`action-${action.id}`)?.scrollIntoView({behavior:"smooth",block:"center"}),100);setTimeout(()=>setFocusActionId(null),2600);}}catch{sessionStorage.removeItem("myvor:focus-action");}},[dossier.id,actions.length]);
 
   async function generateStrategy(automatic=false){
-    if(!supabase||generatingStrategy)return;setGeneratingStrategy(true);setStrategyMessage(automatic?"Myvor prépare automatiquement la fiche stratégique…":"Génération de la fiche stratégique…");
-    const {data,error}=await supabase.functions.invoke("dossier-profile",{body:{dossier:{client:dossier.client,title:dossier.title,objective:dossier.objective,context:dossier.context,watch_keywords:dossier.watch_keywords||[],watch_priority_phrases:dossier.watch_priority_phrases||[],watch_excluded_keywords:dossier.watch_excluded_keywords||[]},items:related.slice(0,20).map(item=>({title:item.title,nature:item.nature,urgency:item.urgency,source_url:item.source_url}))}});
-    if(error||!data?.profile){setStrategyMessage(`Pré-remplissage impossible : ${error?.message||data?.error||"erreur inconnue"}`);setGeneratingStrategy(false);return;}
-    const p=data.profile;
-    setStrategy({sector:p.sector||"",activity:p.activity||"",strategic_issues:(p.strategic_issues||[]).join("\n"),risks_to_avoid:(p.risks_to_avoid||[]).join("\n"),opportunities:(p.opportunities||[]).join("\n"),client_position:p.client_position||"",key_actors:(p.key_actors||[]).join("\n"),watch_topics:(p.watch_topics||[]).join("\n"),watch_subtopics:(p.watch_subtopics||[]).join("\n"),reference_texts:(p.reference_texts||[]).join("\n"),key_deadlines:(p.key_deadlines||[]).join("\n"),internal_notes:p.internal_notes||""});
-    setEditingStrategy(true);setStrategyMessage("Pré-remplissage terminé. Vérifie ou modifie librement les champs, puis enregistre.");setGeneratingStrategy(false);
+    if(generatingStrategy)return;
+    const supabaseUrl=process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const anonKey=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if(!supabaseUrl||!anonKey){setStrategyMessage("Pré-remplissage impossible : configuration Supabase absente sur Netlify.");return;}
+    setGeneratingStrategy(true);
+    setStrategyMessage(automatic?"Myvor prépare automatiquement la fiche stratégique…":"Génération de la fiche stratégique…");
+    try{
+      const response=await fetch(`${supabaseUrl}/functions/v1/dossier-profile`,{
+        method:"POST",
+        headers:{
+          "Content-Type":"application/json",
+          apikey:anonKey,
+          Authorization:`Bearer ${anonKey}`,
+        },
+        body:JSON.stringify({
+          dossier:{client:dossier.client,title:dossier.title,objective:dossier.objective,context:dossier.context,watch_keywords:dossier.watch_keywords||[],watch_priority_phrases:dossier.watch_priority_phrases||[],watch_excluded_keywords:dossier.watch_excluded_keywords||[]},
+          items:related.slice(0,20).map(item=>({title:item.title,nature:item.nature,urgency:item.urgency,source_url:item.source_url})),
+        }),
+      });
+      const raw=await response.text();
+      let data:any={};
+      try{data=raw?JSON.parse(raw):{};}catch{data={error:raw||`Réponse HTTP ${response.status}`};}
+      if(!response.ok||!data?.profile){setStrategyMessage(`Pré-remplissage impossible (${response.status}) : ${data?.error||data?.message||"réponse inattendue de Supabase"}`);return;}
+      const p=data.profile;
+      setStrategy({sector:p.sector||"",activity:p.activity||"",strategic_issues:(p.strategic_issues||[]).join("\n"),risks_to_avoid:(p.risks_to_avoid||[]).join("\n"),opportunities:(p.opportunities||[]).join("\n"),client_position:p.client_position||"",key_actors:(p.key_actors||[]).join("\n"),watch_topics:(p.watch_topics||[]).join("\n"),watch_subtopics:(p.watch_subtopics||[]).join("\n"),reference_texts:(p.reference_texts||[]).join("\n"),key_deadlines:(p.key_deadlines||[]).join("\n"),internal_notes:p.internal_notes||""});
+      setEditingStrategy(true);
+      setStrategyMessage("Pré-remplissage terminé. Vérifie ou modifie librement les champs, puis enregistre.");
+    }catch(error:any){
+      setStrategyMessage(`Pré-remplissage impossible : ${error?.message||"erreur réseau inconnue"}`);
+    }finally{
+      setGeneratingStrategy(false);
+    }
   }
 
   async function saveWatchSettings(e:React.FormEvent){e.preventDefault();if(!supabase||savingWatch)return;setSavingWatch(true);setWatchMessage("");const payload={watch_keywords:parseList(watchKeywords),watch_priority_phrases:parseList(priorityPhrases),watch_excluded_keywords:parseList(excludedKeywords)};const {data,error}=await supabase.from("dossiers").update(payload).eq("id",dossier.id).select("*").single();if(error)setWatchMessage(`Impossible d’enregistrer : ${error.message}`);else{const updated=data as Dossier;setWatchKeywords((updated.watch_keywords||[]).join("\n"));setPriorityPhrases((updated.watch_priority_phrases||[]).join("\n"));setExcludedKeywords((updated.watch_excluded_keywords||[]).join("\n"));setEditingWatch(false);setWatchMessage("Paramètres de veille enregistrés.");onUpdate?.(updated);}setSavingWatch(false);}
