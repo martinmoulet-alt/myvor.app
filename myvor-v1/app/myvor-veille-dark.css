@@ -1,10 +1,45 @@
-body:has([class*="VeilleCorporate_page__"]){background:#041326;color:#f4f7fb}
-body:has([class*="VeilleCorporate_page__"]) .main{max-width:none;margin:0;min-height:calc(100vh - 68px);background:radial-gradient(circle at 64% -12%,rgba(24,76,128,.20),transparent 42%),linear-gradient(180deg,#041326 0%,#05172b 100%)}
-body:has([class*="VeilleCorporate_page__"]) .topbar{background:rgba(4,15,32,.97);border-bottom:1px solid #142e49;box-shadow:0 8px 30px rgba(0,0,0,.20)}
-body:has([class*="VeilleCorporate_page__"]) .sidebar{background:linear-gradient(180deg,#041326 0%,#061a31 100%);border-right:1px solid #142e49;color:#b7c5d6}
+/* Veille-only global shell styling. The sourceNotice selector is a stable CSS-module local name in production. */
+body:has([class*="sourceNotice"]),
+body:has([class*="VeilleCorporate_page__"]){background:#041326!important;color:#f4f7fb}
+
+body:has([class*="sourceNotice"]) .app,
+body:has([class*="VeilleCorporate_page__"]) .app{background:#041326!important}
+
+body:has([class*="sourceNotice"]) .shell,
+body:has([class*="VeilleCorporate_page__"]) .shell{background:#041326!important}
+
+body:has([class*="sourceNotice"]) .main,
+body:has([class*="VeilleCorporate_page__"]) .main{
+  max-width:none!important;
+  margin:0!important;
+  min-height:calc(100vh - 68px)!important;
+  background:radial-gradient(circle at 64% -12%,rgba(24,76,128,.20),transparent 42%),linear-gradient(180deg,#041326 0%,#05172b 100%)!important;
+}
+
+body:has([class*="sourceNotice"]) .topbar,
+body:has([class*="VeilleCorporate_page__"]) .topbar{background:rgba(4,15,32,.97)!important;border-bottom:1px solid #142e49;box-shadow:0 8px 30px rgba(0,0,0,.20)}
+
+body:has([class*="sourceNotice"]) .sidebar,
+body:has([class*="VeilleCorporate_page__"]) .sidebar{background:linear-gradient(180deg,#041326 0%,#061a31 100%)!important;border-right:1px solid #142e49;color:#b7c5d6}
+
+body:has([class*="sourceNotice"]) .navbtn,
 body:has([class*="VeilleCorporate_page__"]) .navbtn{color:#c2cede;border:1px solid transparent}
+body:has([class*="sourceNotice"]) .navbtn:hover,
 body:has([class*="VeilleCorporate_page__"]) .navbtn:hover{background:#0a213d;color:#fff;border-color:#173653}
+body:has([class*="sourceNotice"]) .navbtn.active,
 body:has([class*="VeilleCorporate_page__"]) .navbtn.active{background:linear-gradient(135deg,#ffc928 0%,#f3bd3e 100%);color:#07162c;border-color:#ffd75a;box-shadow:0 8px 22px rgba(243,189,62,.22)}
+body:has([class*="sourceNotice"]) .logo,
 body:has([class*="VeilleCorporate_page__"]) .logo{background:linear-gradient(135deg,#ffc928,#f3bd3e);color:#07162c}
+body:has([class*="sourceNotice"]) .logout,
 body:has([class*="VeilleCorporate_page__"]) .logout{border-color:#274662;color:#d7e1ed;background:#071a31}
-@media(max-width:850px){body:has([class*="VeilleCorporate_page__"]) .main{padding-bottom:calc(92px + env(safe-area-inset-bottom))}body:has([class*="VeilleCorporate_page__"]) .mobile-nav{background:#06172b;border-top-color:#173653}body:has([class*="VeilleCorporate_page__"]) .mobile-nav button{color:#8ea1b8}body:has([class*="VeilleCorporate_page__"]) .mobile-nav button.active{color:#f3bd3e}}
+
+@media(max-width:850px){
+  body:has([class*="sourceNotice"]) .main,
+  body:has([class*="VeilleCorporate_page__"]) .main{padding-bottom:calc(92px + env(safe-area-inset-bottom))}
+  body:has([class*="sourceNotice"]) .mobile-nav,
+  body:has([class*="VeilleCorporate_page__"]) .mobile-nav{background:#06172b;border-top-color:#173653}
+  body:has([class*="sourceNotice"]) .mobile-nav button,
+  body:has([class*="VeilleCorporate_page__"]) .mobile-nav button{color:#8ea1b8}
+  body:has([class*="sourceNotice"]) .mobile-nav button.active,
+  body:has([class*="VeilleCorporate_page__"]) .mobile-nav button.active{color:#f3bd3e}
+}
