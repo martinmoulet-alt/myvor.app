@@ -1,7 +1,7 @@
--- Myvor V1 — isolation stricte des données par utilisateur.
--- À exécuter dans Supabase > SQL Editor.
--- Chaque utilisateur authentifié ne peut lire/modifier que ses propres dossiers
--- et les données rattachées à ses dossiers.
+-- LEGACY COMPATIBILITY SCRIPT.
+-- New RLS changes must go in supabase/migrations/.
+-- Canonical migration: migrations/20260802100000_secure_tenant_rls.sql
+-- This file remains safe to re-run and MUST NOT introduce permissive using(true) policies.
 
 begin;
 
@@ -44,7 +44,6 @@ begin
 end
 $$;
 
--- DOSSIERS : la colonne user_id est la source de vérité.
 create policy "dossiers_select_own"
 on public.dossiers
 for select
@@ -70,8 +69,6 @@ for delete
 to authenticated
 using (auth.uid() = user_id);
 
--- VEILLE : l'élément appartient à l'utilisateur et ne peut être lié
--- qu'à un dossier qui lui appartient aussi.
 create policy "watch_select_own"
 on public.watch_items
 for select
@@ -130,8 +127,6 @@ for delete
 to authenticated
 using (auth.uid() = user_id);
 
--- ACTIONS : pas besoin de user_id supplémentaire ; le dossier fait foi.
--- Une action sans dossier n'est volontairement pas accessible côté client.
 create policy "actions_select_own_dossier"
 on public.actions
 for select
@@ -192,7 +187,6 @@ using (
   )
 );
 
--- PRODUCTIONS IA : elles héritent du propriétaire de leur dossier.
 create policy "productions_select_own_dossier"
 on public.productions
 for select
@@ -255,7 +249,6 @@ using (
 
 commit;
 
--- Vérification : aucune policy métier ne doit contenir USING (true).
 select
   tablename,
   policyname,
