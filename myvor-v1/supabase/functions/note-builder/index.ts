@@ -22,9 +22,31 @@ function compactImpact(value:any,now:Date){const note=value?.note||value||null;i
 function compactRadar(value:any,now:Date){const actors=Array.isArray(value?.actors)?value.actors:Array.isArray(value)?value:[];if(!actors.length)return null;return actors.slice(0,8).map((actor:any)=>({name:clip(actor.name,180),role:removePastTemporalSentences(clip(actor.role,240),now),orbit:actor.orbit??null,position:clip(actor.position,80),influence:actor.influence??null,why:removePastTemporalSentences(clip(actor.why,550),now),window:removePastTemporalSentences(clip(actor.window,350),now),action:removePastTemporalSentences(clip(actor.action,450),now),certainty:clip(actor.certainty,80)}));}
 function sanitizeGeneratedContent(value:unknown,now:Date){return removePastTemporalSentences(stripLeadingSubject(value),now).replace(/\n\s*(Fenêtres? d[’']action|Prochaines étapes|Calendrier(?: institutionnel| législatif)?)\s*:\s*(?=\n|$)/giu,"").replace(/\n{3,}/g,"\n\n").trim();}
 
+async function requireAuthenticatedQuota(req:Request,feature:string){
+  const authorization=req.headers.get("authorization")||"";
+  if(!authorization.toLowerCase().startsWith("bearer "))return json({error:"Session Myvor requise."},401);
+  const supabaseUrl=(Deno.env.get("SUPABASE_URL")||"").replace(/\/$/,"");
+  const anonKey=Deno.env.get("SUPABASE_ANON_KEY")||"";
+  if(!supabaseUrl||!anonKey)return json({error:"La sécurité Supabase de Myvor n’est pas configurée."},503);
+  try{
+    const userResponse=await fetch(`${supabaseUrl}/auth/v1/user`,{method:"GET",headers:{apikey:anonKey,Authorization:authorization}});
+    if(!userResponse.ok)return json({error:"Session Myvor invalide ou expirée."},401);
+    const user=await userResponse.json().catch(()=>null);
+    if(!user?.id)return json({error:"Session Myvor invalide ou expirée."},401);
+    const quotaResponse=await fetch(`${supabaseUrl}/rest/v1/rpc/consume_ai_quota`,{method:"POST",headers:{apikey:anonKey,Authorization:authorization,"Content-Type":"application/json"},body:JSON.stringify({p_feature:feature})});
+    if(!quotaResponse.ok)return json({error:"Impossible de vérifier le quota IA Myvor."},503);
+    const allowed=await quotaResponse.json().catch(()=>false);
+    if(allowed!==true)return json({error:"Trop de générations IA en peu de temps. Réessaie dans quelques minutes."},429);
+    return null;
+  }catch{return json({error:"Impossible de vérifier la session Myvor."},503);}
+}
+
 Deno.serve(async(req)=>{
   if(req.method==="OPTIONS")return new Response("ok",{headers:corsHeaders});
   if(req.method!=="POST")return json({error:"Méthode non autorisée."},405);
+
+  const authError=await requireAuthenticatedQuota(req,"note-builder");
+  if(authError)return authError;
 
   const body=await req.json().catch(()=>null);
   const dossier:Dossier|null=body?.dossier||null;
@@ -87,7 +109,7 @@ Deno.serve(async(req)=>{
     const cleanedContent=sanitizeGeneratedContent(document?.content,now);
     if(!cleanedContent)return json({error:"La réponse IA est incomplète. Réessaie."},502);
     const cleanedKeyPoints=Array.isArray(document.key_points)?document.key_points.map((item:any)=>removePastTemporalSentences(String(item),now)).filter(Boolean).slice(0,10):[];
-    return json({document:{title:String(document.title||`Document — ${dossier.title}`),subject:String(document.subject||""),content:cleanedContent,key_points:cleanedKeyPoints,sources:cleanedItems.slice(0,10).map(item=>({title:item.title,url:item.source_url||""}))},engine:"supabase-note-builder",context_used:{impact:!!impact,radar:!!radar,watch_items:items.length,generation_date:currentDateIso,past_dates_filtered:true}});
+    return json({document:{title:String(document.title||`Document — ${dossier.title}`),subject:String(document.subject||""),content:cleanedContent,key_points:cleanedKeyPoints,sources:cleanedItems.slice(0,10).map(item=>({title:item.title,url:item.source_url||""}))},engine:"supabase-note-builder-authenticated",context_used:{impact:!!impact,radar:!!radar,watch_items:items.length,generation_date:currentDateIso,past_dates_filtered:true}});
   }catch(error:any){if(error?.name==="AbortError")return json({error:"La génération IA a dépassé 45 secondes. Réessaie."},504);return json({error:`Erreur du Note Builder : ${error?.message||"inconnue"}`},500);}
   finally{clearTimeout(timer);}
 });
