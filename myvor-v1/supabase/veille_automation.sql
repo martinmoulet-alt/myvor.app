@@ -5,6 +5,14 @@ create extension if not exists pg_cron;
 create extension if not exists pg_net;
 create extension if not exists supabase_vault;
 
+-- Métadonnées nécessaires au moteur automatique.
+alter table public.watch_items add column if not exists source_name text;
+alter table public.watch_items add column if not exists published_at timestamptz;
+alter table public.watch_items add column if not exists qualification_confidence numeric(4,3) check (qualification_confidence between 0 and 1);
+alter table public.watch_items add column if not exists qualification_reason text;
+alter table public.watch_items add column if not exists suggested_dossier_id uuid references public.dossiers(id) on delete set null;
+alter table public.watch_items add column if not exists qualified_at timestamptz;
+
 create table if not exists public.veille_settings (
   user_id uuid primary key references auth.users(id) on delete cascade,
   enabled boolean not null default true,
@@ -38,6 +46,10 @@ create index if not exists watch_items_user_source_idx
 
 create index if not exists watch_items_user_dossier_idx
   on public.watch_items(user_id, dossier_id);
+
+create index if not exists watch_items_user_suggestion_idx
+  on public.watch_items(user_id, suggested_dossier_id)
+  where dossier_id is null;
 
 alter table public.veille_settings enable row level security;
 alter table public.veille_runs enable row level security;
