@@ -63,7 +63,7 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
   const linked=items.filter(item=>item.dossier_id).length;
   const unlinkedItems=items.filter(item=>!item.dossier_id);
   const unlinked=unlinkedItems.length;
-  const qualificationBatchKey=unlinkedItems.slice(0,40).map(item=>item.id).join("|");
+  const qualificationBatchKey=unlinkedItems.length?`${unlinkedItems.length}|${unlinkedItems.slice(0,8).map(item=>item.id).join("|")}|${unlinkedItems.slice(-8).map(item=>item.id).join("|")}`:"";
   const visibleSuggestions=suggestions.filter(s=>!ignored.includes(s.watch_id)&&!items.find(i=>i.id===s.watch_id)?.dossier_id&&s.dossier_id);
 
   useEffect(()=>{
@@ -76,18 +76,28 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
 
   async function qualify(automatic=false){
     if(qualifying||!unlinkedItems.length||!dossiers.length)return;
-    setQualifying(true);setQualificationMessage(automatic?"Qualification automatique des nouvelles publications…":"");setSuggestions([]);setIgnored([]);
+    setQualifying(true);setQualificationMessage(automatic?`Qualification automatique de ${unlinkedItems.length} publication(s)…`:"");setSuggestions([]);setIgnored([]);
     try{
-      const response=await fetch("/api/veille/assign",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:unlinkedItems.slice(0,40).map(i=>({id:i.id,title:i.title,nature:i.nature})),dossiers:dossiers.map(d=>({id:d.id,title:d.title,objective:d.objective,context:d.context,watch_keywords:d.watch_keywords||[],watch_priority_phrases:d.watch_priority_phrases||[],watch_excluded_keywords:d.watch_excluded_keywords||[]}))})});
-      const payload=await response.json();if(!response.ok)throw new Error(payload?.error||"Qualification impossible");
-      const results=(Array.isArray(payload.assignments)?payload.assignments:[]) as Suggestion[];
-      const automaticLinks=results.filter(s=>s.dossier_id&&Number(s.confidence)>=0.90);
+      const dossierPayload=dossiers.map(d=>({id:d.id,title:d.title,objective:d.objective,context:d.context,watch_keywords:d.watch_keywords||[],watch_priority_phrases:d.watch_priority_phrases||[],watch_excluded_keywords:d.watch_excluded_keywords||[]}));
+      const allResults:Suggestion[]=[];
+      let engine="Myvor";
+      const batchSize=180;
+      for(let start=0;start<unlinkedItems.length;start+=batchSize){
+        const batch=unlinkedItems.slice(start,start+batchSize);
+        setQualificationMessage(`${automatic?"Automatisation":"Qualification"} en cours · ${Math.min(start+batch.length,unlinkedItems.length)}/${unlinkedItems.length} analysé(s)…`);
+        const response=await fetch("/api/veille/assign",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:batch.map(i=>({id:i.id,title:i.title,nature:i.nature})),dossiers:dossierPayload})});
+        const payload=await response.json();if(!response.ok)throw new Error(payload?.error||"Qualification impossible");
+        engine=payload.engine||engine;
+        if(Array.isArray(payload.assignments))allResults.push(...payload.assignments as Suggestion[]);
+      }
+
+      const automaticLinks=allResults.filter(s=>s.dossier_id&&Number(s.confidence)>=0.90);
       let autoLinked=0;
       for(const s of automaticLinks){await link(s.watch_id,s.dossier_id);autoLinked++;}
-      const review=results.filter(s=>s.dossier_id&&Number(s.confidence)>=0.55&&Number(s.confidence)<0.90);
+      const review=allResults.filter(s=>s.dossier_id&&Number(s.confidence)>=0.55&&Number(s.confidence)<0.90);
       setSuggestions(review);
-      const noMatch=results.filter(s=>!s.dossier_id||Number(s.confidence)<0.55).length;
-      setQualificationMessage(`${automatic?"Automatisation terminée":"Qualification terminée"} · ${autoLinked} rattachement(s) automatique(s) · ${review.length} suggestion(s) à valider · ${noMatch} sans correspondance solide. Moteur : ${payload.engine||"Myvor"}.`);
+      const noMatch=allResults.filter(s=>!s.dossier_id||Number(s.confidence)<0.55).length;
+      setQualificationMessage(`${automatic?"Automatisation terminée":"Qualification terminée"} · ${allResults.length} analysé(s) · ${autoLinked} rattachement(s) automatique(s) · ${review.length} suggestion(s) à valider · ${noMatch} sans correspondance solide. Moteur : ${engine}.`);
     }catch(error:any){setQualificationMessage(`Qualification impossible : ${error?.message||"erreur inconnue"}`);}finally{setQualifying(false);}
   }
 
@@ -111,8 +121,8 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
     </div>
 
     <section className={styles.qualification}>
-      <div className={styles.qualificationHead}><div><h2><Sparkles size={17}/> Mode automatique</h2><p>À l’ouverture, Myvor synchronise les sources si nécessaire, analyse les nouveaux textes et rattache automatiquement uniquement les correspondances très sûres.</p></div><button className={styles.qualificationButton} onClick={()=>qualify(false)} disabled={qualifying||!unlinked||!dossiers.length}><Sparkles size={15}/> {qualifying?"Analyse en cours…":"Relancer l’analyse"}</button></div>
-      <div className={styles.qualificationStats}><span>Synchronisation auto toutes les 15 min à l’ouverture</span><span>Auto-rattachement ≥ 90 %</span><span>Validation manuelle 55–89 %</span></div>
+      <div className={styles.qualificationHead}><div><h2><Sparkles size={17}/> Mode automatique</h2><p>Myvor analyse tout le stock non rattaché. Deux mots-clés explicites ou une expression prioritaire peuvent déclencher un rattachement automatique, sauf en cas d’ambiguïté entre dossiers.</p></div><button className={styles.qualificationButton} onClick={()=>qualify(false)} disabled={qualifying||!unlinked||!dossiers.length}><Sparkles size={15}/> {qualifying?"Analyse en cours…":"Relancer l’analyse"}</button></div>
+      <div className={styles.qualificationStats}><span>Analyse de tout le stock non rattaché</span><span>2 mots-clés explicites = auto si non ambigu</span><span>1 mot-clé = validation manuelle</span></div>
       {qualificationMessage&&<div className={styles.syncMessage}>{qualificationMessage}</div>}
     </section>
 
