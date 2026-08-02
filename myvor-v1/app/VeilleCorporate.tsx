@@ -4,7 +4,7 @@ import { useEffect,useMemo,useRef,useState } from "react";
 import { AlertTriangle,Building2,CalendarDays,FileText,RefreshCw,Search,Sparkles } from "lucide-react";
 import styles from "./VeilleCorporate.module.css";
 
-type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string};
+type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string;watch_keywords?:string[];watch_priority_phrases?:string[];watch_excluded_keywords?:string[]};
 type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string};
 type Suggestion={watch_id:string;dossier_id:string|null;confidence:number;reason:string};
 
@@ -78,7 +78,7 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
     if(qualifying||!unlinkedItems.length||!dossiers.length)return;
     setQualifying(true);setQualificationMessage(automatic?"Qualification automatique des nouvelles publications…":"");setSuggestions([]);setIgnored([]);
     try{
-      const response=await fetch("/api/veille/assign",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:unlinkedItems.slice(0,40).map(i=>({id:i.id,title:i.title,nature:i.nature})),dossiers:dossiers.map(d=>({id:d.id,title:d.title,objective:d.objective,context:d.context}))})});
+      const response=await fetch("/api/veille/assign",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:unlinkedItems.slice(0,40).map(i=>({id:i.id,title:i.title,nature:i.nature})),dossiers:dossiers.map(d=>({id:d.id,title:d.title,objective:d.objective,context:d.context,watch_keywords:d.watch_keywords||[],watch_priority_phrases:d.watch_priority_phrases||[],watch_excluded_keywords:d.watch_excluded_keywords||[]}))})});
       const payload=await response.json();if(!response.ok)throw new Error(payload?.error||"Qualification impossible");
       const results=(Array.isArray(payload.assignments)?payload.assignments:[]) as Suggestion[];
       const automaticLinks=results.filter(s=>s.dossier_id&&Number(s.confidence)>=0.90);
