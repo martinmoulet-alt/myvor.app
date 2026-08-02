@@ -2,10 +2,11 @@
 
 import { useEffect,useMemo,useRef,useState } from "react";
 import { AlertTriangle,Building2,CalendarDays,FileText,RefreshCw,Search,Sparkles } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 import styles from "./VeilleCorporate.module.css";
 
 type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string;watch_keywords?:string[];watch_priority_phrases?:string[];watch_excluded_keywords?:string[]};
-type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string};
+type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string;suggested_dossier_id?:string|null;qualification_confidence?:number|null;qualification_reason?:string|null;qualified_at?:string|null};
 type Suggestion={watch_id:string;dossier_id:string|null;confidence:number;reason:string};
 
 const AUTO_LINK_THRESHOLD=0.75;
@@ -21,9 +22,26 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
 
   const natures=useMemo(()=>Array.from(new Set(items.map(item=>item.nature))).sort(),[items]);
   const filtered=useMemo(()=>items.filter(item=>{const q=[item.title,item.nature].join(" ").toLowerCase().includes(query.toLowerCase());return q&&(nature==="all"||item.nature===nature)&&(urgency==="all"||item.urgency===urgency);}),[items,query,nature,urgency]);
-  const urgent=items.filter(item=>["fort","absolument urgent"].includes(item.urgency)).length;const linked=items.filter(item=>item.dossier_id).length;const unlinkedItems=items.filter(item=>!item.dossier_id);const unlinked=unlinkedItems.length;const qualificationBatchKey=unlinkedItems.length?`${unlinkedItems.length}|${unlinkedItems.slice(0,8).map(item=>item.id).join("|")}|${unlinkedItems.slice(-8).map(item=>item.id).join("|")}`:"";const visibleSuggestions=suggestions.filter(s=>!ignored.includes(s.watch_id)&&!items.find(i=>i.id===s.watch_id)?.dossier_id&&s.dossier_id);
+  const urgent=items.filter(item=>["fort","absolument urgent"].includes(item.urgency)).length;const linked=items.filter(item=>item.dossier_id).length;const unlinkedItems=items.filter(item=>!item.dossier_id);const unlinked=unlinkedItems.length;const qualificationBatchKey=unlinkedItems.length?`${unlinkedItems.length}|${unlinkedItems.slice(0,8).map(item=>item.id).join("|")}|${unlinkedItems.slice(-8).map(item=>item.id).join("|")}`:"";
+  const persistedSuggestions=items.filter(item=>!item.dossier_id&&item.suggested_dossier_id&&Number(item.qualification_confidence)>=REVIEW_THRESHOLD&&Number(item.qualification_confidence)<AUTO_LINK_THRESHOLD).map(item=>({watch_id:item.id,dossier_id:item.suggested_dossier_id||null,confidence:Number(item.qualification_confidence)||0,reason:item.qualification_reason||"Correspondance à valider."}));
+  const suggestionMap=new Map<string,Suggestion>();for(const suggestion of persistedSuggestions)suggestionMap.set(suggestion.watch_id,suggestion);for(const suggestion of suggestions)suggestionMap.set(suggestion.watch_id,suggestion);const visibleSuggestions=[...suggestionMap.values()].filter(s=>!ignored.includes(s.watch_id)&&!items.find(i=>i.id===s.watch_id)?.dossier_id&&s.dossier_id);
 
   useEffect(()=>{if(!qualificationBatchKey||!dossiers.length||qualifying)return;if(autoQualificationBatch.current===qualificationBatchKey)return;autoQualificationBatch.current=qualificationBatchKey;const timer=setTimeout(()=>{void qualify(true);},650);return()=>clearTimeout(timer);},[qualificationBatchKey,dossiers.length,qualifying]);
+
+  async function persistQualification(results:Suggestion[]){
+    if(!supabase||!results.length)return;
+    const qualifiedAt=new Date().toISOString();
+    for(let start=0;start<results.length;start+=20){
+      const chunk=results.slice(start,start+20);
+      const writes=await Promise.all(chunk.map(result=>{
+        const confidence=Math.max(0,Math.min(1,Number(result.confidence)||0));
+        const suggestedDossierId=result.dossier_id&&confidence>=REVIEW_THRESHOLD&&confidence<AUTO_LINK_THRESHOLD?result.dossier_id:null;
+        return supabase.from("watch_items").update({suggested_dossier_id:suggestedDossierId,qualification_confidence:confidence,qualification_reason:String(result.reason||"").slice(0,500),qualified_at:qualifiedAt}).eq("id",result.watch_id);
+      }));
+      const failed=writes.find(result=>result.error);
+      if(failed?.error)throw failed.error;
+    }
+  }
 
   async function qualify(automatic=false){
     if(qualifying||!unlinkedItems.length||!dossiers.length)return;
@@ -37,6 +55,7 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
         const response=await fetch("/api/veille/assign",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:batch.map(i=>({id:i.id,title:i.title,nature:i.nature,source_url:i.source_url})),dossiers:dossierPayload})});
         const payload=await response.json();if(!response.ok)throw new Error(payload?.error||"Qualification impossible");engine=payload.engine||engine;enriched+=Number(payload.enriched)||0;fullTextChars+=Number(payload.full_text_chars)||0;if(Array.isArray(payload.assignments))allResults.push(...payload.assignments as Suggestion[]);
       }
+      await persistQualification(allResults);
       const automaticLinks=allResults.filter(s=>s.dossier_id&&Number(s.confidence)>=AUTO_LINK_THRESHOLD);let autoLinked=0;
       for(const s of automaticLinks){await link(s.watch_id,s.dossier_id);autoLinked++;}
       const review=allResults.filter(s=>s.dossier_id&&Number(s.confidence)>=REVIEW_THRESHOLD&&Number(s.confidence)<AUTO_LINK_THRESHOLD);setSuggestions(review);const noMatch=allResults.filter(s=>!s.dossier_id||Number(s.confidence)<REVIEW_THRESHOLD).length;
@@ -45,7 +64,10 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
     }catch(error:any){setQualificationMessage(`Qualification impossible : ${error?.message||"erreur inconnue"}`);}finally{setQualifying(false);}
   }
 
-  async function acceptSuggestion(s:Suggestion){if(!s.dossier_id)return;await link(s.watch_id,s.dossier_id);setSuggestions(current=>current.filter(x=>x.watch_id!==s.watch_id));}
+  async function clearPersistedSuggestion(watchId:string){if(!supabase)return;const {error}=await supabase.from("watch_items").update({suggested_dossier_id:null}).eq("id",watchId);if(error)throw error;}
+  async function acceptSuggestion(s:Suggestion){if(!s.dossier_id)return;await clearPersistedSuggestion(s.watch_id);await link(s.watch_id,s.dossier_id);setSuggestions(current=>current.filter(x=>x.watch_id!==s.watch_id));setIgnored(current=>current.filter(id=>id!==s.watch_id));}
+  async function ignoreSuggestion(watchId:string){try{await clearPersistedSuggestion(watchId);setSuggestions(current=>current.filter(x=>x.watch_id!==watchId));setIgnored(current=>[...new Set([...current,watchId])]);}catch(error:any){setQualificationMessage(`Impossible d’ignorer cette suggestion : ${error?.message||"erreur inconnue"}`);}}
+  async function manualLink(watchId:string,dossierId:string|null){try{await clearPersistedSuggestion(watchId);setSuggestions(current=>current.filter(x=>x.watch_id!==watchId));setIgnored(current=>current.filter(id=>id!==watchId));await link(watchId,dossierId);}catch(error:any){setQualificationMessage(`Impossible de modifier le rattachement : ${error?.message||"erreur inconnue"}`);}}
 
   return <div className={styles.page}>
     <style jsx global>{`.myvor-watch-focus{outline:3px solid #f3bd3e;outline-offset:3px;box-shadow:0 0 0 8px rgba(243,189,62,.12)!important}`}</style>
@@ -61,6 +83,6 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
     <div className={styles.sourceNotice}><b>Collecte automatique :</b> institutions parlementaires et gouvernementales, juridictions, Cour des comptes, CNIL, ARCEP et EUR-Lex.</div>{syncMessage&&<div className={styles.syncMessage}>{syncMessage}</div>}
     <div className={styles.toolbar}><label className={styles.search}><Search size={17}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher un texte…"/></label><select className={styles.select} value={nature} onChange={e=>setNature(e.target.value)}><option value="all">Toutes les natures</option>{natures.map(value=><option key={value}>{value}</option>)}</select><select className={styles.select} value={urgency} onChange={e=>setUrgency(e.target.value)}><option value="all">Tous les impacts</option>{["faible","moyen","fort","absolument urgent"].map(value=><option key={value}>{value}</option>)}</select><span className={styles.count}>{filtered.length} élément(s)</span></div>
 
-    {filtered.length?<div className={styles.grid}>{filtered.map(item=>{const dossier=dossiers.find(d=>d.id===item.dossier_id);const suggestion=visibleSuggestions.find(s=>s.watch_id===item.id);const suggestedDossier=suggestion?dossiers.find(d=>d.id===suggestion.dossier_id):null;return <article id={`watch-${item.id}`} className={`${styles.card} ${focusId===item.id?"myvor-watch-focus":""}`} key={item.id}><div className={styles.top}><span className={styles.nature}>{item.nature}</span><span className={`${styles.urgency} ${styles[item.urgency.replaceAll(" ","-") as keyof typeof styles]||""}`}>{item.urgency}</span></div><h3 className={styles.title}>{item.title}</h3><div className={styles.meta}><span><CalendarDays size={14}/>{new Date(item.created_at).toLocaleDateString("fr-FR")}</span><span><Building2 size={14}/>{dossier?`${dossier.client} — ${dossier.title}`:"Aucun dossier"}</span></div>{suggestion&&suggestedDossier&&<div className={styles.suggestion}><div className={styles.suggestionTop}><b>Dossier suggéré : {suggestedDossier.client} — {suggestedDossier.title}</b><span className={styles.confidence}>{Math.round(suggestion.confidence*100)} %</span></div><p>{suggestion.reason}</p><div className={styles.suggestionActions}><button className={styles.accept} onClick={()=>acceptSuggestion(suggestion)}>Rattacher</button><button className={styles.ignore} onClick={()=>setIgnored(current=>[...current,item.id])}>Ignorer</button></div></div>}<div className={styles.dossier}><label>Dossier lié</label><select value={item.dossier_id||""} onChange={e=>link(item.id,e.target.value||null)}><option value="">Non rattaché</option>{dossiers.map(d=><option value={d.id} key={d.id}>{d.client} — {d.title}</option>)}</select></div><div className={styles.footer}>{item.source_url?<a className={styles.source} href={item.source_url} target="_blank" rel="noreferrer">Lire le texte original</a>:<span/>}<span className={styles.count}>{sourceLabel(item.source_url)}</span></div></article>;})}</div>:<div className={styles.empty}><FileText size={34}/><h2>Aucun texte trouvé</h2><p>Synchronisez les sources ou modifiez vos filtres.</p></div>}
+    {filtered.length?<div className={styles.grid}>{filtered.map(item=>{const dossier=dossiers.find(d=>d.id===item.dossier_id);const suggestion=visibleSuggestions.find(s=>s.watch_id===item.id);const suggestedDossier=suggestion?dossiers.find(d=>d.id===suggestion.dossier_id):null;const persistedConfidence=Number(item.qualification_confidence);const hasQualification=Number.isFinite(persistedConfidence)&&!!item.qualification_reason;return <article id={`watch-${item.id}`} className={`${styles.card} ${focusId===item.id?"myvor-watch-focus":""}`} key={item.id}><div className={styles.top}><span className={styles.nature}>{item.nature}</span><span className={`${styles.urgency} ${styles[item.urgency.replaceAll(" ","-") as keyof typeof styles]||""}`}>{item.urgency}</span></div><h3 className={styles.title}>{item.title}</h3><div className={styles.meta}><span><CalendarDays size={14}/>{new Date(item.created_at).toLocaleDateString("fr-FR")}</span><span><Building2 size={14}/>{dossier?`${dossier.client} — ${dossier.title}`:"Aucun dossier"}</span></div>{suggestion&&suggestedDossier?<div className={styles.suggestion}><div className={styles.suggestionTop}><b>Dossier suggéré : {suggestedDossier.client} — {suggestedDossier.title}</b><span className={styles.confidence}>{Math.round(suggestion.confidence*100)} %</span></div><p>{suggestion.reason}</p><div className={styles.suggestionActions}><button className={styles.accept} onClick={()=>void acceptSuggestion(suggestion)}>Rattacher</button><button className={styles.ignore} onClick={()=>void ignoreSuggestion(item.id)}>Ignorer</button></div></div>:hasQualification&&<div className={styles.suggestion}><div className={styles.suggestionTop}><b>{dossier?"Qualification Myvor enregistrée":"Qualification Myvor"}</b><span className={styles.confidence}>{Math.round(persistedConfidence*100)} %</span></div><p>{item.qualification_reason}</p></div>}<div className={styles.dossier}><label>Dossier lié</label><select value={item.dossier_id||""} onChange={e=>void manualLink(item.id,e.target.value||null)}><option value="">Non rattaché</option>{dossiers.map(d=><option value={d.id} key={d.id}>{d.client} — {d.title}</option>)}</select></div><div className={styles.footer}>{item.source_url?<a className={styles.source} href={item.source_url} target="_blank" rel="noreferrer">Lire le texte original</a>:<span/>}<span className={styles.count}>{sourceLabel(item.source_url)}</span></div></article>;})}</div>:<div className={styles.empty}><FileText size={34}/><h2>Aucun texte trouvé</h2><p>Synchronisez les sources ou modifiez vos filtres.</p></div>}
   </div>;
 }
