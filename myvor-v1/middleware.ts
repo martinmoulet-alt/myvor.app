@@ -3,7 +3,6 @@ import {NextRequest,NextResponse} from "next/server";
 const protectedFeatures:Record<string,string|null>={
   "/api/radar":"radar",
   "/api/impact":null,
-  "/api/builder":"note-builder",
 };
 
 function json(error:string,status:number){
@@ -51,5 +50,5 @@ export async function middleware(request:NextRequest){
 }
 
 export const config={
-  matcher:["/api/radar","/api/impact","/api/builder"],
+  matcher:["/api/radar","/api/impact"],
 };
