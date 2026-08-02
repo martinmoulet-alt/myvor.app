@@ -11,7 +11,7 @@ function shouldAttachUserToken(rawUrl:string){
   try{
     const target=new URL(rawUrl,window.location.origin);
     const sameOrigin=target.origin===window.location.origin;
-    if(sameOrigin&&["/api/radar","/api/impact","/api/builder"].some(path=>target.pathname===path||target.pathname.startsWith(`${path}/`)))return true;
+    if(sameOrigin&&["/api/radar","/api/impact","/api/builder","/api/veille/assign","/api/veille/sources"].some(path=>target.pathname===path||target.pathname.startsWith(`${path}/`)))return true;
     if(url&&target.origin===new URL(url).origin){
       return ["/functions/v1/dossier-profile","/functions/v1/note-builder","/functions/v1/impact-analysis","/functions/v1/influence-radar"].some(path=>target.pathname===path||target.pathname.startsWith(`${path}/`));
     }
