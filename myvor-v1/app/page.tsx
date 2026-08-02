@@ -37,7 +37,9 @@ export default function Home(){
   async function loadData(){
     if(!supabase)return;setActionsLoading(true);
     const [dRes,wRes,aRes]=await Promise.all([supabase.from("dossiers").select("*").order("created_at",{ascending:false}),supabase.from("watch_items").select("*").order("created_at",{ascending:false}),supabase.from("actions").select("id,dossier_id,type,title,description,actor_name,priority,status,due_date,created_at,updated_at").order("created_at",{ascending:false})]);
-    setDossiers((dRes.data||[]) as Dossier[]);setWatch((wRes.data||[]) as Watch[]);setActions((aRes.data||[]) as Action[]);setActionsError(aRes.error?aRes.error.message:"");setActionsLoading(false);
+    const freshDossiers=(dRes.data||[]) as Dossier[];
+    setDossiers(freshDossiers);setWatch((wRes.data||[]) as Watch[]);setActions((aRes.data||[]) as Action[]);setActionsError(aRes.error?aRes.error.message:"");setActionsLoading(false);
+    if(!dRes.error)setSelectedDossier(current=>current?(freshDossiers.find(dossier=>dossier.id===current.id)||null):null);
     if(!aRes.error)await deriveActionsFromWatch((wRes.data||[]) as Watch[],(aRes.data||[]) as Action[]);
   }
 
