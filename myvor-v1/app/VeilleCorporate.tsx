@@ -8,6 +8,9 @@ type Dossier={id:string;client:string;title:string;objective:string;context:stri
 type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string};
 type Suggestion={watch_id:string;dossier_id:string|null;confidence:number;reason:string};
 
+const AUTO_LINK_THRESHOLD=0.75;
+const REVIEW_THRESHOLD=0.55;
+
 function sourceLabel(url:string){try{const host=new URL(url).hostname.replace(/^www\./,"");if(host.includes("assemblee-nationale.fr"))return "Assemblée nationale";if(host.includes("senat.fr"))return "Sénat";if(host.includes("legifrance.gouv.fr"))return "Légifrance — Journal officiel";if(host.includes("vie-publique.fr"))return "Vie-publique";if(host.includes("economie.gouv.fr"))return "Ministère de l’Économie";if(host.includes("ecologie.gouv.fr"))return "Transition écologique";if(host.includes("tresor.economie.gouv.fr"))return "Direction générale du Trésor";if(host.includes("conseil-etat.fr"))return "Conseil d’État";if(host.includes("conseil-constitutionnel.fr"))return "Conseil constitutionnel";if(host.includes("ccomptes.fr"))return "Cour des comptes";if(host.includes("cnil.fr"))return "CNIL";if(host.includes("arcep.fr"))return "ARCEP";if(host.includes("cre.fr"))return "CRE";if(host.includes("amf-france.org"))return "AMF";if(host.includes("autoritedelaconcurrence.fr"))return "Autorité de la concurrence";if(host.includes("eur-lex.europa.eu"))return "EUR-Lex";return host;}catch{return "Source officielle";}}
 
 export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMessage,link}:{items:Watch[];dossiers:Dossier[];add:()=>void;sync:()=>void;syncing:boolean;syncMessage:string;link:(watchId:string,dossierId:string|null)=>Promise<void>|void}){
@@ -34,11 +37,11 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
         const response=await fetch("/api/veille/assign",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:batch.map(i=>({id:i.id,title:i.title,nature:i.nature,source_url:i.source_url})),dossiers:dossierPayload})});
         const payload=await response.json();if(!response.ok)throw new Error(payload?.error||"Qualification impossible");engine=payload.engine||engine;enriched+=Number(payload.enriched)||0;fullTextChars+=Number(payload.full_text_chars)||0;if(Array.isArray(payload.assignments))allResults.push(...payload.assignments as Suggestion[]);
       }
-      const automaticLinks=allResults.filter(s=>s.dossier_id&&Number(s.confidence)>=0.90);let autoLinked=0;
+      const automaticLinks=allResults.filter(s=>s.dossier_id&&Number(s.confidence)>=AUTO_LINK_THRESHOLD);let autoLinked=0;
       for(const s of automaticLinks){await link(s.watch_id,s.dossier_id);autoLinked++;}
-      const review=allResults.filter(s=>s.dossier_id&&Number(s.confidence)>=0.55&&Number(s.confidence)<0.90);setSuggestions(review);const noMatch=allResults.filter(s=>!s.dossier_id||Number(s.confidence)<0.55).length;
+      const review=allResults.filter(s=>s.dossier_id&&Number(s.confidence)>=REVIEW_THRESHOLD&&Number(s.confidence)<AUTO_LINK_THRESHOLD);setSuggestions(review);const noMatch=allResults.filter(s=>!s.dossier_id||Number(s.confidence)<REVIEW_THRESHOLD).length;
       const readLabel=fullTextChars>=1_000_000?`${(fullTextChars/1_000_000).toFixed(1)} M caractères lus`:fullTextChars>=1_000?`${Math.round(fullTextChars/1_000)} k caractères lus`:`${fullTextChars} caractères lus`;
-      setQualificationMessage(`${automatic?"Automatisation terminée":"Qualification terminée"} · ${allResults.length} analysé(s) · ${enriched} texte(s) officiel(s) lu(s) · ${readLabel} · ${autoLinked} rattachement(s) automatique(s) · ${review.length} suggestion(s) à valider · ${noMatch} sans correspondance solide. Moteur : ${engine}.`);
+      setQualificationMessage(`${automatic?"Automatisation terminée":"Qualification terminée"} · ${allResults.length} analysé(s) · ${enriched} texte(s) officiel(s) lu(s) · ${readLabel} · ${autoLinked} rattachement(s) automatique(s) · ${review.length} suggestion(s) à valider · ${noMatch} sans correspondance solide. Seuil RA : 75 %. Moteur : ${engine}.`);
     }catch(error:any){setQualificationMessage(`Qualification impossible : ${error?.message||"erreur inconnue"}`);}finally{setQualifying(false);}
   }
 
@@ -50,8 +53,8 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
     <div className={styles.kpis}><div className={styles.kpi}><span>Total surveillé</span><strong>{items.length}</strong><small><FileText size={15}/> Publications suivies</small></div><div className={styles.kpi}><span>Rattachés</span><strong>{linked}</strong><small><Building2 size={15}/> Liés à un dossier</small></div><div className={styles.kpi}><span>À qualifier</span><strong>{unlinked}</strong><small><Search size={15}/> Non rattachés</small></div><div className={styles.kpi}><span>Priorités fortes</span><strong>{urgent}</strong><small><AlertTriangle size={15}/> Action rapide</small></div></div>
 
     <section className={styles.qualification}>
-      <div className={styles.qualificationHead}><div><h2><Sparkles size={17}/> Mode automatique</h2><p>Myvor lit désormais le texte officiel complet disponible sur la page institutionnelle avant de rattacher une publication. Les seuils restent stricts : deux mots-clés explicites ou une expression prioritaire pour un rattachement automatique.</p></div><button className={styles.qualificationButton} onClick={()=>qualify(false)} disabled={qualifying||!unlinked||!dossiers.length}><Sparkles size={15}/> {qualifying?"Lecture en cours…":"Relancer l’analyse"}</button></div>
-      <div className={styles.qualificationStats}><span>Texte officiel complet</span><span>2 mots-clés explicites = auto si non ambigu</span><span>1 mot-clé = validation manuelle</span></div>
+      <div className={styles.qualificationHead}><div><h2><Sparkles size={17}/> Mode automatique</h2><p>Myvor lit le texte officiel complet disponible sur la page institutionnelle avant de rattacher une publication. Toute correspondance atteignant 75 % est désormais rattachée automatiquement.</p></div><button className={styles.qualificationButton} onClick={()=>qualify(false)} disabled={qualifying||!unlinked||!dossiers.length}><Sparkles size={15}/> {qualifying?"Lecture en cours…":"Relancer l’analyse"}</button></div>
+      <div className={styles.qualificationStats}><span>Texte officiel complet</span><span>RA automatique ≥ 75 %</span><span>Validation manuelle : 55–74 %</span></div>
       {qualificationMessage&&<div className={styles.syncMessage}>{qualificationMessage}</div>}
     </section>
 
