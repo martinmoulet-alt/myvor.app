@@ -104,36 +104,53 @@ function parseJsonObject(raw: unknown) {
   return null;
 }
 
-function allowedSupabaseKeys() {
-  const keys = new Set<string>();
-
-  const legacyAnon = Deno.env.get("SUPABASE_ANON_KEY") || "";
-  if (legacyAnon) keys.add(legacyAnon);
-
-  const rawPublishable = Deno.env.get("SUPABASE_PUBLISHABLE_KEYS") || "";
-  if (rawPublishable) {
-    try {
-      const parsed = JSON.parse(rawPublishable);
-      for (const value of Object.values(parsed || {})) {
-        if (typeof value === "string" && value) keys.add(value);
-      }
-    } catch {
-      // Ignore malformed optional environment value.
-    }
+async function requireAuthenticatedQuota(req: Request, feature: string) {
+  const authorization = req.headers.get("authorization") || "";
+  if (!authorization.toLowerCase().startsWith("bearer ")) {
+    return json({ error: "Session Myvor requise." }, 401);
   }
 
-  return keys;
+  const supabaseUrl = (Deno.env.get("SUPABASE_URL") || "").replace(/\/$/, "");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
+  if (!supabaseUrl || !anonKey) {
+    return json({ error: "La sécurité Supabase de Myvor n’est pas configurée." }, 503);
+  }
+
+  try {
+    const userResponse = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      method: "GET",
+      headers: { apikey: anonKey, Authorization: authorization },
+    });
+    if (!userResponse.ok) return json({ error: "Session Myvor invalide ou expirée." }, 401);
+    const user = await userResponse.json().catch(() => null);
+    if (!user?.id) return json({ error: "Session Myvor invalide ou expirée." }, 401);
+
+    const quotaResponse = await fetch(`${supabaseUrl}/rest/v1/rpc/consume_ai_quota`, {
+      method: "POST",
+      headers: {
+        apikey: anonKey,
+        Authorization: authorization,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ p_feature: feature }),
+    });
+    if (!quotaResponse.ok) return json({ error: "Impossible de vérifier le quota IA Myvor." }, 503);
+    const allowed = await quotaResponse.json().catch(() => false);
+    if (allowed !== true) {
+      return json({ error: "Trop de générations IA en peu de temps. Réessaie dans quelques minutes." }, 429);
+    }
+    return null;
+  } catch {
+    return json({ error: "Impossible de vérifier la session Myvor." }, 503);
+  }
 }
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Méthode non autorisée." }, 405);
 
-  const clientKey = req.headers.get("apikey") || "";
-  const allowedKeys = allowedSupabaseKeys();
-  if (!clientKey || !allowedKeys.has(clientKey)) {
-    return json({ error: "Appel Myvor non autorisé." }, 401);
-  }
+  const authError = await requireAuthenticatedQuota(req, "dossier-profile");
+  if (authError) return authError;
 
   const body = await req.json().catch(() => null);
   const dossier: Dossier | null = body?.dossier || null;
@@ -256,7 +273,7 @@ Deno.serve(async (req) => {
         key_deadlines: cleanList(profile.key_deadlines),
         internal_notes: clip(profile.internal_notes, 1600),
       },
-      engine: "myvor-dossier-profile-ai-v2",
+      engine: "myvor-dossier-profile-ai-v3-authenticated",
     });
   } catch (error: any) {
     if (error?.name === "AbortError") {
