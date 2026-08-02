@@ -1,0 +1,125 @@
+/* Myvor dossier visual continuity — presentation only, no business logic. */
+body:has([class*="DossiersCorporate_page__"]),
+body:has(.myvor-exec){background:#041326;color:#f4f7fb}
+
+body:has([class*="DossiersCorporate_page__"]) .main,
+body:has(.myvor-exec) .main{
+  max-width:none;
+  margin:0;
+  min-height:calc(100vh - 68px);
+  background:
+    radial-gradient(circle at 64% -12%,rgba(24,76,128,.20),transparent 42%),
+    linear-gradient(180deg,#041326 0%,#05172b 100%);
+}
+
+body:has([class*="DossiersCorporate_page__"]) .topbar,
+body:has(.myvor-exec) .topbar{
+  background:rgba(4,15,32,.97);
+  border-bottom:1px solid #142e49;
+  box-shadow:0 8px 30px rgba(0,0,0,.20)
+}
+
+body:has([class*="DossiersCorporate_page__"]) .sidebar,
+body:has(.myvor-exec) .sidebar{
+  background:linear-gradient(180deg,#041326 0%,#061a31 100%);
+  border-right:1px solid #142e49;
+  color:#b7c5d6
+}
+
+body:has([class*="DossiersCorporate_page__"]) .navbtn,
+body:has(.myvor-exec) .navbtn{color:#c2cede;border:1px solid transparent}
+body:has([class*="DossiersCorporate_page__"]) .navbtn:hover,
+body:has(.myvor-exec) .navbtn:hover{background:#0a213d;color:#fff;border-color:#173653}
+body:has([class*="DossiersCorporate_page__"]) .navbtn.active,
+body:has(.myvor-exec) .navbtn.active{
+  background:linear-gradient(135deg,#ffc928 0%,#f3bd3e 100%);
+  color:#07162c;
+  border-color:#ffd75a;
+  box-shadow:0 8px 22px rgba(243,189,62,.22)
+}
+
+/* The opened dossier uses the same night-blue / Myvor-yellow language. */
+body:has(.myvor-exec) .corp-dashboard{color:#f4f7fb}
+body:has(.myvor-exec) .corp-head h1{color:#f8fafc}
+body:has(.myvor-exec) .corp-head p{color:#97a9bf}
+body:has(.myvor-exec) .corp-kicker{color:#f3bd3e}
+body:has(.myvor-exec) .corp-status{background:#0b332b;color:#65d7a0;border:1px solid #17533f}
+body:has(.myvor-exec) .corp-primary{
+  background:linear-gradient(135deg,#ffc928,#f3bd3e);
+  color:#07162c;
+  box-shadow:0 10px 24px rgba(243,189,62,.20)
+}
+
+body:has(.myvor-exec) .myvor-exec{
+  background:linear-gradient(145deg,#06182d 0%,#082442 56%,#071a31 100%);
+  border:1px solid #173653;
+  box-shadow:0 18px 42px rgba(0,0,0,.24)
+}
+body:has(.myvor-exec) .myvor-exec-head span{color:#f3bd3e}
+body:has(.myvor-exec) .myvor-exec-item{background:#071d35;border-color:#183a59}
+body:has(.myvor-exec) .myvor-exec-item b{color:#91a5bd}
+body:has(.myvor-exec) .myvor-exec-item button{color:#f3bd3e}
+
+body:has(.myvor-exec) .corp-panel{
+  background:linear-gradient(145deg,#06182d 0%,#081f38 100%);
+  border:1px solid #173653;
+  color:#eef4fb;
+  box-shadow:0 16px 34px rgba(0,0,0,.20)
+}
+body:has(.myvor-exec) .corp-panel-head{border-bottom:1px solid #173653;padding-bottom:12px}
+body:has(.myvor-exec) .corp-panel-head span{color:#f3bd3e}
+body:has(.myvor-exec) .corp-panel-head h2,
+body:has(.myvor-exec) .corp-panel h3,
+body:has(.myvor-exec) .corp-panel strong{color:#f6f8fb}
+body:has(.myvor-exec) .corp-panel p,
+body:has(.myvor-exec) .corp-panel li,
+body:has(.myvor-exec) .corp-panel small{color:#a7b6c8}
+body:has(.myvor-exec) .corp-panel button:not(.corp-primary){border-color:#244765}
+
+body:has(.myvor-exec) .myvor-strategy-card{
+  background:#071a31;
+  border-color:#173653;
+  color:#dfe8f3
+}
+body:has(.myvor-exec) .myvor-strategy-card h3{color:#f3bd3e}
+body:has(.myvor-exec) .myvor-watch-settings label,
+body:has(.myvor-exec) .myvor-strategy label{color:#a9bacd}
+body:has(.myvor-exec) .myvor-watch-settings small,
+body:has(.myvor-exec) .myvor-strategy small{color:#8298b1}
+body:has(.myvor-exec) .myvor-watch-settings textarea,
+body:has(.myvor-exec) .myvor-strategy textarea,
+body:has(.myvor-exec) .myvor-strategy input{
+  background:#06182d!important;
+  border-color:#244765!important;
+  color:#eef4fb!important;
+}
+body:has(.myvor-exec) .myvor-watch-settings textarea::placeholder,
+body:has(.myvor-exec) .myvor-strategy textarea::placeholder,
+body:has(.myvor-exec) .myvor-strategy input::placeholder{color:#70869f}
+
+body:has(.myvor-exec) .myvor-action-focus{
+  background:#10283d!important;
+  outline-color:#f3bd3e!important;
+  box-shadow:0 0 0 8px rgba(243,189,62,.12)!important
+}
+
+body:has(.myvor-exec) [style*="background:white"],
+body:has(.myvor-exec) [style*="background: white"]{
+  background:#071a31!important;
+  color:#eef4fb!important;
+  border-color:#173653!important
+}
+
+body:has(.myvor-exec) [style*="#fbfdff"],
+body:has(.myvor-exec) [style*="#fff"]{border-color:#173653}
+
+@media(max-width:850px){
+  body:has([class*="DossiersCorporate_page__"]) .main,
+  body:has(.myvor-exec) .main{padding-bottom:calc(92px + env(safe-area-inset-bottom))}
+  body:has([class*="DossiersCorporate_page__"]) .mobile-nav,
+  body:has(.myvor-exec) .mobile-nav{background:#06172b;border-top-color:#173653}
+  body:has([class*="DossiersCorporate_page__"]) .mobile-nav button,
+  body:has(.myvor-exec) .mobile-nav button{color:#8ea1b8}
+  body:has([class*="DossiersCorporate_page__"]) .mobile-nav button.active,
+  body:has(.myvor-exec) .mobile-nav button.active{color:#f3bd3e}
+}
