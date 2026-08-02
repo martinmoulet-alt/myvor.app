@@ -4,7 +4,13 @@
 verify_jwt = false
 
 [functions.dossier-profile]
-# Myvor appelle cette fonction depuis le client avec la clé publique Supabase.
-# Les nouvelles clés publishable ne sont pas des JWT : on désactive donc le contrôle JWT legacy
-# et la fonction vérifie elle-même la clé API reçue dans l'en-tête apikey.
+# Authentification vérifiée dans le code via Supabase Auth + quota par utilisateur.
+verify_jwt = false
+
+[functions.note-builder]
+# Authentification vérifiée dans le code via Supabase Auth + quota par utilisateur.
+verify_jwt = false
+
+[functions.impact-analysis]
+# Authentification vérifiée dans le code via Supabase Auth + quota par utilisateur.
 verify_jwt = false
