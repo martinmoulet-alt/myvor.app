@@ -3,48 +3,55 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 type SourceItem={title:string;nature:string;source_url:string;source_name?:string;published_at?:string};
 type Dossier={id:string;user_id:string;client:string;title:string;objective:string;context?:string};
 type WatchItem={id:string;user_id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string};
-type Qualification={watch_id:string;dossier_id:string|null;confidence:number;urgency:"faible"|"moyen"|"fort"|"absolument urgent";reason:string};
-
 type Setting={user_id:string;enabled:boolean;auto_link_threshold:number|string;review_threshold:number|string};
+type KeywordMatch={watch_id:string;dossier_id:string|null;confidence:number;matches:string[]};
+type AiQualification={watch_id:string;urgency:"faible"|"moyen"|"fort"|"absolument urgent";reason:string};
 
 const JSON_HEADERS={"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"};
 const VALID_URGENCIES=new Set(["faible","moyen","fort","absolument urgent"]);
+const STOP_WORDS=new Set([
+  "avec","dans","pour","sans","sous","entre","vers","chez","plus","moins","ainsi","comme","cette","celui","celle","ceux","elles","leurs","notre","votre","nous","vous","tout","tous","toute","toutes",
+  "texte","obtenir","modification","favorable","reforme","projet","proposition","objectif","client","dossier","action","impact","enjeu","enjeux","suivi","veille","mesure","mesures","nouveau","nouvelle","relatif","relative","concernant"
+]);
 
 function json(body:unknown,status=200){return new Response(JSON.stringify(body),{status,headers:JSON_HEADERS});}
 function clip(value:unknown,max:number){return String(value??"").normalize("NFKC").replace(/[\u0000-\u001f\u007f]/g,"").slice(0,max).trim();}
 function extractOutputText(payload:any){if(typeof payload?.output_text==="string")return payload.output_text;const chunks=payload?.output?.flatMap((item:any)=>item?.content||[])||[];return chunks.map((chunk:any)=>chunk?.text||"").join("");}
-function getAdminKey(){
-  const modern=Deno.env.get("SUPABASE_SECRET_KEYS");
-  if(modern){try{const keys=JSON.parse(modern);const value=keys?.default||Object.values(keys||{})[0];if(typeof value==="string"&&value)return value;}catch{}}
-  return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")||"";
-}
+function getAdminKey(){const modern=Deno.env.get("SUPABASE_SECRET_KEYS");if(modern){try{const keys=JSON.parse(modern);const value=keys?.default||Object.values(keys||{})[0];if(typeof value==="string"&&value)return value;}catch{}}return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")||"";}
 function safeEqual(a:string,b:string){const aa=new TextEncoder().encode(a);const bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]^bb[i];return diff===0;}
 function canonicalUrl(value:string){try{const url=new URL(value);url.hash="";for(const key of [...url.searchParams.keys()]){if(/^utm_/i.test(key)||["fbclid","gclid"].includes(key))url.searchParams.delete(key);}return url.toString();}catch{return value.trim();}}
+function safeTimestamp(value?:string){if(!value)return null;const time=Date.parse(value);return Number.isFinite(time)?new Date(time).toISOString():null;}
+
+function normalize(value:string){return value.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();}
+function stemWord(word:string){const stripped=word.replace(/(issements?|ements?|ations?|itions?|iques?|istes?|ismes?|teurs?|trices?|eurs?|euses?|ites?|ives?|ifs?|aux|ales?|elles?|ments?|es|s)$/i,"");return stripped.length>=4?stripped:word;}
+function keywords(value:string){const out:string[]=[];for(const raw of normalize(value).split(/\s+/)){if(raw.length<4||STOP_WORDS.has(raw)||/^\d+$/.test(raw))continue;const word=stemWord(raw);if(word.length>=4&&!STOP_WORDS.has(word))out.push(word);}return [...new Set(out)];}
+function keywordHit(itemWords:Set<string>,word:string){if(itemWords.has(word))return 1;if(word.length<5)return 0;for(const itemWord of itemWords){if(itemWord.length>=5&&(itemWord.startsWith(word)||word.startsWith(itemWord)))return 0.8;}return 0;}
+function scoreKeywords(item:WatchItem,dossier:Dossier){const itemWords=new Set(keywords(`${item.title} ${item.nature}`));const dossierWords=keywords(`${dossier.title} ${dossier.objective||""} ${dossier.context||""}`);if(!itemWords.size||!dossierWords.length)return{score:0,matches:[] as string[]};let points=0;const matches:string[]=[];for(const word of dossierWords){const hit=keywordHit(itemWords,word);if(hit){points+=hit;matches.push(word);}}const unique=[...new Set(matches)];let score=0;if(unique.length>=4)score=0.98;else if(unique.length===3)score=0.94;else if(unique.length===2)score=0.82;else if(unique.length===1)score=0.62;if(points>=3.5)score=Math.max(score,0.96);return{score,matches:unique.slice(0,6)};}
+function keywordMatch(item:WatchItem,dossiers:Dossier[]):KeywordMatch{const ranked=dossiers.map(d=>({d,...scoreKeywords(item,d)})).sort((a,b)=>b.score-a.score);const best=ranked[0];const second=ranked[1];if(!best||best.score<0.55)return{watch_id:item.id,dossier_id:null,confidence:0,matches:[]};let confidence=best.score;if(second&&second.score>=0.55&&(best.score-second.score)<0.12)confidence=Math.min(confidence,0.88);return{watch_id:item.id,dossier_id:best.d.id,confidence:Number(confidence.toFixed(2)),matches:best.matches};}
 
 async function fetchJson(url:string,init:RequestInit={},timeoutMs=15000){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);try{const response=await fetch(url,{...init,signal:controller.signal});const text=await response.text();let payload:any={};try{payload=text?JSON.parse(text):{};}catch{payload={raw:text};}if(!response.ok)throw new Error(`HTTP ${response.status}: ${clip(payload?.error||payload?.raw||response.statusText,240)}`);return payload;}finally{clearTimeout(timer);}}
 
-async function qualifyBatch(apiKey:string,items:WatchItem[],dossiers:Dossier[]):Promise<Qualification[]>{
-  if(!apiKey||!items.length||!dossiers.length)return [];
+async function qualifyUrgencyBatch(apiKey:string,items:WatchItem[],matches:KeywordMatch[],dossiers:Dossier[]):Promise<AiQualification[]>{
+  if(!apiKey||!items.length)return[];
+  const matchByWatch=new Map(matches.map(m=>[m.watch_id,m]));
+  const dossierById=new Map(dossiers.map(d=>[d.id,d]));
+  const payloadItems=items.map(item=>{const match=matchByWatch.get(item.id);const dossier=match?.dossier_id?dossierById.get(match.dossier_id):null;return{watch_id:item.id,title:clip(item.title,500),nature:clip(item.nature,120),matched_keywords:match?.matches||[],dossier:dossier?{title:clip(dossier.title,250),objective:clip(dossier.objective,700),context:clip(dossier.context,700)}:null};});
   const prompt=[
-    "Tu es le moteur de veille institutionnelle de Myvor.",
-    "Pour chaque publication, choisis au maximum un dossier réellement concerné par rapport à l'objectif concret du client.",
-    "Si aucun lien crédible n'existe, dossier_id doit être null.",
-    "confidence est entre 0 et 1.",
+    "Tu es le moteur de qualification de la veille Myvor.",
+    "Le rattachement au dossier a déjà été déterminé par mots-clés. Tu ne dois pas choisir ni changer de dossier.",
+    "Pour chaque publication, évalue seulement l'urgence et explique brièvement pourquoi les mots-clés rendent le texte pertinent pour l'objectif du dossier.",
     "urgency doit être exactement: faible, moyen, fort, absolument urgent.",
-    "absolument urgent = réaction immédiate justifiée par une échéance proche, un amendement décisif, une mesure réglementaire majeure, un risque de blocage ou une opportunité immédiate.",
-    "Ne déduis pas des faits absents du titre/nature. La raison doit expliquer le lien métier sans inventer le contenu intégral du texte.",
-    "JSON uniquement: {\"qualifications\":[{\"watch_id\":\"...\",\"dossier_id\":\"... ou null\",\"confidence\":0.9,\"urgency\":\"fort\",\"reason\":\"...\"}]}",
-    "PUBLICATIONS:",JSON.stringify(items.map(i=>({watch_id:i.id,title:clip(i.title,500),nature:clip(i.nature,120)}))),
-    "DOSSIERS:",JSON.stringify(dossiers.map(d=>({dossier_id:d.id,client:clip(d.client,180),dossier:clip(d.title,300),objectif:clip(d.objective,1000),contexte:clip(d.context,1000)}))),
+    "absolument urgent uniquement si le titre/nature permet réellement d'identifier une nécessité d'action immédiate. N'invente aucune échéance ni aucun contenu absent.",
+    "JSON uniquement: {\"qualifications\":[{\"watch_id\":\"...\",\"urgency\":\"moyen\",\"reason\":\"...\"}]}",
+    JSON.stringify(payloadItems)
   ].join("\n");
-  const payload=await fetchJson("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:Deno.env.get("OPENAI_MODEL")||"gpt-5-mini",input:prompt,max_output_tokens:2200,text:{format:{type:"json_object"}}})},20000);
+  const payload=await fetchJson("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:Deno.env.get("OPENAI_MODEL")||"gpt-5-mini",input:prompt,max_output_tokens:1800,text:{format:{type:"json_object"}}})},20000);
   let parsed:any={};try{parsed=JSON.parse(extractOutputText(payload)||"{}");}catch{throw new Error("Réponse IA non exploitable");}
   return Array.isArray(parsed?.qualifications)?parsed.qualifications:[];
 }
 
 Deno.serve(async(req)=>{
   if(req.method!=="POST")return json({error:"Méthode non autorisée"},405);
-
   const expectedSecret=Deno.env.get("MYVOR_CRON_SECRET")||"";
   const suppliedSecret=req.headers.get("x-myvor-cron-secret")||"";
   if(!expectedSecret||!suppliedSecret||!safeEqual(expectedSecret,suppliedSecret))return json({error:"Non autorisé"},401);
@@ -70,14 +77,14 @@ Deno.serve(async(req)=>{
   if(settingsError)return json({ok:false,error:"Impossible de charger les réglages de veille"},500);
 
   const summaries:any[]=[];
-  for(const rawSetting of (settings||[]) as Setting[]){
-    const setting=rawSetting;
+  for(const setting of (settings||[]) as Setting[]){
     const userId=setting.user_id;
     const tenMinutesAgo=new Date(Date.now()-10*60*1000).toISOString();
     const {data:activeRun}=await supabase.from("veille_runs").select("id").eq("user_id",userId).eq("status","running").gte("started_at",tenMinutesAgo).limit(1).maybeSingle();
     if(activeRun){summaries.push({user_id:userId,status:"skipped",reason:"already_running"});continue;}
 
-    const {data:run,error:runError}=await supabase.from("veille_runs").insert({user_id:userId,status:"running",sources_count:Array.isArray(sourcePayload?.active_sources)?sourcePayload.active_sources.length:0,fetched_count:sources.length,engine:openAIKey?"openai":"none"}).select("id").single();
+    const engine=openAIKey?"keywords+openai":"keywords";
+    const {data:run,error:runError}=await supabase.from("veille_runs").insert({user_id:userId,status:"running",sources_count:Array.isArray(sourcePayload?.active_sources)?sourcePayload.active_sources.length:0,fetched_count:sources.length,engine}).select("id").single();
     if(runError){summaries.push({user_id:userId,status:"error",message:"run_log_failed"});continue;}
     const runId=run.id as string;
 
@@ -92,46 +99,54 @@ Deno.serve(async(req)=>{
       const fresh=sources.filter(item=>!existingUrls.has(item.source_url)).slice(0,60);
       let inserted:WatchItem[]=[];
       if(fresh.length){
-        const rows=fresh.map(item=>({user_id:userId,dossier_id:null,title:item.title,nature:item.nature,source_url:item.source_url,source_name:item.source_name||null,published_at:item.published_at||null,urgency:"moyen"}));
+        const rows=fresh.map(item=>({user_id:userId,dossier_id:null,title:item.title,nature:item.nature,source_url:item.source_url,source_name:item.source_name||null,published_at:safeTimestamp(item.published_at),urgency:"moyen"}));
         const {data,error}=await supabase.from("watch_items").insert(rows).select("id,user_id,title,nature,source_url,dossier_id,urgency");
         if(error)throw new Error(`Insertion veille impossible: ${clip(error.message,180)}`);
         inserted=(data||[]) as WatchItem[];
       }
 
       const allDossiers=(dossiers||[]) as Dossier[];
-      const allowedDossiers=new Set(allDossiers.map(d=>d.id));
-      const allowedWatch=new Set(inserted.map(i=>i.id));
-      const qualifications:Qualification[]=[];
-      let qualificationError="";
-      if(inserted.length&&allDossiers.length&&openAIKey){
-        try{for(let start=0;start<inserted.length;start+=20){const batch=inserted.slice(start,start+20);const result=await qualifyBatch(openAIKey,batch,allDossiers);qualifications.push(...result);}}catch(error:any){qualificationError=clip(error?.message||"Qualification IA impossible",260);}
-      }
-
       const autoThreshold=Math.max(0.5,Math.min(1,Number(setting.auto_link_threshold)||0.9));
       const reviewThreshold=Math.max(0.3,Math.min(autoThreshold,Number(setting.review_threshold)||0.55));
+      const matches=inserted.map(item=>keywordMatch(item,allDossiers));
+      const candidates=matches.filter(m=>m.dossier_id&&m.confidence>=reviewThreshold);
+
+      const aiByWatch=new Map<string,AiQualification>();
+      let qualificationError="";
+      if(candidates.length&&openAIKey){
+        try{
+          const candidateIds=new Set(candidates.map(c=>c.watch_id));
+          const candidateItems=inserted.filter(i=>candidateIds.has(i.id));
+          for(let start=0;start<candidateItems.length;start+=20){
+            const batch=candidateItems.slice(start,start+20);
+            const result=await qualifyUrgencyBatch(openAIKey,batch,candidates,allDossiers);
+            for(const q of result){if(candidateIds.has(q.watch_id))aiByWatch.set(q.watch_id,q);}
+          }
+        }catch(error:any){qualificationError=clip(error?.message||"Qualification IA impossible",260);}
+      }
+
       let autoLinked=0;let review=0;let actionsCreated=0;
-
-      for(const q of qualifications){
-        if(!allowedWatch.has(q.watch_id))continue;
-        const confidence=Math.max(0,Math.min(1,Number(q.confidence)||0));
-        const validDossier=q.dossier_id&&allowedDossiers.has(q.dossier_id)?q.dossier_id:null;
-        const urgency=VALID_URGENCIES.has(String(q.urgency))?String(q.urgency):"moyen";
+      for(const item of inserted){
+        const match=matches.find(m=>m.watch_id===item.id)!;
+        const ai=aiByWatch.get(item.id);
+        const validUrgency=ai&&VALID_URGENCIES.has(String(ai.urgency))?String(ai.urgency):"moyen";
         let dossierId:string|null=null;let suggestedId:string|null=null;
-        if(validDossier&&confidence>=autoThreshold){dossierId=validDossier;autoLinked++;}
-        else if(validDossier&&confidence>=reviewThreshold){suggestedId=validDossier;review++;}
+        if(match.dossier_id&&match.confidence>=autoThreshold){dossierId=match.dossier_id;autoLinked++;}
+        else if(match.dossier_id&&match.confidence>=reviewThreshold){suggestedId=match.dossier_id;review++;}
 
-        const {error:updateError}=await supabase.from("watch_items").update({dossier_id:dossierId,suggested_dossier_id:suggestedId,urgency,qualification_confidence:confidence,qualification_reason:clip(q.reason,500),qualified_at:new Date().toISOString()}).eq("id",q.watch_id).eq("user_id",userId);
+        const baseReason=match.matches.length?`Mots-clés détectés : ${match.matches.join(", ")}.`:"Aucun mot-clé suffisamment pertinent détecté.";
+        const reason=ai?.reason?`${baseReason} ${clip(ai.reason,320)}`:baseReason;
+        const {error:updateError}=await supabase.from("watch_items").update({dossier_id:dossierId,suggested_dossier_id:suggestedId,urgency:validUrgency,qualification_confidence:match.confidence,qualification_reason:clip(reason,500),qualified_at:new Date().toISOString()}).eq("id",item.id).eq("user_id",userId);
         if(updateError)throw new Error(`Mise à jour qualification impossible: ${clip(updateError.message,180)}`);
 
-        if(dossierId&&(urgency==="fort"||urgency==="absolument urgent")){
-          const item=inserted.find(i=>i.id===q.watch_id);if(!item)continue;
+        if(dossierId&&(validUrgency==="fort"||validUrgency==="absolument urgent")){
           const isAmendment=item.nature.toLowerCase().includes("amendement");
           const type=isAmendment?"amendement":"analyse";
           const title=isAmendment?`Préparer l’amendement — ${item.title}`:`Analyser l’impact — ${item.title}`;
           const {data:duplicate,error:duplicateError}=await supabase.from("actions").select("id").eq("user_id",userId).eq("dossier_id",dossierId).eq("type",type).eq("title",title).neq("status","termine").limit(1).maybeSingle();
           if(duplicateError)throw new Error(`Contrôle des actions impossible: ${clip(duplicateError.message,180)}`);
           if(!duplicate){
-            const {error:actionError}=await supabase.from("actions").insert({user_id:userId,dossier_id:dossierId,type,title,description:`Action créée automatiquement par la veille Myvor. ${clip(q.reason,420)}`,actor_name:null,priority:urgency,status:"a_faire",due_date:null});
+            const {error:actionError}=await supabase.from("actions").insert({user_id:userId,dossier_id:dossierId,type,title,description:`Action créée automatiquement par la veille Myvor. ${clip(reason,420)}`,actor_name:null,priority:validUrgency,status:"a_faire",due_date:null});
             if(actionError)throw new Error(`Création d’action impossible: ${clip(actionError.message,180)}`);
             actionsCreated++;
           }
@@ -139,10 +154,10 @@ Deno.serve(async(req)=>{
       }
 
       const status=qualificationError?"partial":"success";
-      const message=qualificationError?`${inserted.length} nouveaux textes enregistrés. Qualification partielle: ${qualificationError}`:`${inserted.length} nouveaux textes · ${autoLinked} auto-rattachés · ${review} à valider · ${actionsCreated} action(s) créée(s).`;
-      await supabase.from("veille_runs").update({status,finished_at:new Date().toISOString(),new_count:inserted.length,auto_linked_count:autoLinked,review_count:review,actions_created_count:actionsCreated,engine:openAIKey?"openai":"none",message}).eq("id",runId);
+      const message=qualificationError?`${inserted.length} nouveaux textes enregistrés. Rattachement par mots-clés effectué. Qualification d'urgence partielle: ${qualificationError}`:`${inserted.length} nouveaux textes · ${autoLinked} auto-rattachés par mots-clés · ${review} à valider · ${actionsCreated} action(s) créée(s).`;
+      await supabase.from("veille_runs").update({status,finished_at:new Date().toISOString(),new_count:inserted.length,auto_linked_count:autoLinked,review_count:review,actions_created_count:actionsCreated,engine,message}).eq("id",runId);
       await supabase.from("veille_settings").update({last_run_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq("user_id",userId);
-      summaries.push({user_id:userId,status,new_items:inserted.length,auto_linked:autoLinked,review,actions_created:actionsCreated});
+      summaries.push({user_id:userId,status,new_items:inserted.length,auto_linked:autoLinked,review,actions_created:actionsCreated,engine});
     }catch(error:any){
       const message=clip(error?.message||"Erreur inconnue",500);
       await supabase.from("veille_runs").update({status:"error",finished_at:new Date().toISOString(),message}).eq("id",runId);
