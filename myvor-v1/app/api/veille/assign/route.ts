@@ -12,8 +12,7 @@ type Dossier={
   watch_excluded_keywords?:string[];
 };
 type Assignment={watch_id:string;dossier_id:string|null;confidence:number;reason:string};
-
-type ScoreResult={score:number;matches:string[];priorityMatches:string[];blockedBy:string|null;explicit:boolean};
+type ScoreResult={score:number;matches:string[];priorityMatches:string[];blockedBy:string|null;explicitKeywords:boolean};
 
 const STOP_WORDS=new Set([
   "a","au","aux","avec","ce","ces","dans","de","des","du","elle","en","et","eux","il","je","la","le","les","leur","lui","ma","mais","me","meme","mes","moi","mon","ne","nos","notre","nous","on","ou","par","pas","pour","qu","que","qui","sa","se","ses","son","sur","ta","te","tes","toi","ton","tu","un","une","vos","votre","vous","d","l","y",
@@ -32,13 +31,13 @@ function keywordScore(item:WatchItem,dossier:Dossier):ScoreResult{
   const itemWords=new Set(keywords(normalizedItem));
   const excluded=cleanedList(dossier.watch_excluded_keywords);
   const blockedBy=excluded.find(term=>containsPhrase(normalizedItem,term))||null;
-  if(blockedBy)return{score:0,matches:[],priorityMatches:[],blockedBy,explicit:true};
+  const explicitKeywords=cleanedList(dossier.watch_keywords);
+  if(blockedBy)return{score:0,matches:[],priorityMatches:[],blockedBy,explicitKeywords:explicitKeywords.length>0};
 
   const priorityPhrases=cleanedList(dossier.watch_priority_phrases);
   const priorityMatches=priorityPhrases.filter(phrase=>containsPhrase(normalizedItem,phrase));
-  const explicitKeywords=cleanedList(dossier.watch_keywords);
-  const explicit=explicitKeywords.length>0||priorityPhrases.length>0||excluded.length>0;
-  const dossierWords=explicitKeywords.length
+  const hasExplicitKeywords=explicitKeywords.length>0;
+  const dossierWords=hasExplicitKeywords
     ? [...new Set(explicitKeywords.flatMap(value=>keywords(value)))]
     : keywords(`${dossier.title} ${dossier.objective||""} ${dossier.context||""}`);
 
@@ -50,13 +49,17 @@ function keywordScore(item:WatchItem,dossier:Dossier):ScoreResult{
   let score=0;
   if(priorityMatches.length>=2)score=0.99;
   else if(priorityMatches.length===1)score=0.97;
-  else if(uniqueMatches.length>=4)score=0.99;
-  else if(uniqueMatches.length===3)score=0.95;
-  else if(uniqueMatches.length===2)score=0.86;
-  else if(uniqueMatches.length===1)score=0.66;
-  if(points>=3.5)score=Math.max(score,0.97);
+  else if(hasExplicitKeywords&&uniqueMatches.length>=4)score=0.99;
+  else if(hasExplicitKeywords&&uniqueMatches.length===3)score=0.96;
+  else if(hasExplicitKeywords&&uniqueMatches.length===2)score=0.92;
+  else if(hasExplicitKeywords&&uniqueMatches.length===1)score=0.66;
+  else if(uniqueMatches.length>=4)score=0.98;
+  else if(uniqueMatches.length===3)score=0.94;
+  else if(uniqueMatches.length===2)score=0.82;
+  else if(uniqueMatches.length===1)score=0.62;
+  if(points>=3.5)score=Math.max(score,hasExplicitKeywords?0.97:0.96);
 
-  return{score,matches:uniqueMatches.slice(0,8),priorityMatches:priorityMatches.slice(0,4),blockedBy:null,explicit};
+  return{score,matches:uniqueMatches.slice(0,8),priorityMatches:priorityMatches.slice(0,4),blockedBy:null,explicitKeywords:hasExplicitKeywords};
 }
 
 function keywordAssignments(items:WatchItem[],dossiers:Dossier[]):Assignment[]{
@@ -73,7 +76,7 @@ function keywordAssignments(items:WatchItem[],dossiers:Dossier[]):Assignment[]{
     if(second&&second.score>=0.55&&(best.score-second.score)<0.12)confidence=Math.min(confidence,0.88);
     const details=[
       best.priorityMatches.length?`Expression prioritaire : ${best.priorityMatches.join(", ")}.`:"",
-      best.matches.length?`Mots-clés détectés : ${best.matches.join(", ")}.`:""
+      best.matches.length?`${best.explicitKeywords?"Mots-clés explicites":"Mots-clés détectés"} : ${best.matches.join(", ")}.`:""
     ].filter(Boolean).join(" ");
 
     return{
@@ -87,9 +90,9 @@ function keywordAssignments(items:WatchItem[],dossiers:Dossier[]):Assignment[]{
 
 export async function POST(request:Request){
   const body=await request.json().catch(()=>null);
-  const items:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,60):[];
-  const dossiers:Dossier[]=Array.isArray(body?.dossiers)?body.dossiers.slice(0,40):[];
-  if(!items.length||!dossiers.length)return NextResponse.json({assignments:[],engine:"myvor-keywords"});
+  const items:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,200):[];
+  const dossiers:Dossier[]=Array.isArray(body?.dossiers)?body.dossiers.slice(0,50):[];
+  if(!items.length||!dossiers.length)return NextResponse.json({assignments:[],engine:"myvor-keywords-explicit-v2"});
 
   const allowedDossierIds=new Set(dossiers.map(d=>d.id));
   const allowedWatchIds=new Set(items.map(i=>i.id));
@@ -102,5 +105,5 @@ export async function POST(request:Request){
       reason:a.reason.slice(0,260)
     }));
 
-  return NextResponse.json({assignments,engine:"myvor-keywords-explicit"});
+  return NextResponse.json({assignments,engine:"myvor-keywords-explicit-v2"});
 }
