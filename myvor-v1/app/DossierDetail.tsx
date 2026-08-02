@@ -46,19 +46,19 @@ export default function DossierDetail({dossier,watch,actions,back,go,onUpdate}:{
     if(!supabaseUrl||!anonKey){setStrategyMessage("Pré-remplissage impossible : configuration Supabase absente sur Netlify.");return;}
     setGeneratingStrategy(true);
     setStrategyMessage(automatic?"Myvor prépare automatiquement la fiche stratégique…":"Génération de la fiche stratégique…");
+    const requestBody=JSON.stringify({
+      dossier:{client:dossier.client,title:dossier.title,objective:dossier.objective,context:dossier.context,watch_keywords:dossier.watch_keywords||[],watch_priority_phrases:dossier.watch_priority_phrases||[],watch_excluded_keywords:dossier.watch_excluded_keywords||[]},
+      items:related.slice(0,20).map(item=>({title:item.title,nature:item.nature,urgency:item.urgency,source_url:item.source_url})),
+    });
+    const callProfile=async(slug:string)=>fetch(`${supabaseUrl}/functions/v1/${slug}`,{
+      method:"POST",
+      headers:{"Content-Type":"application/json",apikey:anonKey,Authorization:`Bearer ${anonKey}`},
+      body:requestBody,
+    });
     try{
-      const response=await fetch(`${supabaseUrl}/functions/v1/dossier-profile`,{
-        method:"POST",
-        headers:{
-          "Content-Type":"application/json",
-          apikey:anonKey,
-          Authorization:`Bearer ${anonKey}`,
-        },
-        body:JSON.stringify({
-          dossier:{client:dossier.client,title:dossier.title,objective:dossier.objective,context:dossier.context,watch_keywords:dossier.watch_keywords||[],watch_priority_phrases:dossier.watch_priority_phrases||[],watch_excluded_keywords:dossier.watch_excluded_keywords||[]},
-          items:related.slice(0,20).map(item=>({title:item.title,nature:item.nature,urgency:item.urgency,source_url:item.source_url})),
-        }),
-      });
+      let response=await callProfile("dossier-profile");
+      let usedSlug="dossier-profile";
+      if(response.status===404){response=await callProfile("dossier-profile-");usedSlug="dossier-profile-";}
       const raw=await response.text();
       let data:any={};
       try{data=raw?JSON.parse(raw):{};}catch{data={error:raw||`Réponse HTTP ${response.status}`};}
@@ -66,7 +66,8 @@ export default function DossierDetail({dossier,watch,actions,back,go,onUpdate}:{
       const p=data.profile;
       setStrategy({sector:p.sector||"",activity:p.activity||"",strategic_issues:(p.strategic_issues||[]).join("\n"),risks_to_avoid:(p.risks_to_avoid||[]).join("\n"),opportunities:(p.opportunities||[]).join("\n"),client_position:p.client_position||"",key_actors:(p.key_actors||[]).join("\n"),watch_topics:(p.watch_topics||[]).join("\n"),watch_subtopics:(p.watch_subtopics||[]).join("\n"),reference_texts:(p.reference_texts||[]).join("\n"),key_deadlines:(p.key_deadlines||[]).join("\n"),internal_notes:p.internal_notes||""});
       setEditingStrategy(true);
-      setStrategyMessage("Pré-remplissage terminé. Vérifie ou modifie librement les champs, puis enregistre.");
+      setStrategyMessage(`Pré-remplissage terminé. Vérifie ou modifie librement les champs, puis enregistre.`);
+      console.info(`Myvor dossier profile: ${usedSlug}`);
     }catch(error:any){
       setStrategyMessage(`Pré-remplissage impossible : ${error?.message||"erreur réseau inconnue"}`);
     }finally{
