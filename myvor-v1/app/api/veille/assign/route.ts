@@ -6,22 +6,23 @@ type Assignment={watch_id:string;dossier_id:string|null;confidence:number;reason
 
 const STOP_WORDS=new Set([
   "a","au","aux","avec","ce","ces","dans","de","des","du","elle","en","et","eux","il","je","la","le","les","leur","lui","ma","mais","me","meme","mes","moi","mon","ne","nos","notre","nous","on","ou","par","pas","pour","qu","que","qui","sa","se","ses","son","sur","ta","te","tes","toi","ton","tu","un","une","vos","votre","vous","d","l","y",
-  "texte","obtenir","modification","favorable","reforme","projet","proposition","objectif","client","dossier","action","impact","enjeu","enjeux","suivi","veille","mesure","mesures","nouveau","nouvelle"
+  "texte","obtenir","modification","favorable","reforme","projet","proposition","objectif","client","dossier","action","impact","enjeu","enjeux","suivi","veille","mesure","mesures","nouveau","nouvelle","relatif","relative","concernant"
 ]);
 
 function normalize(value:string){
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
 }
 
-function stem(word:string){
-  return word.replace(/(issements?|issements?|ements?|ations?|itions?|iques?|istes?|ismes?|teurs?|trices?|eurs?|euses?|ites?|ives?|ifs?|aux|ales?|elles?|ments?|es|s)$/,"$1"===word?word:"") || word;
+function stemWord(word:string){
+  const stripped=word.replace(/(issements?|ements?|ations?|itions?|iques?|istes?|ismes?|teurs?|trices?|eurs?|euses?|ites?|ives?|ifs?|aux|ales?|elles?|ments?|es|s)$/i,"");
+  return stripped.length>=4?stripped:word;
 }
 
 function keywords(value:string){
   const out:string[]=[];
   for(const raw of normalize(value).split(/\s+/)){
     if(raw.length<4||STOP_WORDS.has(raw)||/^\d+$/.test(raw)) continue;
-    const candidate=stem(raw);
+    const candidate=stemWord(raw);
     if(candidate.length>=4&&!STOP_WORDS.has(candidate)) out.push(candidate);
   }
   return [...new Set(out)];
