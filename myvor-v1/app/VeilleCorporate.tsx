@@ -24,20 +24,21 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
 
   async function qualify(automatic=false){
     if(qualifying||!unlinkedItems.length||!dossiers.length)return;
-    setQualifying(true);setQualificationMessage(automatic?`Lecture des sources officielles de ${unlinkedItems.length} publication(s)…`:"");setSuggestions([]);setIgnored([]);
+    setQualifying(true);setQualificationMessage(automatic?`Lecture complète des sources officielles de ${unlinkedItems.length} publication(s)…`:"");setSuggestions([]);setIgnored([]);
     try{
       const dossierPayload=dossiers.map(d=>({id:d.id,title:d.title,objective:d.objective,context:d.context,watch_keywords:d.watch_keywords||[],watch_priority_phrases:d.watch_priority_phrases||[],watch_excluded_keywords:d.watch_excluded_keywords||[]}));
-      const allResults:Suggestion[]=[];let engine="Myvor";let enriched=0;const batchSize=20;
+      const allResults:Suggestion[]=[];let engine="Myvor";let enriched=0;let fullTextChars=0;const batchSize=20;
       for(let start=0;start<unlinkedItems.length;start+=batchSize){
         const batch=unlinkedItems.slice(start,start+batchSize);
-        setQualificationMessage(`${automatic?"Automatisation":"Qualification"} · lecture des sources officielles · ${Math.min(start+batch.length,unlinkedItems.length)}/${unlinkedItems.length}…`);
+        setQualificationMessage(`${automatic?"Automatisation":"Qualification"} · lecture intégrale des sources · ${Math.min(start+batch.length,unlinkedItems.length)}/${unlinkedItems.length}…`);
         const response=await fetch("/api/veille/assign",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:batch.map(i=>({id:i.id,title:i.title,nature:i.nature,source_url:i.source_url})),dossiers:dossierPayload})});
-        const payload=await response.json();if(!response.ok)throw new Error(payload?.error||"Qualification impossible");engine=payload.engine||engine;enriched+=Number(payload.enriched)||0;if(Array.isArray(payload.assignments))allResults.push(...payload.assignments as Suggestion[]);
+        const payload=await response.json();if(!response.ok)throw new Error(payload?.error||"Qualification impossible");engine=payload.engine||engine;enriched+=Number(payload.enriched)||0;fullTextChars+=Number(payload.full_text_chars)||0;if(Array.isArray(payload.assignments))allResults.push(...payload.assignments as Suggestion[]);
       }
       const automaticLinks=allResults.filter(s=>s.dossier_id&&Number(s.confidence)>=0.90);let autoLinked=0;
       for(const s of automaticLinks){await link(s.watch_id,s.dossier_id);autoLinked++;}
       const review=allResults.filter(s=>s.dossier_id&&Number(s.confidence)>=0.55&&Number(s.confidence)<0.90);setSuggestions(review);const noMatch=allResults.filter(s=>!s.dossier_id||Number(s.confidence)<0.55).length;
-      setQualificationMessage(`${automatic?"Automatisation terminée":"Qualification terminée"} · ${allResults.length} analysé(s) · ${enriched} source(s) enrichie(s) · ${autoLinked} rattachement(s) automatique(s) · ${review.length} suggestion(s) à valider · ${noMatch} sans correspondance solide. Moteur : ${engine}.`);
+      const readLabel=fullTextChars>=1_000_000?`${(fullTextChars/1_000_000).toFixed(1)} M caractères lus`:fullTextChars>=1_000?`${Math.round(fullTextChars/1_000)} k caractères lus`:`${fullTextChars} caractères lus`;
+      setQualificationMessage(`${automatic?"Automatisation terminée":"Qualification terminée"} · ${allResults.length} analysé(s) · ${enriched} texte(s) officiel(s) lu(s) · ${readLabel} · ${autoLinked} rattachement(s) automatique(s) · ${review.length} suggestion(s) à valider · ${noMatch} sans correspondance solide. Moteur : ${engine}.`);
     }catch(error:any){setQualificationMessage(`Qualification impossible : ${error?.message||"erreur inconnue"}`);}finally{setQualifying(false);}
   }
 
@@ -49,8 +50,8 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
     <div className={styles.kpis}><div className={styles.kpi}><span>Total surveillé</span><strong>{items.length}</strong><small><FileText size={15}/> Publications suivies</small></div><div className={styles.kpi}><span>Rattachés</span><strong>{linked}</strong><small><Building2 size={15}/> Liés à un dossier</small></div><div className={styles.kpi}><span>À qualifier</span><strong>{unlinked}</strong><small><Search size={15}/> Non rattachés</small></div><div className={styles.kpi}><span>Priorités fortes</span><strong>{urgent}</strong><small><AlertTriangle size={15}/> Action rapide</small></div></div>
 
     <section className={styles.qualification}>
-      <div className={styles.qualificationHead}><div><h2><Sparkles size={17}/> Mode automatique</h2><p>Myvor lit le titre, le résumé et le contenu disponible sur la source institutionnelle avant de rattacher un texte. Les seuils restent stricts : deux mots-clés explicites ou une expression prioritaire pour un rattachement automatique.</p></div><button className={styles.qualificationButton} onClick={()=>qualify(false)} disabled={qualifying||!unlinked||!dossiers.length}><Sparkles size={15}/> {qualifying?"Lecture en cours…":"Relancer l’analyse"}</button></div>
-      <div className={styles.qualificationStats}><span>Titre + résumé + contenu officiel</span><span>2 mots-clés explicites = auto si non ambigu</span><span>1 mot-clé = validation manuelle</span></div>
+      <div className={styles.qualificationHead}><div><h2><Sparkles size={17}/> Mode automatique</h2><p>Myvor lit désormais le texte officiel complet disponible sur la page institutionnelle avant de rattacher une publication. Les seuils restent stricts : deux mots-clés explicites ou une expression prioritaire pour un rattachement automatique.</p></div><button className={styles.qualificationButton} onClick={()=>qualify(false)} disabled={qualifying||!unlinked||!dossiers.length}><Sparkles size={15}/> {qualifying?"Lecture en cours…":"Relancer l’analyse"}</button></div>
+      <div className={styles.qualificationStats}><span>Texte officiel complet</span><span>2 mots-clés explicites = auto si non ambigu</span><span>1 mot-clé = validation manuelle</span></div>
       {qualificationMessage&&<div className={styles.syncMessage}>{qualificationMessage}</div>}
     </section>
 
