@@ -241,12 +241,16 @@ export async function POST(request: Request) {
 
     const supabaseUrl = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+    const userAuthorization=request.headers.get("authorization")||"";
 
     if (!supabaseUrl || !supabaseAnonKey) {
       return NextResponse.json(
         { error: "La connexion Supabase de Myvor n’est pas configurée." },
         { status: 503 },
       );
+    }
+    if(!userAuthorization.toLowerCase().startsWith("bearer ")){
+      return NextResponse.json({error:"Session Myvor requise."},{status:401});
     }
 
     const uniqueUrls = [...new Set(items.map((item) => item.source_url || "").filter(Boolean))].slice(0, config.maxUrls);
@@ -296,7 +300,7 @@ export async function POST(request: Request) {
       try{
         const response=await fetch(`${supabaseUrl}/functions/v1/impact-analysis`,{
           method:"POST",
-          headers:{Authorization:`Bearer ${supabaseAnonKey}`,apikey:supabaseAnonKey,"Content-Type":"application/json"},
+          headers:{Authorization:userAuthorization,apikey:supabaseAnonKey,"Content-Type":"application/json"},
           body:JSON.stringify(invokeBody),
           signal:controller.signal,
         });
@@ -327,7 +331,7 @@ export async function POST(request: Request) {
       const response = await fetch(`${supabaseUrl}/functions/v1/impact-analysis`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${supabaseAnonKey}`,
+          Authorization: userAuthorization,
           apikey: supabaseAnonKey,
           "Content-Type": "application/json",
         },
