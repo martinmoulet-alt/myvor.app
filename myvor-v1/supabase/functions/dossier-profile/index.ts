@@ -20,6 +20,39 @@ type WatchItem = {
   source_url?: string;
 };
 
+const PROFILE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    sector: { type: "string" },
+    activity: { type: "string" },
+    strategic_issues: { type: "array", items: { type: "string" } },
+    risks_to_avoid: { type: "array", items: { type: "string" } },
+    opportunities: { type: "array", items: { type: "string" } },
+    client_position: { type: "string" },
+    key_actors: { type: "array", items: { type: "string" } },
+    watch_topics: { type: "array", items: { type: "string" } },
+    watch_subtopics: { type: "array", items: { type: "string" } },
+    reference_texts: { type: "array", items: { type: "string" } },
+    key_deadlines: { type: "array", items: { type: "string" } },
+    internal_notes: { type: "string" },
+  },
+  required: [
+    "sector",
+    "activity",
+    "strategic_issues",
+    "risks_to_avoid",
+    "opportunities",
+    "client_position",
+    "key_actors",
+    "watch_topics",
+    "watch_subtopics",
+    "reference_texts",
+    "key_deadlines",
+    "internal_notes",
+  ],
+};
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -42,7 +75,10 @@ function clip(value: unknown, max: number) {
 function extractOutputText(payload: any) {
   if (typeof payload?.output_text === "string") return payload.output_text;
   const chunks = payload?.output?.flatMap((item: any) => item?.content || []) || [];
-  return chunks.map((chunk: any) => chunk?.text || "").join("");
+  return chunks
+    .filter((chunk: any) => chunk?.type === "output_text" || typeof chunk?.text === "string")
+    .map((chunk: any) => chunk?.text || "")
+    .join("");
 }
 
 function cleanList(value: any, max = 12) {
@@ -66,39 +102,12 @@ function parseJsonObject(raw: unknown) {
   } catch {}
 
   const firstBrace = text.indexOf("{");
-  if (firstBrace < 0) return null;
-
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-
-  for (let i = firstBrace; i < text.length; i++) {
-    const char = text[i];
-
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') inString = false;
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") depth++;
-    else if (char === "}") {
-      depth--;
-      if (depth === 0) {
-        const candidate = text.slice(firstBrace, i + 1);
-        try {
-          const parsed = JSON.parse(candidate);
-          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
-        } catch {}
-        return null;
-      }
-    }
+  const lastBrace = text.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    try {
+      const parsed = JSON.parse(text.slice(firstBrace, lastBrace + 1));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {}
   }
 
   return null;
@@ -167,29 +176,14 @@ Deno.serve(async (req) => {
 
   const prompt = [
     "Tu es Myvor, assistant expert en affaires publiques françaises et européennes.",
-    "Ta mission est de pré-remplir la fiche stratégique d'un dossier client à partir UNIQUEMENT des informations fournies.",
+    "Pré-remplis la fiche stratégique du dossier client uniquement à partir des informations fournies.",
     "Ne présente jamais comme certain un élément qui n'est pas établi par le dossier ou les titres de veille.",
     "Tu peux proposer des catégories métier raisonnables (secteur, thèmes, risques, opportunités, acteurs institutionnels probables), mais formule-les de manière générique et exploitable.",
     "N'invente aucun nom de personne, aucune échéance précise, aucun texte juridique précis ni aucune position politique non fournie.",
     "Les acteurs institutionnels peuvent être des institutions ou catégories d'acteurs pertinentes, jamais des personnes inventées.",
     "Les textes de référence doivent rester vides si aucun texte identifiable n'est fourni.",
     "Les échéances doivent rester vides si aucune échéance fiable n'est fournie.",
-    "Réponds uniquement avec un objet JSON valide, sans markdown, sans commentaire avant ou après.",
-    "Structure exacte :",
-    JSON.stringify({
-      sector: "string",
-      activity: "string",
-      strategic_issues: ["string"],
-      risks_to_avoid: ["string"],
-      opportunities: ["string"],
-      client_position: "string",
-      key_actors: ["string"],
-      watch_topics: ["string"],
-      watch_subtopics: ["string"],
-      reference_texts: ["string"],
-      key_deadlines: ["string"],
-      internal_notes: "string",
-    }),
+    "Tous les champs du format de sortie doivent être présents. Utilise une chaîne vide ou une liste vide quand l'information est absente.",
     "DOSSIER :",
     JSON.stringify({
       client: clip(dossier.client, 300),
@@ -224,8 +218,17 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         model: Deno.env.get("OPENAI_MODEL") || "gpt-5-mini",
         input: prompt,
-        max_output_tokens: 2200,
-        text: { format: { type: "json_object" } },
+        max_output_tokens: 3000,
+        store: false,
+        text: {
+          format: {
+            type: "json_schema",
+            name: "myvor_dossier_profile",
+            description: "Profil stratégique structuré d'un dossier client Myvor.",
+            strict: true,
+            schema: PROFILE_SCHEMA,
+          },
+        },
       }),
       signal: controller.signal,
     });
@@ -238,7 +241,7 @@ Deno.serve(async (req) => {
       } catch {}
       return json(
         {
-          error: `OpenAI a refusé la requête (${response.status}) : ${String(message).slice(0, 260)}`,
+          error: `OpenAI a refusé la requête (${response.status}) : ${String(message).slice(0, 320)}`,
         },
         502,
       );
@@ -249,9 +252,10 @@ Deno.serve(async (req) => {
     const profile = parseJsonObject(outputText);
 
     if (!profile) {
+      const reason = payload?.incomplete_details?.reason || payload?.status || "sortie vide ou invalide";
       return json(
         {
-          error: "La réponse OpenAI n’était pas un JSON valide.",
+          error: `La réponse OpenAI structurée n’était pas exploitable (${reason}).`,
           diagnostic: String(outputText || "").slice(0, 500),
         },
         502,
@@ -273,7 +277,7 @@ Deno.serve(async (req) => {
         key_deadlines: cleanList(profile.key_deadlines),
         internal_notes: clip(profile.internal_notes, 1600),
       },
-      engine: "myvor-dossier-profile-ai-v3-authenticated",
+      engine: "myvor-dossier-profile-ai-v4-structured",
     });
   } catch (error: any) {
     if (error?.name === "AbortError") {
