@@ -10,6 +10,7 @@ create table if not exists public.dossiers (
   watch_keywords text[] not null default '{}'::text[],
   watch_priority_phrases text[] not null default '{}'::text[],
   watch_excluded_keywords text[] not null default '{}'::text[],
+  watch_rules_updated_at timestamptz not null default now(),
   status text not null default 'Actif',
   created_at timestamptz not null default now()
 );
@@ -39,3 +40,21 @@ create policy "watch_delete_own" on public.watch_items for delete using (auth.ui
 
 create index if not exists dossiers_watch_keywords_gin_idx
   on public.dossiers using gin (watch_keywords);
+
+create or replace function public.touch_dossier_watch_rules()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  new.watch_rules_updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists dossiers_touch_watch_rules on public.dossiers;
+create trigger dossiers_touch_watch_rules
+before update of watch_keywords, watch_priority_phrases, watch_excluded_keywords
+on public.dossiers
+for each row
+execute function public.touch_dossier_watch_rules();
