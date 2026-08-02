@@ -3,6 +3,7 @@
 import { useMemo,useState } from "react";
 import { ExternalLink,Mail,Orbit,Phone,Sparkles,X } from "lucide-react";
 import { saveProduction } from "@/lib/productions";
+import { supabase } from "@/lib/supabase";
 import styles from "./RadarCorporate.module.css";
 
 type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string};
@@ -14,7 +15,25 @@ const COLORS={favorable:"#2f8f5b",inconnue:"#d9a514",reserve:"#d97706",oppositio
 const ORBIT_RADII:{[key in 1|2|3]:number}={1:190,2:295,3:400};
 const ORBIT_DURATIONS:{[key in 1|2|3]:number}={1:22,2:30,3:38};
 
-function postJson<T>(url:string,body:unknown):Promise<T>{return new Promise((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open("POST",url,true);xhr.setRequestHeader("Content-Type","application/json;charset=UTF-8");xhr.responseType="text";xhr.onload=()=>{let payload:any={};try{payload=xhr.responseText?JSON.parse(xhr.responseText):{};}catch{}if(xhr.status>=200&&xhr.status<300)resolve(payload as T);else reject(new Error(payload?.error||`Erreur réseau (${xhr.status})`));};xhr.onerror=()=>reject(new Error("Impossible de contacter le moteur Radar."));xhr.ontimeout=()=>reject(new Error("Le moteur Radar a mis trop de temps à répondre."));xhr.timeout=35000;xhr.send(JSON.stringify(body));});}
+async function postJson<T>(url:string,body:unknown):Promise<T>{
+  if(!supabase)throw new Error("La connexion Supabase de Myvor n’est pas configurée.");
+  const {data}=await supabase.auth.getSession();
+  const token=data.session?.access_token;
+  if(!token)throw new Error("Session Myvor requise.");
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),35000);
+  try{
+    const response=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json;charset=UTF-8",Authorization:`Bearer ${token}`},body:JSON.stringify(body),signal:controller.signal});
+    const raw=await response.text();
+    let payload:any={};
+    try{payload=raw?JSON.parse(raw):{};}catch{}
+    if(!response.ok)throw new Error(payload?.error||`Erreur réseau (${response.status})`);
+    return payload as T;
+  }catch(error:any){
+    if(error?.name==="AbortError")throw new Error("Le moteur Radar a mis trop de temps à répondre.");
+    throw error;
+  }finally{clearTimeout(timer);}
+}
 function bubbleSize(influence:number){const safe=Math.max(1,Math.min(5,Math.round(Number(influence)||1)));return 114+(safe*14);}
 function bubbleFontSize(name:string,size:number){const length=String(name||"").length;if(length>72)return Math.max(9.2,size/18);if(length>54)return Math.max(9.8,size/17);if(length>38)return Math.max(10.5,size/16);if(length>24)return Math.max(11.2,size/15);return Math.max(12,size/14);}
 function orbitMotion(actor:Actor,actors:Actor[]){const same=actors.filter(item=>item.orbit===actor.orbit);const rank=Math.max(0,same.findIndex(item=>item.id===actor.id));const duration=ORBIT_DURATIONS[actor.orbit];const delay=-(duration*(rank/Math.max(1,same.length)))-(actor.orbit*0.7);const direction=actor.orbit===2?"reverse":"normal";return{radius:ORBIT_RADII[actor.orbit],duration,delay,direction};}
