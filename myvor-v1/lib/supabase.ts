@@ -15,7 +15,6 @@ function shouldAttachUserToken(rawUrl:string){
     if(url&&target.origin===new URL(url).origin){
       return [
         "/functions/v1/dossier-profile",
-        "/functions/v1/dossier-profile-",
         "/functions/v1/note-builder",
         "/functions/v1/impact-analysis",
       ].some(path=>target.pathname===path||target.pathname.startsWith(`${path}/`));
