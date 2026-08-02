@@ -1,0 +1,4 @@
+[functions.veille-sync]
+# Le gateway JWT est désactivé uniquement pour permettre l'appel pg_cron/pg_net.
+# La fonction refuse tout appel qui ne présente pas le secret MYVOR_CRON_SECRET.
+verify_jwt = false
