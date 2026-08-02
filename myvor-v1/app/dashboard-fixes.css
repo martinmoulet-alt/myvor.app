@@ -35,6 +35,9 @@
 @media(max-width:850px){
   .topbar{padding-left:14px;padding-right:14px}
   .main{padding-bottom:calc(88px + env(safe-area-inset-bottom))}
+  .mobile-nav{background:rgba(7,22,44,.96);border-top:1px solid rgba(255,255,255,.10);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:0 -10px 28px rgba(4,18,46,.18)}
+  .mobile-nav button{color:#aebed4}
+  .mobile-nav button.active{color:var(--gold);font-weight:850}
   .corp-dashboard-grid{grid-template-columns:1fr}
   .corp-side-stack>.corp-panel:first-child,.corp-side-stack>.corp-panel:last-child{grid-column:1;grid-row:auto}
   .corp-side-stack>.corp-panel:last-child .dash-deadline-list{grid-template-columns:1fr}
