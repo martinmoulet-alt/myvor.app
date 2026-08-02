@@ -51,6 +51,59 @@ function cleanList(value: any, max = 12) {
     : [];
 }
 
+function parseJsonObject(raw: unknown) {
+  let text = String(raw ?? "").trim();
+  if (!text) return null;
+
+  text = text
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+  } catch {}
+
+  const firstBrace = text.indexOf("{");
+  if (firstBrace < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = firstBrace; i < text.length; i++) {
+    const char = text[i];
+
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") depth++;
+    else if (char === "}") {
+      depth--;
+      if (depth === 0) {
+        const candidate = text.slice(firstBrace, i + 1);
+        try {
+          const parsed = JSON.parse(candidate);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+        } catch {}
+        return null;
+      }
+    }
+  }
+
+  return null;
+}
+
 function allowedSupabaseKeys() {
   const keys = new Set<string>();
 
@@ -101,10 +154,11 @@ Deno.serve(async (req) => {
     "Ne présente jamais comme certain un élément qui n'est pas établi par le dossier ou les titres de veille.",
     "Tu peux proposer des catégories métier raisonnables (secteur, thèmes, risques, opportunités, acteurs institutionnels probables), mais formule-les de manière générique et exploitable.",
     "N'invente aucun nom de personne, aucune échéance précise, aucun texte juridique précis ni aucune position politique non fournie.",
-    "Les acteurs institutionnels peuvent être des institutions ou catégories d'acteurs pertinentes (ex. ministère chargé des transports, commission compétente), jamais des personnes inventées.",
+    "Les acteurs institutionnels peuvent être des institutions ou catégories d'acteurs pertinentes, jamais des personnes inventées.",
     "Les textes de référence doivent rester vides si aucun texte identifiable n'est fourni.",
     "Les échéances doivent rester vides si aucune échéance fiable n'est fournie.",
-    "Réponds uniquement en JSON valide avec exactement cette structure :",
+    "Réponds uniquement avec un objet JSON valide, sans markdown, sans commentaire avant ou après.",
+    "Structure exacte :",
     JSON.stringify({
       sector: "string",
       activity: "string",
@@ -153,7 +207,7 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         model: Deno.env.get("OPENAI_MODEL") || "gpt-5-mini",
         input: prompt,
-        max_output_tokens: 1800,
+        max_output_tokens: 2200,
         text: { format: { type: "json_object" } },
       }),
       signal: controller.signal,
@@ -174,11 +228,17 @@ Deno.serve(async (req) => {
     }
 
     const payload = await response.json();
-    let profile: any = {};
-    try {
-      profile = JSON.parse(extractOutputText(payload) || "{}");
-    } catch {
-      return json({ error: "La réponse IA n’était pas exploitable. Réessaie." }, 502);
+    const outputText = extractOutputText(payload);
+    const profile = parseJsonObject(outputText);
+
+    if (!profile) {
+      return json(
+        {
+          error: "La réponse OpenAI n’était pas un JSON valide.",
+          diagnostic: String(outputText || "").slice(0, 500),
+        },
+        502,
+      );
     }
 
     return json({
@@ -196,7 +256,7 @@ Deno.serve(async (req) => {
         key_deadlines: cleanList(profile.key_deadlines),
         internal_notes: clip(profile.internal_notes, 1600),
       },
-      engine: "myvor-dossier-profile-ai",
+      engine: "myvor-dossier-profile-ai-v2",
     });
   } catch (error: any) {
     if (error?.name === "AbortError") {
