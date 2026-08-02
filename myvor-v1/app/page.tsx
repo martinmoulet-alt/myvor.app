@@ -26,6 +26,13 @@ export default function Home(){
 
   useEffect(()=>{if(!supabase){setLoading(false);return;}supabase.auth.getSession().then(({data})=>{setSession(data.session);setLoading(false);});const {data}=supabase.auth.onAuthStateChange((_e,s)=>setSession(s));return()=>data.subscription.unsubscribe();},[]);
   useEffect(()=>{if(session)loadData();else{setDossiers([]);setWatch([]);setActions([]);}},[session]);
+  useEffect(()=>{
+    if(!session)return;
+    const refresh=()=>{if(document.visibilityState==="visible")void loadData();};
+    document.addEventListener("visibilitychange",refresh);
+    window.addEventListener("pageshow",refresh);
+    return()=>{document.removeEventListener("visibilitychange",refresh);window.removeEventListener("pageshow",refresh);};
+  },[session]);
 
   async function loadData(){
     if(!supabase)return;setActionsLoading(true);
