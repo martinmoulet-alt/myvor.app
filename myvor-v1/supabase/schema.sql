@@ -1,3 +1,7 @@
+-- REFERENCE SNAPSHOT ONLY.
+-- Production schema changes must be added as new timestamped files in supabase/migrations/.
+-- Do not use this file as the deployment history for the live database.
+
 create extension if not exists pgcrypto;
 
 create table if not exists public.dossiers (
