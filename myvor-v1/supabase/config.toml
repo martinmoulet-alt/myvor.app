@@ -2,3 +2,9 @@
 # Le gateway JWT est désactivé uniquement pour permettre l'appel pg_cron/pg_net.
 # La fonction refuse tout appel qui ne présente pas le secret MYVOR_CRON_SECRET.
 verify_jwt = false
+
+[functions.dossier-profile]
+# Myvor appelle cette fonction depuis le client avec la clé publique Supabase.
+# Les nouvelles clés publishable ne sont pas des JWT : on désactive donc le contrôle JWT legacy
+# et la fonction vérifie elle-même la clé API reçue dans l'en-tête apikey.
+verify_jwt = false
