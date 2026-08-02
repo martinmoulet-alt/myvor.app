@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "./dashboard-fixes.css";
 import "./myvor-dossier-dark.css";
+import "./myvor-veille-dark.css";
 import PwaRegister from "./PwaRegister";
 
 export const metadata: Metadata = {
