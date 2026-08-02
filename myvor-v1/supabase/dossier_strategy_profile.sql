@@ -1,3 +1,7 @@
+-- LEGACY COMPATIBILITY SCRIPT.
+-- New schema changes must go in supabase/migrations/.
+-- Canonical migration: migrations/20260802090000_dossier_strategy_profile.sql
+
 alter table public.dossiers
   add column if not exists sector text,
   add column if not exists activity text,
