@@ -37,6 +37,23 @@ alter table public.watch_items
   add column if not exists qualification_reason text,
   add column if not exists qualified_at timestamptz;
 
+-- Clean historical duplicates before enforcing stable per-user source identity.
+with ranked as (
+  select
+    id,
+    row_number() over (
+      partition by user_id, source_url
+      order by (dossier_id is not null) desc, created_at desc, id desc
+    ) as row_rank
+  from public.watch_items
+)
+delete from public.watch_items item
+using ranked duplicate
+where item.id = duplicate.id
+  and duplicate.row_rank > 1;
+
+create unique index if not exists watch_items_user_source_url_uidx
+  on public.watch_items (user_id, source_url);
 create unique index if not exists watch_items_user_institutional_uidx
   on public.watch_items (user_id, institutional_item_id)
   where institutional_item_id is not null;
