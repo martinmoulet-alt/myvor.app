@@ -1,4 +1,4 @@
-name: Apply impact finalization patch
+name: Finalize impact PDF patch
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  patch:
+  finalize:
     if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
     steps:
@@ -17,48 +17,41 @@ jobs:
         with:
           ref: agent/impact-finalization
           fetch-depth: 0
-      - name: Patch ImpactModule
+      - name: Finalize PDF pagination and cleanup
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          path=Path('myvor-v1/app/ImpactModule.tsx')
-          text=path.read_text()
+          pdf=Path('myvor-v1/lib/impactPdf.ts')
+          text=pdf.read_text()
+          old_paragraph='  paragraph(value:unknown,size=10,color:Color=TEXT,bold=false,indent=0,after=7){const lines=wrapText(value,size,CONTENT_W-indent);const lh=size*1.38;this.ensure(lines.length*lh+after);for(const line of lines){this.textAt(line,MARGIN+indent,this.y,size,bold,color);this.y-=lh;}this.y-=after;}'
+          new_paragraph='  paragraph(value:unknown,size=10,color:Color=TEXT,bold=false,indent=0,after=7){const lines=wrapText(value,size,CONTENT_W-indent);const lh=size*1.38;for(const line of lines){this.ensure(lh+after);this.textAt(line,MARGIN+indent,this.y,size,bold,color);this.y-=lh;}this.y-=after;}'
+          if old_paragraph in text:text=text.replace(old_paragraph,new_paragraph,1)
+          elif new_paragraph not in text:raise SystemExit('paragraph anchor missing')
 
-          import_anchor='import { saveProduction } from "@/lib/productions";\n'
-          imports='import { downloadImpactPdf } from "@/lib/impactPdf";\nimport { formatImpactDate,nextActionableDeadline,normalizeImpactDeadlines,type ParsedImpactDeadline } from "@/lib/impactDeadline";\n'
-          if imports not in text:
-              if import_anchor not in text: raise SystemExit('production import anchor missing')
-              text=text.replace(import_anchor,import_anchor+imports,1)
+          old_bullet='  bullet(value:string,color:Color=TEXT){const lines=wrapText(value,9.5,CONTENT_W-18);const lh=13;this.ensure(lines.length*lh+5);this.textAt("•",MARGIN+2,this.y,11,true,BLUE);for(let i=0;i<lines.length;i++){this.textAt(lines[i],MARGIN+17,this.y-i*lh,9.5,false,color);}this.y-=lines.length*lh+5;}'
+          new_bullet='  bullet(value:string,color:Color=TEXT){const lines=wrapText(value,9.5,CONTENT_W-18);const lh=13;for(let i=0;i<lines.length;i++){this.ensure(lh+5);if(i===0)this.textAt("•",MARGIN+2,this.y,11,true,BLUE);this.textAt(lines[i],MARGIN+17,this.y,9.5,false,color);this.y-=lh;}this.y-=5;}'
+          if old_bullet in text:text=text.replace(old_bullet,new_bullet,1)
+          elif new_bullet not in text:raise SystemExit('bullet anchor missing')
 
-          old_note='type Note={title?:string;executive_summary?:string;score?:number;level?:string;rationale?:string;risks?:string[];opportunities?:string[];deadlines?:string[];recommendations?:string[];sources_used?:SourceUsed[];dispositions_concernees?:ImpactDisposition[];informations_a_confirmer?:string[];score_detail?:ScoreDetail|null;score_justifications?:ScoreJustifications|null;score_evidence?:ScoreEvidence};'
-          new_note='type Note={title?:string;executive_summary?:string;score?:number;level?:string;rationale?:string;risks?:string[];opportunities?:string[];deadlines?:string[];deadline_dates?:ParsedImpactDeadline[];recommendations?:string[];sources_used?:SourceUsed[];dispositions_concernees?:ImpactDisposition[];informations_a_confirmer?:string[];score_detail?:ScoreDetail|null;score_justifications?:ScoreJustifications|null;score_evidence?:ScoreEvidence};'
-          if old_note in text:text=text.replace(old_note,new_note,1)
-          elif new_note not in text:raise SystemExit('Note type anchor missing')
+          old_blob='  const bytes=buildImpactPdf(note,dossier,mode);const blob=new Blob([bytes],{type:"application/pdf"});'
+          new_blob='  const bytes=buildImpactPdf(note,dossier,mode);const buffer=bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength) as ArrayBuffer;const blob=new Blob([buffer],{type:"application/pdf"});'
+          if old_blob in text:text=text.replace(old_blob,new_blob,1)
+          elif new_blob not in text:raise SystemExit('blob anchor missing')
+          pdf.write_text(text)
 
-          old_next='const nextNote=payload.note||null;setNote(nextNote);if(nextNote){'
-          new_next='const nextNote:Note|null=payload.note||null;if(nextNote)nextNote.deadline_dates=normalizeImpactDeadlines(nextNote.deadlines);setNote(nextNote);if(nextNote){'
-          if old_next in text:text=text.replace(old_next,new_next,1)
-          elif new_next not in text:raise SystemExit('nextNote anchor missing')
+          module=Path('myvor-v1/app/ImpactModule.tsx')
+          source=module.read_text()
+          legacy='function escapeHtml(value:unknown){return String(value??"").replace(/[&<>\'\"]/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;","\'":"&#39;",\'"\':"&quot;"}[char]||char));}\nfunction listHtml(items?:string[]){if(!items?.length)return"<p class=\'muted\'>Aucun élément identifié.</p>";return`<ul>${items.map(item=>`<li>${escapeHtml(item)}</li>`).join("")}</ul>`;}\nfunction evidenceHtml(evidence?:Evidence|null){if(!evidence)return"<div class=\'proof missing\'><b>Preuve précise non retrouvée</b><span>À vérifier manuellement dans les sources lues.</span></div>";const label=evidence.kind==="official"?"Preuve institutionnelle":"Mémoire stratégique du dossier";return`<div class=\'proof\'><b>${escapeHtml(label)} — ${escapeHtml(evidence.source_title)}</b><q>${escapeHtml(evidence.excerpt)}</q>${evidence.source_url?`<small>${escapeHtml(evidence.source_url)}</small>`:""}</div>`;}\n'
+          if legacy in source:source=source.replace(legacy,'',1)
+          module.write_text(source)
 
-          old_action='if(Array.isArray(nextNote.deadlines)&&nextNote.deadlines.length)drafts.push({dossier_id:dossier.id,type:"echeance",title:`Vérifier la prochaine échéance — ${dossier.title}`,description:String(nextNote.deadlines[0]),priority,due_date:null});'
-          new_action='const nextDeadline=nextActionableDeadline(nextNote.deadline_dates||[]);if(nextDeadline?.due_date)drafts.push({dossier_id:dossier.id,type:"echeance",title:`Préparer l’échéance du ${formatImpactDate(nextDeadline.due_date)} — ${dossier.title}`,description:nextDeadline.raw,priority,due_date:nextDeadline.due_date});else if(Array.isArray(nextNote.deadlines)&&nextNote.deadlines.length)drafts.push({dossier_id:dossier.id,type:"echeance",title:`Vérifier la prochaine échéance — ${dossier.title}`,description:String(nextNote.deadlines[0]),priority,due_date:null});'
-          if old_action in text:text=text.replace(old_action,new_action,1)
-          elif new_action not in text:raise SystemExit('deadline action anchor missing')
-
-          start=text.find('  function exportPdf(){')
-          end=text.find('\n  const level=',start)
-          if start<0 or end<0:raise SystemExit('exportPdf boundaries missing')
-          export_fn='  function exportPdf(){if(!note||!dossier)return;try{const mode=depthOptions.find(option=>option.value===depth)?.label||"Standard";downloadImpactPdf(note as any,dossier,mode);setError("");}catch(err:any){setError(err?.message||"Impossible de générer le fichier PDF.");}}'
-          text=text[:start]+export_fn+text[end:]
-
-          path.write_text(text)
+          Path('.github/workflows/impact-finalization-patch.yml').unlink()
           PY
-      - name: Commit patch
+      - name: Commit finalization
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add myvor-v1/app/ImpactModule.tsx
-          if git diff --cached --quiet; then exit 0; fi
-          git commit -m "Connect native impact PDF and dated actions [skip ci]"
+          git add -A myvor-v1/lib/impactPdf.ts myvor-v1/app/ImpactModule.tsx .github/workflows/impact-finalization-patch.yml
+          git commit -m "Finalize impact PDF pagination [skip ci]"
           git push origin HEAD:agent/impact-finalization
