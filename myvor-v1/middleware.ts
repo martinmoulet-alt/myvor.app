@@ -7,7 +7,6 @@ const protectedRoutes:Record<string,ProtectedRoute>={
   "/api/impact":{feature:null,methods:["POST"]},
   "/api/builder":{feature:"note-builder",methods:["POST"]},
   "/api/veille/assign":{feature:null,methods:["POST"]},
-  "/api/veille/sources":{feature:null,methods:["GET"]},
 };
 
 function json(error:string,status:number){
@@ -54,5 +53,8 @@ export async function middleware(request:NextRequest){
 }
 
 export const config={
-  matcher:["/api/radar","/api/impact","/api/builder","/api/veille/assign","/api/veille/sources"],
+  // /api/veille/sources intentionally stays outside auth middleware: it only
+  // aggregates public institutional feeds and is also consumed by the secured
+  // Supabase veille-sync worker. No user or tenant data is exposed there.
+  matcher:["/api/radar","/api/impact","/api/builder","/api/veille/assign"],
 };
