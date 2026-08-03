@@ -1,0 +1,107 @@
+export type ImpactPdfEvidence={kind?:"official"|"dossier";source_title?:string;source_url?:string;excerpt?:string};
+export type ImpactPdfNote={
+  title?:string;executive_summary?:string;score?:number;level?:string;rationale?:string;
+  risks?:string[];opportunities?:string[];deadlines?:string[];recommendations?:string[];
+  sources_used?:{title?:string;url?:string;status?:string;read_chars?:number}[];
+  dispositions_concernees?:{disposition?:string;impact_client?:string;niveau?:string;evidence?:ImpactPdfEvidence|null}[];
+  informations_a_confirmer?:string[];
+  score_detail?:Record<string,number>|null;score_justifications?:Record<string,string>|null;score_evidence?:Record<string,ImpactPdfEvidence|null>|null;
+};
+export type ImpactPdfDossier={client?:string;title?:string};
+
+type Color=[number,number,number];
+type Page={commands:string[]};
+const PAGE_W=595.28,PAGE_H=841.89,MARGIN=46,CONTENT_W=PAGE_W-MARGIN*2;
+const NAVY:Color=[.035,.105,.235],BLUE:Color=[.04,.34,.82],GOLD:Color=[.91,.69,.16],TEXT:Color=[.10,.16,.27],MUTED:Color=[.38,.44,.54],GREEN:Color=[.08,.44,.30],RED:Color=[.70,.14,.23],ORANGE:Color=[.66,.37,0];
+
+const SCORE_LABELS=[
+  ["juridique","Juridique et réglementaire",20],
+  ["economique_operationnel","Économique et opérationnel",20],
+  ["urgence","Urgence institutionnelle",15],
+  ["probabilite","Probabilité d'évolution ou d'adoption",15],
+  ["politique_reputation","Politique et réputation",15],
+  ["capacite_action","Capacité d'action du client",15],
+] as const;
+
+function f(value:number){return Number(value.toFixed(2)).toString();}
+function rgb(color:Color){return `${f(color[0])} ${f(color[1])} ${f(color[2])}`;}
+function winAnsi(value:unknown){
+  const map:Record<string,number>={"’":146,"‘":145,"“":147,"”":148,"–":150,"—":151,"…":133,"€":128,"œ":156,"Œ":140,"•":149};
+  let out="";
+  for(const char of String(value??"").normalize("NFC")){
+    const code=char.charCodeAt(0);
+    if(map[char]!==undefined)out+=String.fromCharCode(map[char]);
+    else if(code<=255)out+=char;
+    else out+="?";
+  }
+  return out.replace(/\\/g,"\\\\").replace(/\(/g,"\\(").replace(/\)/g,"\\)").replace(/[\r\n]+/g," ");
+}
+function textWidth(value:string,size:number){let units=0;for(const char of value){if(" ilI.,:;'|!".includes(char))units+=.28;else if("MW@%&".includes(char))units+=.82;else if(char===char.toUpperCase()&&/[A-ZÀ-Ý]/.test(char))units+=.62;else units+=.52;}return units*size;}
+function wrapText(value:unknown,size:number,maxWidth:number){
+  const paragraphs=String(value??"").replace(/\s+/g," ").trim().split(/\n+/).filter(Boolean);const lines:string[]=[];
+  for(const paragraph of paragraphs){const words=paragraph.split(" ");let line="";for(const word of words){const candidate=line?`${line} ${word}`:word;if(textWidth(candidate,size)<=maxWidth){line=candidate;continue;}if(line)lines.push(line);if(textWidth(word,size)<=maxWidth){line=word;continue;}let chunk="";for(const char of word){if(textWidth(chunk+char,size)>maxWidth&&chunk){lines.push(chunk);chunk=char;}else chunk+=char;}line=chunk;}if(line)lines.push(line);}
+  return lines.length?lines:[""];
+}
+function safeArray(value:unknown){return Array.isArray(value)?value.map(item=>String(item||"").trim()).filter(Boolean):[];}
+
+class Composer{
+  pages:Page[]=[];page!:Page;y=0;
+  constructor(){this.newPage();}
+  cmd(value:string){this.page.commands.push(value);}
+  newPage(){this.page={commands:[]};this.pages.push(this.page);this.y=PAGE_H-58;this.textAt("MYVOR",MARGIN,this.y,16,true,BLUE);this.textAt("ANTICIPEZ L'IMPACT.",MARGIN+66,this.y+1,7,true,MUTED);this.line(MARGIN,this.y-10,PAGE_W-MARGIN,this.y-10,[.82,.86,.92]);this.y-=30;}
+  ensure(height:number){if(this.y-height<48)this.newPage();}
+  textAt(value:unknown,x:number,y:number,size=10,bold=false,color:Color=TEXT){this.cmd(`BT /${bold?"F2":"F1"} ${f(size)} Tf ${rgb(color)} rg 1 0 0 1 ${f(x)} ${f(y)} Tm (${winAnsi(value)}) Tj ET`);}
+  rect(x:number,y:number,w:number,h:number,color:Color){this.cmd(`${rgb(color)} rg ${f(x)} ${f(y)} ${f(w)} ${f(h)} re f`);}
+  line(x1:number,y1:number,x2:number,y2:number,color:Color,width=.7){this.cmd(`${rgb(color)} RG ${f(width)} w ${f(x1)} ${f(y1)} m ${f(x2)} ${f(y2)} l S`);}
+  paragraph(value:unknown,size=10,color:Color=TEXT,bold=false,indent=0,after=7){const lines=wrapText(value,size,CONTENT_W-indent);const lh=size*1.38;this.ensure(lines.length*lh+after);for(const line of lines){this.textAt(line,MARGIN+indent,this.y,size,bold,color);this.y-=lh;}this.y-=after;}
+  section(title:string){this.ensure(28);this.y-=2;this.textAt(title.toUpperCase(),MARGIN,this.y,9,true,BLUE);this.line(MARGIN,this.y-6,PAGE_W-MARGIN,this.y-6,[.84,.88,.94]);this.y-=20;}
+  bullet(value:string,color:Color=TEXT){const lines=wrapText(value,9.5,CONTENT_W-18);const lh=13;this.ensure(lines.length*lh+5);this.textAt("•",MARGIN+2,this.y,11,true,BLUE);for(let i=0;i<lines.length;i++){this.textAt(lines[i],MARGIN+17,this.y-i*lh,9.5,false,color);}this.y-=lines.length*lh+5;}
+  evidence(evidence?:ImpactPdfEvidence|null){this.ensure(38);if(!evidence?.excerpt){this.textAt("PREUVE PRÉCISE NON RETROUVÉE",MARGIN+12,this.y,7.5,true,ORANGE);this.y-=12;this.paragraph("Vérification manuelle recommandée dans les sources lues.",8.5,MUTED,false,12,7);return;}const label=evidence.kind==="dossier"?"MÉMOIRE STRATÉGIQUE":"PREUVE INSTITUTIONNELLE";this.textAt(`${label} — ${evidence.source_title||"Source"}`,MARGIN+12,this.y,7.5,true,GREEN);this.y-=12;const lines=wrapText(`« ${evidence.excerpt} »`,8.5,CONTENT_W-24).slice(0,5);for(const line of lines){this.ensure(12);this.textAt(line,MARGIN+12,this.y,8.5,false,MUTED);this.y-=11.5;}if(evidence.source_url){const url=String(evidence.source_url);const display=url.length>82?`${url.slice(0,79)}...`:url;this.textAt(display,MARGIN+12,this.y,7,false,BLUE);this.y-=11;}this.y-=6;}
+}
+
+function sourceStatus(status?:string,readChars?:number){if(status==="fetched")return `Contenu lu${readChars?` — ${Math.round(readChars).toLocaleString("fr-FR")} caractères`:""}`;if(status==="unavailable")return"Source inaccessible lors de l'analyse";if(status==="unsupported")return"Format non pris en charge";if(status==="not_requested")return"Référencée mais non lue";if(status==="missing_url")return"Aucune URL exploitable";return"Statut de lecture non disponible";}
+function levelColor(level?:string):Color{const value=String(level||"").toLowerCase();if(value.includes("faible"))return GREEN;if(value.includes("fort")||value.includes("urgent"))return RED;if(value.includes("moyen"))return ORANGE;return BLUE;}
+
+export function buildImpactPdf(note:ImpactPdfNote,dossier:ImpactPdfDossier,mode:string){
+  const c=new Composer();
+  c.textAt(`NOTE D'IMPACT ${String(mode||"STANDARD").toUpperCase()}`,MARGIN,c.y,8,true,GOLD);
+  c.textAt(new Date().toLocaleDateString("fr-FR"),PAGE_W-MARGIN-72,c.y,8,false,MUTED);c.y-=22;
+  const title=note.title||`Note d'impact — ${dossier.title||"Dossier"}`;
+  const titleLines=wrapText(title,19,CONTENT_W-118);c.ensure(Math.max(88,titleLines.length*24+24));
+  for(const line of titleLines){c.textAt(line,MARGIN,c.y,19,true,NAVY);c.y-=24;}
+  c.textAt(dossier.client||"Client",MARGIN,c.y,9,true,MUTED);
+  const boxY=c.y-18;c.rect(PAGE_W-MARGIN-96,boxY,96,66,NAVY);c.textAt("SCORE D'IMPACT",PAGE_W-MARGIN-86,boxY+48,7,true,[1,1,1]);c.textAt(Math.round(Number(note.score)||0),PAGE_W-MARGIN-86,boxY+18,27,true,[1,1,1]);c.textAt("/100",PAGE_W-MARGIN-43,boxY+21,9,false,[.78,.84,.92]);c.textAt(String(note.level||"moyen").toUpperCase(),PAGE_W-MARGIN-86,boxY+7,7,true,levelColor(note.level));
+  c.y=boxY-18;
+
+  c.section("Synthèse exécutive");c.paragraph(note.executive_summary||"Synthèse non disponible.",10.3,TEXT,false,0,10);
+  if(note.rationale){c.section("Lecture générale du score");c.paragraph(note.rationale,9.7,MUTED,false,0,10);}
+
+  if(note.score_detail){c.section("Décomposition, justification et preuves du score");for(const [key,label,max] of SCORE_LABELS){c.ensure(75);const value=Math.round(Number(note.score_detail?.[key])||0);c.textAt(label,MARGIN,c.y,10,true,NAVY);c.textAt(`${value}/${max}`,PAGE_W-MARGIN-38,c.y,10,true,BLUE);c.y-=15;c.paragraph(note.score_justifications?.[key]||"Justification non disponible.",9.1,MUTED,false,0,3);c.evidence(note.score_evidence?.[key]);c.line(MARGIN,c.y+2,PAGE_W-MARGIN,c.y+2,[.91,.93,.96],.5);c.y-=8;}}
+
+  const dispositions=Array.isArray(note.dispositions_concernees)?note.dispositions_concernees:[];
+  if(dispositions.length){c.section("Dispositions concernées");for(const item of dispositions){c.ensure(65);c.textAt(item.disposition||"Disposition à préciser",MARGIN,c.y,10,true,NAVY);c.textAt(String(item.niveau||"moyen").toUpperCase(),PAGE_W-MARGIN-72,c.y,7.5,true,levelColor(item.niveau));c.y-=15;c.paragraph(item.impact_client||"Impact client à confirmer.",9.2,MUTED,false,0,3);c.evidence(item.evidence);}}
+
+  const sections:[string,string[]][]=[
+    ["Risques",safeArray(note.risks)],["Opportunités",safeArray(note.opportunities)],["Échéances",safeArray(note.deadlines)],["Recommandations",safeArray(note.recommendations)],["Informations à confirmer",safeArray(note.informations_a_confirmer)],
+  ];
+  for(const [titleSection,items] of sections){if(!items.length)continue;c.section(titleSection);for(const item of items)c.bullet(item);c.y-=3;}
+
+  const sources=Array.isArray(note.sources_used)?note.sources_used:[];
+  if(sources.length){c.section("Traçabilité des sources");for(const source of sources){c.ensure(40);c.textAt(source.title||"Source",MARGIN,c.y,9.2,true,NAVY);c.y-=13;c.textAt(sourceStatus(source.status,source.read_chars),MARGIN,c.y,8,false,source.status==="fetched"?GREEN:MUTED);c.y-=11;if(source.url){const url=String(source.url);const lines=wrapText(url,7.2,CONTENT_W).slice(0,2);for(const line of lines){c.textAt(line,MARGIN,c.y,7.2,false,BLUE);c.y-=10;}}c.y-=6;}}
+
+  c.pages.forEach((page,index)=>{page.commands.push(`${rgb([.84,.88,.94])} RG .5 w ${f(MARGIN)} 32 m ${f(PAGE_W-MARGIN)} 32 l S`);page.commands.push(`BT /F1 7 Tf ${rgb(MUTED)} rg 1 0 0 1 ${f(MARGIN)} 20 Tm (${winAnsi("Myvor — Anticipez l'impact.")}) Tj ET`);page.commands.push(`BT /F1 7 Tf ${rgb(MUTED)} rg 1 0 0 1 ${f(PAGE_W-MARGIN-48)} 20 Tm (${winAnsi(`${index+1}/${c.pages.length}`)}) Tj ET`);});
+
+  const objects:string[]=[];const pageIds=c.pages.map((_,index)=>5+index*2);const contentIds=c.pages.map((_,index)=>6+index*2);
+  objects[1]="<< /Type /Catalog /Pages 2 0 R >>";
+  objects[2]=`<< /Type /Pages /Kids [${pageIds.map(id=>`${id} 0 R`).join(" ")}] /Count ${c.pages.length} >>`;
+  objects[3]="<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
+  objects[4]="<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>";
+  c.pages.forEach((page,index)=>{const stream=page.commands.join("\n");objects[pageIds[index]]=`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${f(PAGE_W)} ${f(PAGE_H)}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentIds[index]} 0 R >>`;objects[contentIds[index]]=`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;});
+  const maxId=objects.length-1;let binary="%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";const offsets:number[]=[0];for(let id=1;id<=maxId;id++){offsets[id]=binary.length;binary+=`${id} 0 obj\n${objects[id]}\nendobj\n`;}
+  const xref=binary.length;binary+=`xref\n0 ${maxId+1}\n0000000000 65535 f \n`;for(let id=1;id<=maxId;id++)binary+=`${offsets[id].toString().padStart(10,"0")} 00000 n \n`;binary+=`trailer\n<< /Size ${maxId+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  const bytes=new Uint8Array(binary.length);for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i)&255;return bytes;
+}
+
+export function downloadImpactPdf(note:ImpactPdfNote,dossier:ImpactPdfDossier,mode:string){
+  const bytes=buildImpactPdf(note,dossier,mode);const blob=new Blob([bytes],{type:"application/pdf"});const url=URL.createObjectURL(blob);const anchor=document.createElement("a");const base=String(note.title||dossier.title||"note-impact").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9]+/g,"-").replace(/^-|-$/g,"").toLowerCase().slice(0,80)||"note-impact";anchor.href=url;anchor.download=`${base}.pdf`;document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
