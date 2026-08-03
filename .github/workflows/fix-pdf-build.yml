@@ -66,8 +66,9 @@ jobs:
       - name: Commit validated repair
         run: |
           rm .github/workflows/fix-pdf-build.yml
+          rm -f .github/pdf-build-trigger
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add myvor-v1/app/api/impact/route.ts myvor-v1/package-lock.json .github/workflows/fix-pdf-build.yml
+          git add myvor-v1/app/api/impact/route.ts myvor-v1/package-lock.json .github/workflows/fix-pdf-build.yml .github/pdf-build-trigger
           git commit -m "Fix PDF build"
           git push origin HEAD:${{ github.head_ref }}
