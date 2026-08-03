@@ -6,8 +6,13 @@ const corsHeaders = {
 
 type ImpactDepth = "express" | "standard" | "deep";
 
-const PROMPT_VERSION = "impact-prompt-v3.1";
-const ENGINE_VERSION = "myvor-impact-authenticated-v3.1";
+const PROMPT_VERSION = "impact-prompt-v3.2";
+const ENGINE_VERSION = "myvor-impact-authenticated-v3.2";
+const ANALYSIS_TIMEOUT_MS: Record<ImpactDepth, number> = {
+  express: 50_000,
+  standard: 75_000,
+  deep: 105_000,
+};
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -368,7 +373,7 @@ Deno.serve(async (req) => {
     .filter(Boolean)
     .join("\n\n");
 
-  const timeoutMs = depth === "deep" ? 38000 : depth === "standard" ? 34000 : 28000;
+  const timeoutMs = ANALYSIS_TIMEOUT_MS[depth];
   const maxOutputTokens =
     depth === "deep" ? 2600 : depth === "standard" ? 2100 : 1400;
   const controller = new AbortController();
