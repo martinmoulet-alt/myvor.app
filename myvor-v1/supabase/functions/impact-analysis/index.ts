@@ -6,12 +6,17 @@ const corsHeaders = {
 
 type ImpactDepth = "express" | "standard" | "deep";
 
-const PROMPT_VERSION = "impact-prompt-v3.2";
-const ENGINE_VERSION = "myvor-impact-authenticated-v3.2";
+const PROMPT_VERSION = "impact-prompt-v3.3";
+const ENGINE_VERSION = "myvor-impact-authenticated-v3.3";
 const ANALYSIS_TIMEOUT_MS: Record<ImpactDepth, number> = {
   express: 50_000,
   standard: 75_000,
   deep: 105_000,
+};
+const OUTPUT_TOKEN_BUDGETS: Record<ImpactDepth, number> = {
+  express: 1_800,
+  standard: 4_000,
+  deep: 6_000,
 };
 
 function json(body: unknown, status = 200) {
@@ -374,8 +379,7 @@ Deno.serve(async (req) => {
     .join("\n\n");
 
   const timeoutMs = ANALYSIS_TIMEOUT_MS[depth];
-  const maxOutputTokens =
-    depth === "deep" ? 2600 : depth === "standard" ? 2100 : 1400;
+  const maxOutputTokens = OUTPUT_TOKEN_BUDGETS[depth];
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const startedAt = Date.now();
@@ -416,10 +420,45 @@ Deno.serve(async (req) => {
     }
 
     const payload = await response.json();
-    const parsed = parseJson(extractOutputText(payload));
+    if (payload?.status === "incomplete") {
+      const reason = String(payload?.incomplete_details?.reason || "inconnue");
+      if (reason === "max_output_tokens") {
+        return json(
+          {
+            error: `La Note d’impact ${depth} a atteint la limite de sortie IA (${maxOutputTokens} tokens) avant de terminer son JSON.`,
+          },
+          502,
+        );
+      }
+      return json(
+        {
+          error: `La génération OpenAI de la Note d’impact est restée incomplète (${reason}).`,
+        },
+        502,
+      );
+    }
+    if (payload?.status === "failed") {
+      return json(
+        {
+          error: `OpenAI n’a pas pu terminer la Note d’impact : ${String(
+            payload?.error?.message || "échec de génération",
+          ).slice(0, 280)}`,
+        },
+        502,
+      );
+    }
+
+    const outputText = extractOutputText(payload);
+    const parsed = parseJson(outputText);
     if (!parsed) {
       return json(
-        { error: "La réponse IA de la Note d’impact n’était pas exploitable." },
+        {
+          error: "La réponse IA de la Note d’impact ne contenait pas un JSON complet exploitable.",
+          details: {
+            response_status: payload?.status || "unknown",
+            output_chars: outputText.length,
+          },
+        },
         502,
       );
     }
@@ -440,6 +479,7 @@ Deno.serve(async (req) => {
       depth,
       execution_ms: Date.now() - startedAt,
       latency_budget_ms: timeoutMs,
+      output_token_budget: maxOutputTokens,
     });
   } catch (error: any) {
     if (error?.name === "AbortError") {
