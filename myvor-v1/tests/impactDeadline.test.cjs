@@ -1,0 +1,3 @@
+const test=require('node:test');const assert=require('node:assert/strict');const deadline=require('../.test-dist/impactDeadline.js');
+test('parses explicit French and ISO dates only',()=>{assert.equal(deadline.parseExplicitImpactDate('Échéance le 15 septembre 2026'),'2026-09-15');assert.equal(deadline.parseExplicitImpactDate('2026-10-02'),'2026-10-02');assert.equal(deadline.parseExplicitImpactDate('au troisième trimestre'),null);});
+test('selects the next future deadline',()=>{const items=deadline.normalizeImpactDeadlines(['1 janvier 2026','15 septembre 2026','2 octobre 2026']);const next=deadline.nextActionableDeadline(items,new Date('2026-08-03T00:00:00Z'));assert.equal(next.due_date,'2026-09-15');});
