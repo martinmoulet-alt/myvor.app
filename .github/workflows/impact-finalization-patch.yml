@@ -1,0 +1,64 @@
+name: Apply impact finalization patch
+
+on:
+  push:
+    branches:
+      - agent/impact-finalization
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/impact-finalization
+          fetch-depth: 0
+      - name: Patch ImpactModule
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path=Path('myvor-v1/app/ImpactModule.tsx')
+          text=path.read_text()
+
+          import_anchor='import { saveProduction } from "@/lib/productions";\n'
+          imports='import { downloadImpactPdf } from "@/lib/impactPdf";\nimport { formatImpactDate,nextActionableDeadline,normalizeImpactDeadlines,type ParsedImpactDeadline } from "@/lib/impactDeadline";\n'
+          if imports not in text:
+              if import_anchor not in text: raise SystemExit('production import anchor missing')
+              text=text.replace(import_anchor,import_anchor+imports,1)
+
+          old_note='type Note={title?:string;executive_summary?:string;score?:number;level?:string;rationale?:string;risks?:string[];opportunities?:string[];deadlines?:string[];recommendations?:string[];sources_used?:SourceUsed[];dispositions_concernees?:ImpactDisposition[];informations_a_confirmer?:string[];score_detail?:ScoreDetail|null;score_justifications?:ScoreJustifications|null;score_evidence?:ScoreEvidence};'
+          new_note='type Note={title?:string;executive_summary?:string;score?:number;level?:string;rationale?:string;risks?:string[];opportunities?:string[];deadlines?:string[];deadline_dates?:ParsedImpactDeadline[];recommendations?:string[];sources_used?:SourceUsed[];dispositions_concernees?:ImpactDisposition[];informations_a_confirmer?:string[];score_detail?:ScoreDetail|null;score_justifications?:ScoreJustifications|null;score_evidence?:ScoreEvidence};'
+          if old_note in text:text=text.replace(old_note,new_note,1)
+          elif new_note not in text:raise SystemExit('Note type anchor missing')
+
+          old_next='const nextNote=payload.note||null;setNote(nextNote);if(nextNote){'
+          new_next='const nextNote:Note|null=payload.note||null;if(nextNote)nextNote.deadline_dates=normalizeImpactDeadlines(nextNote.deadlines);setNote(nextNote);if(nextNote){'
+          if old_next in text:text=text.replace(old_next,new_next,1)
+          elif new_next not in text:raise SystemExit('nextNote anchor missing')
+
+          old_action='if(Array.isArray(nextNote.deadlines)&&nextNote.deadlines.length)drafts.push({dossier_id:dossier.id,type:"echeance",title:`Vérifier la prochaine échéance — ${dossier.title}`,description:String(nextNote.deadlines[0]),priority,due_date:null});'
+          new_action='const nextDeadline=nextActionableDeadline(nextNote.deadline_dates||[]);if(nextDeadline?.due_date)drafts.push({dossier_id:dossier.id,type:"echeance",title:`Préparer l’échéance du ${formatImpactDate(nextDeadline.due_date)} — ${dossier.title}`,description:nextDeadline.raw,priority,due_date:nextDeadline.due_date});else if(Array.isArray(nextNote.deadlines)&&nextNote.deadlines.length)drafts.push({dossier_id:dossier.id,type:"echeance",title:`Vérifier la prochaine échéance — ${dossier.title}`,description:String(nextNote.deadlines[0]),priority,due_date:null});'
+          if old_action in text:text=text.replace(old_action,new_action,1)
+          elif new_action not in text:raise SystemExit('deadline action anchor missing')
+
+          start=text.find('  function exportPdf(){')
+          end=text.find('\n  const level=',start)
+          if start<0 or end<0:raise SystemExit('exportPdf boundaries missing')
+          export_fn='  function exportPdf(){if(!note||!dossier)return;try{const mode=depthOptions.find(option=>option.value===depth)?.label||"Standard";downloadImpactPdf(note as any,dossier,mode);setError("");}catch(err:any){setError(err?.message||"Impossible de générer le fichier PDF.");}}'
+          text=text[:start]+export_fn+text[end:]
+
+          path.write_text(text)
+          PY
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add myvor-v1/app/ImpactModule.tsx
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Connect native impact PDF and dated actions [skip ci]"
+          git push origin HEAD:agent/impact-finalization
