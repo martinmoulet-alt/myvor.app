@@ -23,6 +23,16 @@ function jsonHeaders(accessToken:string){
   return new Headers({"Content-Type":"application/json",Authorization:`Bearer ${accessToken}`});
 }
 
+async function runImpactFallback(originalFetch:typeof window.fetch,rawUrl:string,headers:Headers,prepared:any,reason:string,edgeStatus?:number|null){
+  let fallbackUrl="/api/impact/fallback";
+  try{fallbackUrl=new URL("/api/impact/fallback",new URL(rawUrl,window.location.origin).origin).toString();}catch{}
+  return originalFetch(fallbackUrl,{
+    method:"POST",
+    headers,
+    body:JSON.stringify({prepared,reason,edge_status:edgeStatus||null}),
+  });
+}
+
 async function maybeRunImpactSplit(originalFetch:typeof window.fetch,rawUrl:string,init:RequestInit|undefined,accessToken:string){
   if(!url||!key||typeof window==="undefined")return null;
   let target:URL;
@@ -47,27 +57,46 @@ async function maybeRunImpactSplit(originalFetch:typeof window.fetch,rawUrl:stri
 
   const edgeHeaders=jsonHeaders(accessToken);
   edgeHeaders.set("apikey",key);
-  const edgeResponse=await originalFetch(`${url.replace(/\/$/,"")}/functions/v1/impact-analysis`,{
-    method:"POST",
-    headers:edgeHeaders,
-    body:JSON.stringify(prepared.invoke_body),
-  });
+  let edgeResponse:Response;
+  try{
+    edgeResponse=await originalFetch(`${url.replace(/\/$/,"")}/functions/v1/impact-analysis`,{
+      method:"POST",
+      headers:edgeHeaders,
+      body:JSON.stringify(prepared.invoke_body),
+    });
+  }catch(error:any){
+    return runImpactFallback(originalFetch,rawUrl,sameOriginHeaders,prepared,`Connexion au moteur IA impossible : ${error?.message||"erreur réseau"}.`);
+  }
 
   const edgeRaw=await edgeResponse.text();
   let edgePayload:any=null;
   try{edgePayload=edgeRaw?JSON.parse(edgeRaw):null;}catch{}
   if(!edgeResponse.ok){
-    return new Response(JSON.stringify(edgePayload||{error:`La fonction impact-analysis a échoué (${edgeResponse.status}).`}),{status:edgeResponse.status,headers:{"Content-Type":"application/json"}});
+    const reason=String(edgePayload?.error||`La fonction impact-analysis a échoué (${edgeResponse.status}).`);
+    return runImpactFallback(originalFetch,rawUrl,sameOriginHeaders,prepared,reason,edgeResponse.status);
   }
   if(!edgePayload?.impact){
-    return new Response(JSON.stringify({error:"La fonction impact-analysis n’a pas retourné une Note exploitable."}),{status:502,headers:{"Content-Type":"application/json"}});
+    return runImpactFallback(originalFetch,rawUrl,sameOriginHeaders,prepared,"Le moteur IA n’a pas retourné une Note complète exploitable.",502);
   }
 
-  return originalFetch(rawUrl,{
+  const finalizeResponse=await originalFetch(rawUrl,{
     method:"POST",
     headers:sameOriginHeaders,
     body:JSON.stringify({phase:"finalize",prepared,payload:edgePayload}),
   });
+  if(finalizeResponse.ok)return finalizeResponse;
+
+  const finalizeRaw=await finalizeResponse.clone().text().catch(()=>"");
+  let finalizePayload:any=null;
+  try{finalizePayload=finalizeRaw?JSON.parse(finalizeRaw):null;}catch{}
+  return runImpactFallback(
+    originalFetch,
+    rawUrl,
+    sameOriginHeaders,
+    prepared,
+    String(finalizePayload?.error||`La finalisation de la Note a échoué (${finalizeResponse.status}).`),
+    finalizeResponse.status,
+  );
 }
 
 if(typeof window!=="undefined"&&supabase&&!(window as any).__myvorAuthenticatedFetchInstalled){
