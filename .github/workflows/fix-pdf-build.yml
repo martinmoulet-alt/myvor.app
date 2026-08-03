@@ -1,9 +1,9 @@
 name: Validate and repair PDF build
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/fix-pdf-build
+      - main
 
 permissions:
   contents: write
@@ -12,10 +12,10 @@ jobs:
   repair-and-build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
-          ref: agent/fix-pdf-build
+          ref: ${{ github.head_ref }}
 
       - name: Use Node 22
         uses: actions/setup-node@v4
@@ -36,15 +36,14 @@ jobs:
         working-directory: myvor-v1
         run: npm run build
 
-      - name: Commit repaired lockfile
+      - name: Commit synchronized lockfile
         run: |
-          rm .github/workflows/fix-pdf-build.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add myvor-v1/package-lock.json .github/workflows/fix-pdf-build.yml
+          git add myvor-v1/package-lock.json
           if git diff --cached --quiet; then
-            echo "No lockfile changes to commit"
+            echo "Lockfile already synchronized"
           else
             git commit -m "Sync PDF dependency lockfile"
-            git push origin HEAD:agent/fix-pdf-build
+            git push origin HEAD:${{ github.head_ref }}
           fi
