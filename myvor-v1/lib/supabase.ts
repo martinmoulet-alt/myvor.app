@@ -19,6 +19,42 @@ function shouldAttachUserToken(rawUrl:string){
   return false;
 }
 
+function jsonHeaders(accessToken:string){
+  const headers=new Headers({"Content-Type":"application/json",Authorization:`Bearer ${accessToken}`});
+  return headers;
+}
+
+async function maybeRunDeepImpactSplit(originalFetch:typeof window.fetch,rawUrl:string,input:RequestInfo|URL,init:RequestInit|undefined,accessToken:string){
+  if(!url||!key||typeof window==="undefined")return null;
+  let target:URL;
+  try{target=new URL(rawUrl,window.location.origin);}catch{return null;}
+  if(target.origin!==window.location.origin||target.pathname!=="/api/impact"||String(init?.method||"GET").toUpperCase()!=="POST")return null;
+  if(typeof init?.body!=="string")return null;
+  let requestBody:any=null;
+  try{requestBody=JSON.parse(init.body);}catch{return null;}
+  if(requestBody?.depth!=="deep"||requestBody?.phase)return null;
+
+  const sameOriginHeaders=jsonHeaders(accessToken);
+  const prepareResponse=await originalFetch(rawUrl,{...init,headers:sameOriginHeaders,body:JSON.stringify({...requestBody,phase:"prepare"})});
+  if(!prepareResponse.ok)return prepareResponse;
+  const preparePayload=await prepareResponse.json().catch(()=>null);
+  const prepared=preparePayload?.prepared;
+  if(!prepared?.invoke_body)return new Response(JSON.stringify({error:"La préparation de la Note approfondie est incomplète."}),{status:502,headers:{"Content-Type":"application/json"}});
+
+  const edgeHeaders=jsonHeaders(accessToken);
+  edgeHeaders.set("apikey",key);
+  const edgeResponse=await originalFetch(`${url.replace(/\/$/,"")}/functions/v1/impact-analysis`,{method:"POST",headers:edgeHeaders,body:JSON.stringify(prepared.invoke_body)});
+  const edgeRaw=await edgeResponse.text();
+  let edgePayload:any=null;
+  try{edgePayload=edgeRaw?JSON.parse(edgeRaw):null;}catch{}
+  if(!edgeResponse.ok){
+    return new Response(JSON.stringify(edgePayload||{error:`La fonction impact-analysis a échoué (${edgeResponse.status}).`}),{status:edgeResponse.status,headers:{"Content-Type":"application/json"}});
+  }
+  if(!edgePayload?.impact)return new Response(JSON.stringify({error:"La fonction impact-analysis n’a pas retourné une Note exploitable."}),{status:502,headers:{"Content-Type":"application/json"}});
+
+  return originalFetch(rawUrl,{method:"POST",headers:sameOriginHeaders,body:JSON.stringify({phase:"finalize",prepared,payload:edgePayload})});
+}
+
 if(typeof window!=="undefined"&&supabase&&!(window as any).__myvorAuthenticatedFetchInstalled){
   (window as any).__myvorAuthenticatedFetchInstalled=true;
   const originalFetch=window.fetch.bind(window);
@@ -29,6 +65,9 @@ if(typeof window!=="undefined"&&supabase&&!(window as any).__myvorAuthenticatedF
     const {data}=await supabase.auth.getSession();
     const accessToken=data.session?.access_token;
     if(!accessToken)return originalFetch(input,init);
+
+    const splitResponse=await maybeRunDeepImpactSplit(originalFetch,rawUrl,input,init,accessToken);
+    if(splitResponse)return splitResponse;
 
     const headers=new Headers(input instanceof Request?input.headers:undefined);
     if(init?.headers)new Headers(init.headers).forEach((value,name)=>headers.set(name,value));
