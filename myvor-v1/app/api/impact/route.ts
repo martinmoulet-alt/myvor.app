@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { extractText, getDocumentProxy } from "unpdf";
+
+export const runtime = "nodejs";
 
 type Dossier = {
   id: string;
@@ -17,36 +20,36 @@ type WatchItem = {
 };
 
 type ImpactDepth = "express" | "standard" | "deep";
+type SourceFormat = "html" | "text" | "pdf";
 
 type SourceExtraction = {
   url: string;
   content: string;
   status: "fetched" | "unavailable" | "unsupported";
+  format?: SourceFormat;
 };
 
 type SourceTraceStatus = SourceExtraction["status"] | "not_requested" | "missing_url";
 
+const MAX_PDF_BYTES = 15 * 1024 * 1024;
+
 const OFFICIAL_HOSTS = [
   "assemblee-nationale.fr",
-  "www.assemblee-nationale.fr",
   "senat.fr",
-  "www.senat.fr",
   "legifrance.gouv.fr",
-  "www.legifrance.gouv.fr",
   "vie-publique.fr",
-  "www.vie-publique.fr",
   "gouvernement.fr",
-  "www.gouvernement.fr",
+  "economie.gouv.fr",
+  "ecologie.gouv.fr",
   "conseil-constitutionnel.fr",
-  "www.conseil-constitutionnel.fr",
   "conseil-etat.fr",
-  "www.conseil-etat.fr",
   "courdecassation.fr",
-  "www.courdecassation.fr",
+  "ccomptes.fr",
   "cnil.fr",
-  "www.cnil.fr",
   "arcep.fr",
-  "www.arcep.fr",
+  "cre.fr",
+  "amf-france.org",
+  "autoritedelaconcurrence.fr",
   "eur-lex.europa.eu",
 ];
 
@@ -88,13 +91,27 @@ function htmlToText(html: string) {
   );
 }
 
+function cleanPdfText(value:string){
+  return value
+    .replace(/\u0000/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s*\n\s*\n+/g, "\n\n")
+    .trim();
+}
+
 function isOfficialUrl(rawUrl: string) {
   try {
     const url = new URL(rawUrl);
-    return url.protocol === "https:" && OFFICIAL_HOSTS.includes(url.hostname.toLowerCase());
+    const host=url.hostname.toLowerCase();
+    return url.protocol === "https:" && OFFICIAL_HOSTS.some(base=>host===base||host.endsWith(`.${base}`));
   } catch {
     return false;
   }
+}
+
+function isPdfResponse(contentType:string,url:string){
+  if(contentType.toLowerCase().includes("application/pdf"))return true;
+  try{return new URL(url).pathname.toLowerCase().endsWith(".pdf");}catch{return false;}
 }
 
 async function fetchOfficialSource(rawUrl: string, maxChars:number): Promise<SourceExtraction> {
@@ -103,13 +120,13 @@ async function fetchOfficialSource(rawUrl: string, maxChars:number): Promise<Sou
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 4500);
+  const timer = setTimeout(() => controller.abort(), 9000);
 
   try {
     const response = await fetch(rawUrl, {
       headers: {
         "User-Agent": "Myvor/1.0 institutional-impact-analysis",
-        Accept: "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5",
+        Accept: "application/pdf,text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5",
       },
       redirect: "follow",
       signal: controller.signal,
@@ -120,17 +137,46 @@ async function fetchOfficialSource(rawUrl: string, maxChars:number): Promise<Sou
       return { url: rawUrl, content: "", status: "unavailable" };
     }
 
-    const contentType = response.headers.get("content-type") || "";
+    const resolvedUrl=response.url||rawUrl;
+    if(!isOfficialUrl(resolvedUrl)){
+      return {url:rawUrl,content:"",status:"unsupported"};
+    }
+
+    const contentType = (response.headers.get("content-type") || "").toLowerCase();
+
+    if(isPdfResponse(contentType,resolvedUrl)){
+      const announcedSize=Number(response.headers.get("content-length")||0);
+      if(Number.isFinite(announcedSize)&&announcedSize>MAX_PDF_BYTES){
+        await response.body?.cancel().catch(()=>undefined);
+        return {url:rawUrl,content:"",status:"unsupported",format:"pdf"};
+      }
+      const buffer=await response.arrayBuffer();
+      if(buffer.byteLength>MAX_PDF_BYTES){
+        return {url:rawUrl,content:"",status:"unsupported",format:"pdf"};
+      }
+      const pdf=await getDocumentProxy(new Uint8Array(buffer));
+      try{
+        const result=await extractText(pdf,{mergePages:true});
+        const extracted=Array.isArray(result.text)?result.text.join("\n"):String(result.text||"");
+        const text=cleanPdfText(extracted).slice(0,maxChars);
+        return {url:rawUrl,content:text,status:text?"fetched":"unavailable",format:"pdf"};
+      }finally{
+        await pdf.destroy().catch(()=>undefined);
+      }
+    }
+
     if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
       return { url: rawUrl, content: "", status: "unsupported" };
     }
 
     const raw = await response.text();
-    const text = contentType.includes("text/html") ? htmlToText(raw) : raw.trim();
+    const isHtml=contentType.includes("text/html");
+    const text = (isHtml ? htmlToText(raw) : raw.trim()).slice(0, maxChars);
     return {
       url: rawUrl,
-      content: text.slice(0, maxChars),
+      content: text,
       status: text ? "fetched" : "unavailable",
+      format:isHtml?"html":"text",
     };
   } catch {
     return { url: rawUrl, content: "", status: "unavailable" };
@@ -148,6 +194,7 @@ function sourceTrace(item:WatchItem,extractionByUrl:Map<string,SourceExtraction>
     url,
     status:extraction.status as SourceTraceStatus,
     read_chars:extraction.status==="fetched"?extraction.content.length:0,
+    format:extraction.format,
   };
 }
 
@@ -279,13 +326,14 @@ export async function POST(request: Request) {
       "",
       ...items.map((item, index) => {
         const extraction = item.source_url ? extractionByUrl.get(item.source_url) : undefined;
+        const contentLabel=extraction?.format==="pdf"?"CONTENU PDF OFFICIEL EXTRAIT":"CONTENU OFFICIEL RÉCUPÉRÉ";
         const parts = [
           `SOURCE ${index + 1}`,
           `Titre : ${item.title}`,
           item.nature ? `Nature : ${item.nature}` : "",
           item.source_url ? `URL officielle : ${item.source_url}` : "",
           extraction?.status === "fetched"
-            ? `CONTENU OFFICIEL RÉCUPÉRÉ :\n${extraction.content}`
+            ? `${contentLabel} :\n${extraction.content}`
             : `CONTENU OFFICIEL : non récupéré automatiquement (${extraction?.status || (item.source_url?"non demandé":"aucune URL")}). Ne pas inventer le contenu du texte.`,
         ].filter(Boolean);
         return parts.join("\n");
