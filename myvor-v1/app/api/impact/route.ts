@@ -155,14 +155,10 @@ async function fetchOfficialSource(rawUrl: string, maxChars:number): Promise<Sou
         return {url:rawUrl,content:"",status:"unsupported",format:"pdf"};
       }
       const pdf=await getDocumentProxy(new Uint8Array(buffer));
-      try{
-        const result=await extractText(pdf,{mergePages:true});
-        const extracted=Array.isArray(result.text)?result.text.join("\n"):String(result.text||"");
-        const text=cleanPdfText(extracted).slice(0,maxChars);
-        return {url:rawUrl,content:text,status:text?"fetched":"unavailable",format:"pdf"};
-      }finally{
-        await pdf.destroy().catch(()=>undefined);
-      }
+      const result=await extractText(pdf,{mergePages:true});
+      const extracted=Array.isArray(result.text)?result.text.join("\n"):String(result.text||"");
+      const text=cleanPdfText(extracted).slice(0,maxChars);
+      return {url:rawUrl,content:text,status:text?"fetched":"unavailable",format:"pdf"};
     }
 
     if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
