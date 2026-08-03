@@ -1,0 +1,45 @@
+name: Patch audited impact history
+on:
+  push:
+    branches:
+      - agent/impact-audit-hardening
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: ${{ github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/impact-audit-hardening
+          fetch-depth: 0
+      - name: Patch dossier history
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path=Path('myvor-v1/app/DossierDetail.tsx')
+          text=path.read_text()
+          anchor='import { supabase } from "@/lib/supabase";\n'
+          extra='import ImpactProductionDetail from "./ImpactProductionDetail";\n'
+          if extra not in text:
+              if anchor not in text: raise SystemExit('import anchor missing')
+              text=text.replace(anchor,anchor+extra,1)
+          old='{selectedProduction&&<ProductionPreview production={selectedProduction}/>}'
+          new='{selectedProduction&&<ProductionPreview production={selectedProduction} previous={productions.filter(item=>item.type==="impact"&&item.id!==selectedProduction.id&&new Date(item.created_at).getTime()<new Date(selectedProduction.created_at).getTime())[0]||null} onUpdated={updated=>{setProductions(items=>items.map(item=>item.id===updated.id?updated:item));setSelectedProduction(updated);}}/>}'
+          if old in text:text=text.replace(old,new,1)
+          elif new not in text:raise SystemExit('preview invocation anchor missing')
+          start=text.find('function ProductionPreview(')
+          if start<0:raise SystemExit('ProductionPreview missing')
+          replacement='''function ProductionPreview({production,previous,onUpdated}:{production:Production;previous?:Production|null;onUpdated?:(production:Production)=>void}){const content:any=production.content||{};if(production.type==="impact")return <ImpactProductionDetail production={production} previous={previous} onUpdated={onUpdated}/>;if(production.type==="radar"){const actors=Array.isArray(content.actors)?content.actors:[];return <div style={{marginTop:16,padding:16,border:"1px solid #e1e8f2",borderRadius:14,background:"#f9fbfe"}}><b>{actors.length} acteur(s) cartographié(s)</b><ul>{actors.slice(0,8).map((a:any,i:number)=><li key={a.id||i}>{a.name} — influence {a.influence}/5 — {a.position}</li>)}</ul></div>;}const doc=content.document||{};return <div style={{marginTop:16,padding:16,border:"1px solid #e1e8f2",borderRadius:14,background:"#f9fbfe"}}><b>{doc.subject?`Objet : ${doc.subject}`:production.title}</b><p style={{whiteSpace:"pre-wrap",lineHeight:1.6}}>{doc.content||"Document enregistré."}</p></div>;}\n'''
+          text=text[:start]+replacement
+          path.write_text(text)
+          PY
+      - name: Commit dossier history patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add myvor-v1/app/DossierDetail.tsx
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "Open complete versioned impact notes from dossier history"
+          git push origin HEAD:agent/impact-audit-hardening
