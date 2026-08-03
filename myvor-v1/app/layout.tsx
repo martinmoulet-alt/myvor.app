@@ -3,6 +3,7 @@ import "./globals.css";
 import "./dashboard-fixes.css";
 import "./myvor-dossier-dark.css";
 import "./myvor-veille-dark.css";
+import "./myvor-impact-background.css";
 import PwaRegister from "./PwaRegister";
 
 export const metadata: Metadata = {
