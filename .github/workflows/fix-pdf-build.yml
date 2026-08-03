@@ -24,6 +24,33 @@ jobs:
           cache: npm
           cache-dependency-path: myvor-v1/package-lock.json
 
+      - name: Fix incompatible PDF proxy cleanup
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('myvor-v1/app/api/impact/route.ts')
+          text = path.read_text()
+          old = '''      const pdf=await getDocumentProxy(new Uint8Array(buffer));
+      try{
+        const result=await extractText(pdf,{mergePages:true});
+        const extracted=Array.isArray(result.text)?result.text.join("\\n"):String(result.text||"");
+        const text=cleanPdfText(extracted).slice(0,maxChars);
+        return {url:rawUrl,content:text,status:text?"fetched":"unavailable",format:"pdf"};
+      }finally{
+        await pdf.destroy().catch(()=>undefined);
+      }
+'''
+          new = '''      const pdf=await getDocumentProxy(new Uint8Array(buffer));
+      const result=await extractText(pdf,{mergePages:true});
+      const extracted=Array.isArray(result.text)?result.text.join("\\n"):String(result.text||"");
+      const text=cleanPdfText(extracted).slice(0,maxChars);
+      return {url:rawUrl,content:text,status:text?"fetched":"unavailable",format:"pdf"};
+'''
+          if old not in text:
+              raise SystemExit('Expected PDF cleanup block not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+
       - name: Synchronize lockfile
         working-directory: myvor-v1
         run: npm install --package-lock-only --ignore-scripts
@@ -36,14 +63,11 @@ jobs:
         working-directory: myvor-v1
         run: npm run build
 
-      - name: Commit synchronized lockfile
+      - name: Commit validated repair
         run: |
+          rm .github/workflows/fix-pdf-build.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add myvor-v1/package-lock.json
-          if git diff --cached --quiet; then
-            echo "Lockfile already synchronized"
-          else
-            git commit -m "Sync PDF dependency lockfile"
-            git push origin HEAD:${{ github.head_ref }}
-          fi
+          git add myvor-v1/app/api/impact/route.ts myvor-v1/package-lock.json .github/workflows/fix-pdf-build.yml
+          git commit -m "Fix PDF build"
+          git push origin HEAD:${{ github.head_ref }}
