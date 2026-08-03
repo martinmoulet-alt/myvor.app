@@ -24,6 +24,8 @@ type SourceExtraction = {
   status: "fetched" | "unavailable" | "unsupported";
 };
 
+type SourceTraceStatus = SourceExtraction["status"] | "not_requested" | "missing_url";
+
 const OFFICIAL_HOSTS = [
   "assemblee-nationale.fr",
   "www.assemblee-nationale.fr",
@@ -137,7 +139,19 @@ async function fetchOfficialSource(rawUrl: string, maxChars:number): Promise<Sou
   }
 }
 
-function mapImpactToNote(impact: any, dossier: Dossier, items: WatchItem[], depth:ImpactDepth) {
+function sourceTrace(item:WatchItem,extractionByUrl:Map<string,SourceExtraction>){
+  const url=item.source_url||"";
+  if(!url)return {url:"",status:"missing_url" as SourceTraceStatus,read_chars:0};
+  const extraction=extractionByUrl.get(url);
+  if(!extraction)return {url,status:"not_requested" as SourceTraceStatus,read_chars:0};
+  return {
+    url,
+    status:extraction.status as SourceTraceStatus,
+    read_chars:extraction.status==="fetched"?extraction.content.length:0,
+  };
+}
+
+function mapImpactToNote(impact: any, dossier: Dossier, items: WatchItem[], depth:ImpactDepth, extractionByUrl:Map<string,SourceExtraction>) {
   let risks = Array.isArray(impact?.risques)
     ? impact.risques.map((risk: any) =>
         [asText(risk?.titre), asText(risk?.description)].filter(Boolean).join(" — "),
@@ -194,7 +208,7 @@ function mapImpactToNote(impact: any, dossier: Dossier, items: WatchItem[], dept
     recommendations,
     sources_used: items.map((item) => ({
       title: item.title,
-      url: item.source_url || "",
+      ...sourceTrace(item,extractionByUrl),
     })),
     score_detail: impact?.score_detail || null,
     score_justifications: impact?.score_justifications || null,
@@ -256,6 +270,7 @@ export async function POST(request: Request) {
     const uniqueUrls = [...new Set(items.map((item) => item.source_url || "").filter(Boolean))].slice(0, config.maxUrls);
     const extractions = await Promise.all(uniqueUrls.map(url=>fetchOfficialSource(url,config.sourceChars)));
     const extractionByUrl = new Map(extractions.map((source) => [source.url, source]));
+    const traceStatuses=items.map(item=>sourceTrace(item,extractionByUrl));
 
     const sourceText = [
       `TYPE DE NOTE DEMANDÉE : ${config.label.toUpperCase()}`,
@@ -271,14 +286,14 @@ export async function POST(request: Request) {
           item.source_url ? `URL officielle : ${item.source_url}` : "",
           extraction?.status === "fetched"
             ? `CONTENU OFFICIEL RÉCUPÉRÉ :\n${extraction.content}`
-            : `CONTENU OFFICIEL : non récupéré automatiquement (${extraction?.status || "aucune URL"}). Ne pas inventer le contenu du texte.`,
+            : `CONTENU OFFICIEL : non récupéré automatiquement (${extraction?.status || (item.source_url?"non demandé":"aucune URL")}). Ne pas inventer le contenu du texte.`,
         ].filter(Boolean);
         return parts.join("\n");
       }),
     ].join("\n\n====================\n\n");
 
     const firstSourceUrl = items.find((item) => item.source_url)?.source_url || "";
-    const fetchedCount = extractions.filter((source) => source.status === "fetched").length;
+    const fetchedCount = traceStatuses.filter((source) => source.status === "fetched").length;
     const invokeBody={
       depth,
       client:dossier.client,
@@ -316,7 +331,7 @@ export async function POST(request: Request) {
           production_id:productionId,
           engine:"supabase-impact-analysis-background",
           depth,
-          grounding:{official_sources_requested:uniqueUrls.length,official_sources_fetched:fetchedCount,statuses:extractions.map(source=>({url:source.url,status:source.status}))},
+          grounding:{official_sources_requested:uniqueUrls.length,official_sources_fetched:fetchedCount,statuses:traceStatuses},
         },{status:202});
       }catch(error:any){
         if(error?.name==="AbortError")return NextResponse.json({error:"Le lancement de la Note approfondie n’a pas répondu à temps."},{status:504});
@@ -357,13 +372,13 @@ export async function POST(request: Request) {
       }
 
       return NextResponse.json({
-        note: mapImpactToNote(impact, dossier, items, depth),
+        note: mapImpactToNote(impact, dossier, items, depth, extractionByUrl),
         engine: "supabase-impact-analysis",
         depth,
         grounding: {
           official_sources_requested: uniqueUrls.length,
           official_sources_fetched: fetchedCount,
-          statuses: extractions.map((source) => ({ url: source.url, status: source.status })),
+          statuses: traceStatuses,
         },
       });
     } catch (error:any) {
