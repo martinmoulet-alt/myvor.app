@@ -128,7 +128,7 @@ function urgencyRank(value:unknown){const key=asText(value).toLowerCase();return
 
 async function fetchTextSource(rawUrl:string,maxChars:number,allowed:(url:string)=>boolean):Promise<SourceExtraction>{
   if(!rawUrl||!allowed(rawUrl))return{url:rawUrl,content:"",status:"unsupported",read_chars:0};
-  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),6500);
+  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),4500);
   try{
     const response=await fetch(rawUrl,{headers:{"User-Agent":"Myvor/2.0 influence-radar","Accept":"text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.4"},redirect:"follow",signal:controller.signal,cache:"no-store"});
     if(!response.ok)return{url:rawUrl,resolved_url:response.url||rawUrl,content:"",status:"unavailable",read_chars:0};
@@ -240,7 +240,7 @@ async function enrichContacts(apiKey:string,model:string,actors:Actor[]):Promise
   const targets=actors.filter(actor=>actor.evidence.verified&&(actor.influence>=4||actor.orbit===1)&&actor.certainty!=="a_confirmer").slice(0,4);
   if(!targets.length)return actors;
   const prompt=`Recherche des coordonnées professionnelles publiques pour ces acteurs institutionnels :\n\n${targets.map(a=>`${a.id} | ${a.name} | ${a.role}`).join("\n")}\n\nRègles : utilise uniquement une page institutionnelle officielle ; ne déduis jamais un e-mail ; n'invente jamais de téléphone ; si aucun contact direct n'est publié, retourne seulement l'URL officielle ; sinon laisse les champs vides. Retourne le JSON demandé par le schéma.`;
-  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),19000);
+  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),9000);
   try{
     const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model,input:prompt,tools:[{type:"web_search"}],text:{format:CONTACT_FORMAT},max_output_tokens:1200,store:false}),signal:controller.signal});
     if(!response.ok)return actors;
@@ -293,7 +293,7 @@ export async function POST(request:Request){
 
     const prompt=`Tu es MYVOR, analyste senior français en affaires publiques et stratégie institutionnelle.\n\nProduis un RADAR D'INFLUENCE professionnel, prudent et vérifiable pour ce dossier.\n\nCLIENT : ${dossier.client}\nDOSSIER : ${dossier.title}\nCONTEXTE : ${dossier.context||"Non renseigné"}\nOBJECTIF CLIENT : ${dossier.objective}\n\nMÉMOIRE STRATÉGIQUE DU DOSSIER (contexte uniquement, jamais preuve d'une position institutionnelle) :\n${dossierProfileText(dossier)}\n\nSOURCES OFFICIELLES :\n${sourceText}\n\nRÈGLES ABSOLUES :\n1. Le client n'est jamais un acteur du Radar.\n2. Aucun acteur générique non étayé.\n3. N'invente jamais une personne, fonction, position, vote, déclaration, date, compétence ou relation.\n4. La position est évaluée uniquement par rapport à l'objectif du client. Si elle n'est pas explicitement établie, utilise \"inconnue\".\n5. Chaque acteur doit citer UNE source numérotée et un extrait COURT, EXACT et copié du contenu officiel fourni (18 à 280 caractères). N'utilise jamais une paraphrase comme preuve.\n6. L'extrait doit étayer au minimum la pertinence/rôle de l'acteur et, lorsqu'une position est attribuée, cette position.\n7. Si aucune preuve exacte n'est disponible, source_index=0, excerpt vide, certainty=\"a_confirmer\" et position=\"inconnue\".\n8. La mémoire stratégique du dossier aide à prioriser les acteurs mais ne peut jamais servir de preuve institutionnelle.\n9. Maximum 8 acteurs.\n\nORBITE : 1 décision directe ; 2 influence forte ; 3 influence indirecte.\nINFLUENCE : 1 à 5.\nPOSITION : favorable | inconnue | reserve | opposition.\nCERTITUDE : confirme | probable | a_confirmer.\n\nRetourne uniquement le JSON conforme au schéma fourni.`;
 
-    const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),30000);
+    const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),22000);
     try{
       const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model,input:prompt,text:{format:RADAR_FORMAT},max_output_tokens:2400,store:false}),signal:controller.signal});
       const raw=await response.text();let payload:any=null;try{payload=raw?JSON.parse(raw):null;}catch{return NextResponse.json({error:`OpenAI a retourné une réponse invalide (${response.status}).`},{status:502});}
@@ -301,8 +301,8 @@ export async function POST(request:Request){
       const outputText=extractOutputText(payload);
       if(!outputText)return NextResponse.json({error:"Le moteur Radar n’a retourné aucune analyse exploitable."},{status:502});
       let parsed:any=null;try{parsed=JSON.parse(outputText);}catch{return NextResponse.json({error:"Le moteur Radar a retourné un JSON invalide malgré le schéma structuré."},{status:502});}
-      const normalized=(Array.isArray(parsed?.actors)?parsed.actors:[]).slice(0,8).map(normalizeActor);
-      const grounded=normalized.map(actor=>groundActor(actor,items,extractionByUrl));
+      const normalized:Actor[]=(Array.isArray(parsed?.actors)?parsed.actors:[]).slice(0,8).map((actor:any,index:number)=>normalizeActor(actor,index));
+      const grounded:Actor[]=normalized.map((actor:Actor)=>groundActor(actor,items,extractionByUrl));
       const relevantActors=keepRelevantActors(grounded,dossier.client);
       if(!relevantActors.length)return NextResponse.json({error:"Aucun acteur externe suffisamment pertinent n’a pu être identifié à partir des sources disponibles."},{status:422});
       const actors=await enrichContacts(apiKey,model,relevantActors);
