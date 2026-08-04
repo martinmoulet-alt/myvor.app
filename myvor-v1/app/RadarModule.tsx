@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo,useState } from "react";
+import { useEffect,useMemo,useState } from "react";
 import { ExternalLink,Mail,Orbit,Phone,Sparkles,X } from "lucide-react";
-import { saveProduction } from "@/lib/productions";
+import { listProductions,saveProduction } from "@/lib/productions";
 import { presentableText } from "@/lib/presentation";
+import { fetchJsonWithRetry,isTransientError } from "@/lib/reliability";
 import { supabase } from "@/lib/supabase";
 import styles from "./RadarCorporate.module.css";
 
@@ -34,24 +35,13 @@ async function postJson<T>(url:string,body:unknown):Promise<T>{
   const {data}=await supabase.auth.getSession();
   const token=data.session?.access_token;
   if(!token)throw new Error("Session Myvor requise.");
-  const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),38000);
-  try{
-    const response=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json;charset=UTF-8",Authorization:`Bearer ${token}`},body:JSON.stringify(body),signal:controller.signal});
-    const raw=await response.text();
-    let payload:any={};
-    try{payload=raw?JSON.parse(raw):{};}catch{}
-    if(!response.ok)throw new Error(payload?.error||`Erreur réseau (${response.status})`);
-    return payload as T;
-  }catch(error:any){
-    if(error?.name==="AbortError")throw new Error("Le moteur Radar a mis trop de temps à répondre.");
-    throw error;
-  }finally{clearTimeout(timer);}
+  return fetchJsonWithRetry<T>(url,{method:"POST",headers:{"Content-Type":"application/json;charset=UTF-8",Authorization:`Bearer ${token}`},body:JSON.stringify(body)},{attempts:2,baseDelayMs:450,timeoutMs:32000,shouldRetry:(error)=>isTransientError(error)});
 }
 function bubbleSize(influence:number){const safe=Math.max(1,Math.min(5,Math.round(Number(influence)||1)));return 114+(safe*14);}
 function bubbleFontSize(name:string,size:number){const length=String(name||"").length;if(length>72)return Math.max(9.2,size/18);if(length>54)return Math.max(9.8,size/17);if(length>38)return Math.max(10.5,size/16);if(length>24)return Math.max(11.2,size/15);return Math.max(12,size/14);}
 function orbitMotion(actor:Actor,actors:Actor[]){const same=actors.filter(item=>item.orbit===actor.orbit);const rank=Math.max(0,same.findIndex(item=>item.id===actor.id));const duration=ORBIT_DURATIONS[actor.orbit];const delay=-(duration*(rank/Math.max(1,same.length)))-(actor.orbit*0.7);const direction=actor.orbit===2?"reverse":"normal";return{radius:ORBIT_RADII[actor.orbit],duration,delay,direction};}
 function contactText(actor:Actor){return [actor.contact_email?`E-mail : ${actor.contact_email}`:null,actor.contact_phone?`Téléphone : ${actor.contact_phone}`:null,actor.contact_url?`Page officielle : ${actor.contact_url}`:null].filter(Boolean).join("\n");}
+function actorsFromProduction(content:Record<string,unknown>){const raw=(content as any)?.actors;return Array.isArray(raw)?raw.filter((actor:any)=>actor?.evidence?.verified) as Actor[]:[];}
 
 export default function RadarModule({dossiers,watch,onActions}:{dossiers:Dossier[];watch:Watch[];onActions?:(drafts:ActionDraft[])=>Promise<void>|void}){
   const [dossierId,setDossierId]=useState(dossiers[0]?.id||"");
@@ -65,10 +55,23 @@ export default function RadarModule({dossiers,watch,onActions}:{dossiers:Dossier
   const related=useMemo(()=>watch.filter(w=>w.dossier_id===dossierId),[watch,dossierId]);
   const source=related[0]||null;
 
+  useEffect(()=>{
+    let active=true;
+    setSelected(null);setError("");setSaveMessage("");
+    if(!dossierId){setActors([]);setGenerated(false);return()=>{active=false;};}
+    listProductions(dossierId).then(({data})=>{
+      if(!active)return;
+      const latest=data.find(item=>item.type==="radar");
+      const savedActors=latest?actorsFromProduction(latest.content):[];
+      setActors(savedActors);setGenerated(Boolean(latest));
+    }).catch(()=>undefined);
+    return()=>{active=false;};
+  },[dossierId]);
+
   async function generate(){
     if(!dossier){setError("Sélectionne un dossier client.");return;}
     if(!related.length){setError("Aucun texte n’est rattaché à ce dossier.");return;}
-    setLoading(true);setError("");setSaveMessage("");setActors([]);setSelected(null);setGenerated(false);
+    setLoading(true);setError("");setSaveMessage("");setSelected(null);
     try{
       const payload=await postJson<RadarPayload>("/api/radar",{dossier,items:related});
       const rawActors=payload.actors||[];
@@ -87,14 +90,14 @@ export default function RadarModule({dossiers,watch,onActions}:{dossiers:Dossier
           .map(a=>{const contact=contactText(a),action=presentableText(a.action)||presentableText(a.why);return{dossier_id:dossier.id,type:"contact",title:`Contacter ${a.name}`,description:[action,contact].filter(Boolean).join("\n\n"),actor_name:a.name,priority:priority(a),due_date:null};});
         await onActions(drafts);
       }
-    }catch(err:any){setError(err?.message||"Génération impossible");setGenerated(true);}
+    }catch(err:any){setError(err?.message||"Génération impossible");setGenerated(actors.length>0||generated);}
     finally{setLoading(false);}
   }
 
   return <div className={styles.page}>
     <div className={styles.head}><div><div className={styles.kicker}>Cartographie stratégique</div><h1>Radar d’influence</h1><p>Visualisez les acteurs, leur proximité avec la décision, leur influence et leur position face à l’objectif client.</p></div></div>
     <div className={styles.setup}>
-      <section className={styles.panel}><h2>Dossier analysé</h2><div className={styles.field}><label>Dossier client</label><select value={dossierId} onChange={e=>{setDossierId(e.target.value);setActors([]);setSelected(null);setGenerated(false);setError("");setSaveMessage("");}}><option value="">Sélectionner un dossier</option>{dossiers.map(d=><option key={d.id} value={d.id}>{d.client} — {d.title}</option>)}</select></div>{dossier&&<div className={styles.objective}><b>Objectif client :</b><br/>{dossier.objective}</div>}</section>
+      <section className={styles.panel}><h2>Dossier analysé</h2><div className={styles.field}><label>Dossier client</label><select value={dossierId} onChange={e=>{setDossierId(e.target.value);setSelected(null);setError("");setSaveMessage("");}}><option value="">Sélectionner un dossier</option>{dossiers.map(d=><option key={d.id} value={d.id}>{d.client} — {d.title}</option>)}</select></div>{dossier&&<div className={styles.objective}><b>Objectif client :</b><br/>{dossier.objective}</div>}</section>
       <section className={styles.panel}><h2>Lecture des orbites</h2><div className={styles.orbitList}><div className={styles.orbitRow}><b>1re orbite</b><span>Décision directe</span></div><div className={styles.orbitRow}><b>2e orbite</b><span>Influence forte</span></div><div className={styles.orbitRow}><b>3e orbite</b><span>Influence indirecte</span></div></div></section>
     </div>
     <div className={styles.generate}><div><h3>Prêt à cartographier</h3><p>{related.length} texte(s) lié(s) au dossier sélectionné.</p></div><button onClick={generate} disabled={loading||!dossier||!related.length}><Sparkles size={17}/>{loading?"Cartographie en cours…":"Générer le radar d’influence"}</button></div>
