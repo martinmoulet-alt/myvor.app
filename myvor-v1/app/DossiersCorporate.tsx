@@ -1,19 +1,21 @@
 "use client";
 
 import { useEffect,useMemo,useState } from "react";
-import { AlertTriangle,Bell,BriefcaseBusiness,CalendarDays,FileText,Folder,MoreHorizontal,Search,Sparkles,Trash2 } from "lucide-react";
+import { Bell,BriefcaseBusiness,CalendarDays,FileText,Folder,MoreHorizontal,Search,Sparkles,Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import styles from "./DossiersCorporate.module.css";
 
 type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string};
 type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string};
 type EditDraft={client:string;title:string;objective:string;context:string;status:string};
+type ImpactProductionRow={dossier_id:string;content:any;created_at:string};
+type ImpactTone="critical"|"strong"|"medium"|"low";
 
-function impactFor(watch:Watch[]){
-  if(watch.some(item=>item.urgency==="absolument urgent"))return{score:85,level:"critical"};
-  if(watch.some(item=>item.urgency==="fort"))return{score:72,level:"strong"};
-  if(watch.some(item=>item.urgency==="moyen"))return{score:58,level:"medium"};
-  return{score:34,level:"low"};
+function impactTone(score:number):ImpactTone{
+  if(score>=80)return"critical";
+  if(score>=65)return"strong";
+  if(score>=45)return"medium";
+  return"low";
 }
 
 export default function DossiersCorporate({items,watch,add,search,searching,messages,open}:{items:Dossier[];watch:Watch[];add:()=>void;search:(d:Dossier)=>void;searching:string|null;messages:Record<string,string>;open:(d:Dossier)=>void}){
@@ -26,12 +28,33 @@ export default function DossiersCorporate({items,watch,add,search,searching,mess
   const [saving,setSaving]=useState(false);
   const [editMessage,setEditMessage]=useState("");
   const [revision,setRevision]=useState(0);
+  const [impactScores,setImpactScores]=useState<Record<string,number>>({});
   const [draft,setDraft]=useState<EditDraft>({client:"",title:"",objective:"",context:"",status:"Actif"});
 
   useEffect(()=>{const target=sessionStorage.getItem("myvor:open-dossier");if(!target)return;const dossier=items.find(item=>item.id===target);if(dossier){sessionStorage.removeItem("myvor:open-dossier");open(dossier);}},[items,open]);
+  useEffect(()=>{
+    let active=true;
+    async function loadValidatedScores(){
+      if(!supabase||!items.length){if(active)setImpactScores({});return;}
+      const dossierIds=items.map(item=>item.id);
+      const {data,error}=await supabase.from("productions").select("dossier_id,content,created_at").eq("type","impact").in("dossier_id",dossierIds).order("created_at",{ascending:false});
+      if(!active||error)return;
+      const scores:Record<string,number>={};
+      for(const row of (data||[]) as ImpactProductionRow[]){
+        if(scores[row.dossier_id]!=null)continue;
+        const note=row.content?.note;
+        const score=Number(note?.score);
+        if(note?.quality?.status!=="validated"||note?.score_available===false||!Number.isFinite(score))continue;
+        scores[row.dossier_id]=Math.max(0,Math.min(100,Math.round(score)));
+      }
+      if(active)setImpactScores(scores);
+    }
+    void loadValidatedScores();
+    return()=>{active=false;};
+  },[items,revision]);
 
   function related(dossierId:string){return watch.filter(item=>item.dossier_id===dossierId);}
-  function rank(dossierId:string){const i=impactFor(related(dossierId));return i.score;}
+  function rank(dossierId:string){return impactScores[dossierId]??-1;}
 
   const filtered=useMemo(()=>items.filter(dossier=>{
     const q=query.trim().toLocaleLowerCase("fr");
@@ -40,7 +63,7 @@ export default function DossiersCorporate({items,watch,add,search,searching,mess
     const urgent=rel.some(item=>["fort","absolument urgent"].includes(item.urgency));
     const status=filter==="all"||(filter==="active"&&dossier.status.toLowerCase()==="actif")||(filter==="urgent"&&urgent);
     return matches&&status;
-  }).sort((a,b)=>rank(b.id)-rank(a.id)||new Date(b.created_at).getTime()-new Date(a.created_at).getTime()),[items,watch,query,filter,revision]);
+  }).sort((a,b)=>rank(b.id)-rank(a.id)||new Date(b.created_at).getTime()-new Date(a.created_at).getTime()),[items,watch,query,filter,revision,impactScores]);
 
   const activeCount=items.filter(d=>d.status.toLowerCase()==="actif").length;
   const linkedCount=items.filter(d=>watch.some(w=>w.dossier_id===d.id)).length;
@@ -100,17 +123,19 @@ export default function DossiersCorporate({items,watch,add,search,searching,mess
     </div>
 
     {filtered.length?<div className={styles.tableWrap}>
-      <div className={styles.tableHeader}><span>Dossier</span><span>Client</span><span>Statut</span><span>Impact</span><span>Dernière évolution</span><span>Alertes</span><span/></div>
+      <div className={styles.tableHeader}><span>Dossier</span><span>Client</span><span>Statut</span><span>Score validé</span><span>Dernière évolution</span><span>Alertes</span><span/></div>
       <div className={styles.tableBody}>{filtered.map(dossier=>{
         const rel=related(dossier.id);
         const urgent=rel.filter(w=>["fort","absolument urgent"].includes(w.urgency)).length;
-        const impact=impactFor(rel);
+        const score=impactScores[dossier.id];
+        const tone=score!=null?impactTone(score):null;
         const latest=rel.reduce((max,item)=>Math.max(max,new Date(item.created_at).getTime()||0),0);
+        const impactStyle=tone?({"--impact":`${score*3.6}deg`} as React.CSSProperties):undefined;
         return <div className={styles.tableRow} key={dossier.id} onDoubleClick={()=>open(dossier)}>
           <button className={styles.dossierCell} onClick={()=>open(dossier)}><span className={styles.star}>☆</span><span><b>{dossier.title}</b><small>{dossier.objective||"Objectif à préciser"}</small></span></button>
           <div className={styles.clientCell}><b>{dossier.client}</b><small>Client</small></div>
           <div><span className={`${styles.status} ${dossier.status.toLowerCase()==="actif"?styles.statusActive:styles.statusIdle}`}>{dossier.status}<i/></span></div>
-          <div><span className={`${styles.impact} ${styles[impact.level]}`} style={{"--impact":`${impact.score*3.6}deg`} as React.CSSProperties}><b>{impact.score}%</b></span></div>
+          <div><span className={`${styles.impact} ${tone?styles[tone]:""}`} style={impactStyle} title={score!=null?"Dernière Note d’impact validée":"Aucune Note d’impact validée"}><b>{score!=null?`${score}%`:"—"}</b></span></div>
           <div className={styles.dateCell}><CalendarDays size={17}/><span><b>{latest?new Date(latest).toLocaleDateString("fr-FR",{day:"2-digit",month:"short",year:"numeric"}):"—"}</b><small>{latest?"Veille rattachée":"Aucune évolution"}</small></span></div>
           <div className={styles.alertCell}><Bell size={17}/><span className={urgent?styles.alertCount:styles.alertZero}>{urgent}</span></div>
           <div className={styles.menuCell}><button className={styles.menuButton} onClick={()=>setMenuId(menuId===dossier.id?null:dossier.id)} aria-label="Actions du dossier"><MoreHorizontal size={19}/></button>{menuId===dossier.id&&<div className={styles.menu}>
@@ -122,7 +147,7 @@ export default function DossiersCorporate({items,watch,add,search,searching,mess
           {messages[dossier.id]&&<div className={styles.rowMessage}>{messages[dossier.id]}</div>}
         </div>;
       })}</div>
-      <div className={styles.tableFooter}><span>{filtered.length} dossier(s) affiché(s)</span><span>Triés par impact</span></div>
+      <div className={styles.tableFooter}><span>{filtered.length} dossier(s) affiché(s)</span><span>Triés par score validé</span></div>
     </div>:<div className={styles.empty}><BriefcaseBusiness size={34}/><h2>Aucun dossier trouvé</h2><p>Créez un nouveau dossier ou modifiez vos filtres.</p></div>}
 
     {editing&&<div className={styles.modalBackdrop} onMouseDown={e=>{if(e.target===e.currentTarget&&!saving)setEditing(null);}}><form className={styles.modal} onSubmit={saveDossier}>
