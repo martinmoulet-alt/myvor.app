@@ -4,6 +4,7 @@ type ProtectedRoute={feature:string|null;methods:string[]};
 
 const protectedRoutes:Record<string,ProtectedRoute>={
   "/api/radar":{feature:"radar",methods:["POST"]},
+  "/api/radar/fast":{feature:"radar",methods:["POST"]},
   "/api/impact":{feature:null,methods:["POST"]},
   "/api/builder":{feature:"note-builder",methods:["POST"]},
   "/api/veille/assign":{feature:null,methods:["POST"]},
@@ -56,5 +57,5 @@ export const config={
   // /api/veille/sources intentionally stays outside auth middleware: it only
   // aggregates public institutional feeds and is also consumed by the secured
   // Supabase veille-sync worker. No user or tenant data is exposed there.
-  matcher:["/api/radar","/api/impact","/api/builder","/api/veille/assign"],
+  matcher:["/api/radar","/api/radar/fast","/api/impact","/api/builder","/api/veille/assign"],
 };
