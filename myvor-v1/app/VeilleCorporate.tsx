@@ -12,16 +12,41 @@ type Suggestion={watch_id:string;dossier_id:string|null;confidence:number;reason
 const AUTO_LINK_THRESHOLD=0.75;
 const REVIEW_THRESHOLD=0.55;
 const IGNORED_REASON="Ignoré manuellement";
+const AUTO_SYNC_INTERVAL=15*60*1000;
+const AUTO_SYNC_CHECK_INTERVAL=60*1000;
+const LAST_AUTO_SYNC_KEY="myvor:veille:last-auto-sync";
 
 function sourceLabel(url:string){try{const host=new URL(url).hostname.replace(/^www\./,"");if(host.includes("assemblee-nationale.fr"))return "Assemblée nationale";if(host.includes("senat.fr"))return "Sénat";if(host.includes("legifrance.gouv.fr"))return "Légifrance — Journal officiel";if(host.includes("vie-publique.fr"))return "Vie-publique";if(host.includes("economie.gouv.fr"))return "Ministère de l’Économie";if(host.includes("ecologie.gouv.fr"))return "Transition écologique";if(host.includes("tresor.economie.gouv.fr"))return "Direction générale du Trésor";if(host.includes("conseil-etat.fr"))return "Conseil d’État";if(host.includes("conseil-constitutionnel.fr"))return "Conseil constitutionnel";if(host.includes("ccomptes.fr"))return "Cour des comptes";if(host.includes("cnil.fr"))return "CNIL";if(host.includes("arcep.fr"))return "ARCEP";if(host.includes("cre.fr"))return "CRE";if(host.includes("amf-france.org"))return "AMF";if(host.includes("autoritedelaconcurrence.fr"))return "Autorité de la concurrence";if(host.includes("eur-lex.europa.eu"))return "EUR-Lex";return host;}catch{return "Source officielle";}}
 function publicationDate(item:Watch){const value=item.published_at||item.created_at;const date=new Date(value);return Number.isFinite(date.getTime())?date.toLocaleDateString("fr-FR"):"";}
 function publicationTime(item:Watch){const primary=item.published_at?Date.parse(item.published_at):NaN;if(Number.isFinite(primary))return primary;const fallback=Date.parse(item.created_at);return Number.isFinite(fallback)?fallback:0;}
 
 export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMessage,link}:{items:Watch[];dossiers:Dossier[];add:()=>void;sync:()=>void;syncing:boolean;syncMessage:string;link:(watchId:string,dossierId:string|null)=>Promise<void>|void}){
-  const [query,setQuery]=useState("");const [nature,setNature]=useState("all");const [urgency,setUrgency]=useState("all");const [qualifying,setQualifying]=useState(false);const [qualificationMessage,setQualificationMessage]=useState("");const [suggestions,setSuggestions]=useState<Suggestion[]>([]);const [ignored,setIgnored]=useState<string[]>([]);const [focusId,setFocusId]=useState<string|null>(null);const autoSyncStarted=useRef(false);const autoQualificationBatch=useRef("");
+  const [query,setQuery]=useState("");const [nature,setNature]=useState("all");const [urgency,setUrgency]=useState("all");const [qualifying,setQualifying]=useState(false);const [qualificationMessage,setQualificationMessage]=useState("");const [suggestions,setSuggestions]=useState<Suggestion[]>([]);const [ignored,setIgnored]=useState<string[]>([]);const [focusId,setFocusId]=useState<string|null>(null);const autoSyncStarted=useRef(false);const autoQualificationBatch=useRef("");const syncingRef=useRef(syncing);const syncRef=useRef(sync);
 
+  useEffect(()=>{syncingRef.current=syncing;},[syncing]);
+  useEffect(()=>{syncRef.current=sync;},[sync]);
   useEffect(()=>{const target=sessionStorage.getItem("myvor:open-watch");if(!target)return;const item=items.find(entry=>entry.id===target);if(!item)return;sessionStorage.removeItem("myvor:open-watch");setQuery(item.title);setNature("all");setUrgency("all");setFocusId(item.id);setTimeout(()=>document.getElementById(`watch-${item.id}`)?.scrollIntoView({behavior:"smooth",block:"center"}),80);setTimeout(()=>setFocusId(null),2200);},[items]);
-  useEffect(()=>{if(autoSyncStarted.current)return;autoSyncStarted.current=true;const last=Number(localStorage.getItem("myvor:veille:last-auto-sync")||0);if(Number.isFinite(last)&&Date.now()-last<15*60*1000)return;localStorage.setItem("myvor:veille:last-auto-sync",String(Date.now()));const timer=setTimeout(()=>sync(),250);return()=>clearTimeout(timer);},[sync]);
+  useEffect(()=>{
+    if(autoSyncStarted.current)return;
+    autoSyncStarted.current=true;
+    let disposed=false;
+    let inFlight=false;
+    const maybeSync=()=>{
+      if(disposed||inFlight||syncingRef.current||document.visibilityState!=="visible")return;
+      const last=Number(localStorage.getItem(LAST_AUTO_SYNC_KEY)||0);
+      if(Number.isFinite(last)&&Date.now()-last<AUTO_SYNC_INTERVAL)return;
+      inFlight=true;
+      localStorage.setItem(LAST_AUTO_SYNC_KEY,String(Date.now()));
+      try{syncRef.current();}finally{setTimeout(()=>{inFlight=false;},5000);}
+    };
+    const onVisibility=()=>{if(document.visibilityState==="visible")maybeSync();};
+    const initial=window.setTimeout(maybeSync,250);
+    const interval=window.setInterval(maybeSync,AUTO_SYNC_CHECK_INTERVAL);
+    window.addEventListener("focus",maybeSync);
+    window.addEventListener("online",maybeSync);
+    document.addEventListener("visibilitychange",onVisibility);
+    return()=>{disposed=true;window.clearTimeout(initial);window.clearInterval(interval);window.removeEventListener("focus",maybeSync);window.removeEventListener("online",maybeSync);document.removeEventListener("visibilitychange",onVisibility);};
+  },[]);
 
   const natures=useMemo(()=>Array.from(new Set(items.map(item=>item.nature))).sort(),[items]);
   const filtered=useMemo(()=>items.filter(item=>{const q=[item.title,item.nature].join(" ").toLowerCase().includes(query.toLowerCase());return q&&(nature==="all"||item.nature===nature)&&(urgency==="all"||item.urgency===urgency);}).sort((a,b)=>publicationTime(b)-publicationTime(a)),[items,query,nature,urgency]);
