@@ -75,7 +75,7 @@ export default function RadarModule({dossiers,watch,onActions}:{dossiers:Dossier
       const visibleActors=rawActors.filter(actor=>actor.evidence?.verified);
       setActors(visibleActors);setGenerated(true);
       if(rawActors.length){
-        const saved=await saveProduction({dossier_id:dossier.id,type:"radar",title:`Radar d’influence — ${dossier.title}`,content:{actors:rawActors,item_ids:related.map(i=>i.id),source_url:source?.source_url||null,quality:payload.quality||null,grounding:payload.grounding||null,engine:payload.engine||null,model:payload.model||null}});
+        const saved=await saveProduction({dossier_id:dossier.id,type:"radar",title:`Radar d’influence — ${dossier.title}`,content:{actors:visibleActors,raw_actors:rawActors,item_ids:related.map(i=>i.id),source_url:source?.source_url||null,quality:payload.quality||null,grounding:payload.grounding||null,engine:payload.engine||null,model:payload.model||null}});
         setSaveMessage(saved.error?`Radar généré, mais non enregistré : ${saved.error.message}`:"Radar enregistré dans l’historique du dossier.");
       }
       if(onActions&&visibleActors.length){
