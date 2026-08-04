@@ -15,7 +15,8 @@ function actionCta(type:string){return type==="contact"?"Contacter":type==="note
 function actionLevel(priority:string):DailyAction["level"]{return priority==="absolument urgent"?"critical":priority==="fort"?"high":priority==="moyen"?"medium":"low";}
 function rank(value:string){return value==="absolument urgent"?4:value==="fort"?3:value==="moyen"?2:1;}
 function dueTime(action:Action){if(!action.due_date)return Number.POSITIVE_INFINITY;const time=new Date(action.due_date).getTime();return Number.isFinite(time)?time:Number.POSITIVE_INFINITY;}
-function formatDate(value:string|null){if(!value)return "Sans échéance";return new Intl.DateTimeFormat("fr-FR",{day:"2-digit",month:"short",year:"numeric"}).format(new Date(value));}
+function startOfToday(){const now=new Date();return new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();}
+function formatDate(value:string|null){if(!value)return "Sans échéance";const date=new Date(value);const time=date.getTime();if(!Number.isFinite(time))return "Échéance à préciser";const today=startOfToday(),tomorrow=today+24*60*60*1000,dateDay=new Date(date.getFullYear(),date.getMonth(),date.getDate()).getTime();if(dateDay<today)return "En retard";if(dateDay===today)return "Aujourd’hui";if(dateDay===tomorrow)return "Demain";return new Intl.DateTimeFormat("fr-FR",{day:"2-digit",month:"short",year:"numeric"}).format(date);}
 function extractContact(description:string|null){const text=description||"";const email=text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]||"";const phone=text.match(/(?:\+33|0)[1-9](?:[ .-]?\d{2}){4}/)?.[0]||"";const url=text.match(/https:\/\/[^\s]+/i)?.[0]?.replace(/[),.;]+$/g,"")||"";return{email,phone,url};}
 function searchable(...values:(string|null|undefined)[]){return values.filter(Boolean).join(" ").toLocaleLowerCase("fr");}
 
@@ -30,7 +31,8 @@ export default function DashboardCorporate({dossiers,watch,actions,actionsLoadin
   const newRisks=urgentItems.filter(item=>{const created=new Date(item.created_at).getTime();return Number.isFinite(created)&&created>=sevenDaysAgo;}).length;
   const priorityDossiers=new Set([...urgentItems.map(item=>item.dossier_id).filter(Boolean),...openActions.filter(action=>["fort","absolument urgent"].includes(action.priority)).map(action=>action.dossier_id).filter(Boolean)]).size;
   const sevenDays=Date.now()+7*24*60*60*1000;
-  const deadlineActions=sortedActions.filter(action=>action.due_date&&dueTime(action)<=sevenDays).slice(0,4);
+  const todayStart=startOfToday();
+  const deadlineActions=sortedActions.filter(action=>action.due_date&&dueTime(action)>=todayStart&&dueTime(action)<=sevenDays).slice(0,4);
   const criticalDeadlines=deadlineActions.length;
   const notesClient=openActions.filter(action=>action.type==="note_client").length;
   const dossierName=(id:string|null)=>id?dossiers.find(d=>d.id===id)?.title||"Dossier lié":"Sans dossier";
