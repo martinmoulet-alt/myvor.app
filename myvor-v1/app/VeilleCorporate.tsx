@@ -3,6 +3,7 @@
 import { useEffect,useMemo,useRef,useState } from "react";
 import { AlertTriangle,Building2,CalendarDays,FileText,RefreshCw,Search,Sparkles } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import VeilleStatusMessage from "./VeilleStatusMessage";
 import styles from "./VeilleCorporate.module.css";
 
 type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string;watch_keywords?:string[];watch_priority_phrases?:string[];watch_excluded_keywords?:string[]};
@@ -21,7 +22,7 @@ function publicationDate(item:Watch){const value=item.published_at||item.created
 function publicationTime(item:Watch){const primary=item.published_at?Date.parse(item.published_at):NaN;if(Number.isFinite(primary))return primary;const fallback=Date.parse(item.created_at);return Number.isFinite(fallback)?fallback:0;}
 
 export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMessage,link}:{items:Watch[];dossiers:Dossier[];add:()=>void;sync:()=>void;syncing:boolean;syncMessage:string;link:(watchId:string,dossierId:string|null)=>Promise<void>|void}){
-  const [query,setQuery]=useState("");const [nature,setNature]=useState("all");const [urgency,setUrgency]=useState("all");const [qualifying,setQualifying]=useState(false);const [qualificationMessage,setQualificationMessage]=useState("");const [suggestions,setSuggestions]=useState<Suggestion[]>([]);const [ignored,setIgnored]=useState<string[]>([]);const [focusId,setFocusId]=useState<string|null>(null);const autoSyncStarted=useRef(false);const autoQualificationBatch=useRef("");const syncingRef=useRef(syncing);const syncRef=useRef(sync);
+  const [query,setQuery]=useState("");const [nature,setNature]=useState("all");const [urgency,setUrgency]=useState("all");const [qualifying,setQualifying]=useState(false);const [qualificationMessage,setQualificationMessage]=useState("");const [qualificationTechnical,setQualificationTechnical]=useState("");const [suggestions,setSuggestions]=useState<Suggestion[]>([]);const [ignored,setIgnored]=useState<string[]>([]);const [focusId,setFocusId]=useState<string|null>(null);const autoSyncStarted=useRef(false);const autoQualificationBatch=useRef("");const syncingRef=useRef(syncing);const syncRef=useRef(sync);
 
   useEffect(()=>{syncingRef.current=syncing;},[syncing]);
   useEffect(()=>{syncRef.current=sync;},[sync]);
@@ -72,13 +73,14 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
 
   async function qualify(automatic=false){
     if(qualifying||!unlinkedItems.length||!dossiers.length)return;
-    setQualifying(true);setQualificationMessage(automatic?`Lecture complète des sources officielles de ${unlinkedItems.length} publication(s)…`:"");setSuggestions([]);setIgnored([]);
+    setQualifying(true);setQualificationMessage(automatic?`${unlinkedItems.length} publication(s) sont en cours d’analyse.`:"");setQualificationTechnical(automatic?"Lecture complète des sources officielles en cours.":"");setSuggestions([]);setIgnored([]);
     try{
       const dossierPayload=dossiers.map(d=>({id:d.id,title:d.title,objective:d.objective,context:d.context,watch_keywords:d.watch_keywords||[],watch_priority_phrases:d.watch_priority_phrases||[],watch_excluded_keywords:d.watch_excluded_keywords||[]}));
       const allResults:Suggestion[]=[];let engine="Myvor";let enriched=0;let fullTextChars=0;const batchSize=20;
       for(let start=0;start<unlinkedItems.length;start+=batchSize){
         const batch=unlinkedItems.slice(start,start+batchSize);
-        setQualificationMessage(`${automatic?"Automatisation":"Qualification"} · lecture intégrale des sources · ${Math.min(start+batch.length,unlinkedItems.length)}/${unlinkedItems.length}…`);
+        setQualificationMessage(`${Math.min(start+batch.length,unlinkedItems.length)} publication(s) analysée(s) sur ${unlinkedItems.length}.`);
+        setQualificationTechnical(`${automatic?"Automatisation":"Qualification"} · lecture intégrale des sources · lot ${Math.floor(start/batchSize)+1}.`);
         const response=await fetch("/api/veille/assign",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:batch.map(i=>({id:i.id,title:i.title,nature:i.nature,source_url:i.source_url})),dossiers:dossierPayload})});
         const payload=await response.json();if(!response.ok)throw new Error(payload?.error||"Qualification impossible");engine=payload.engine||engine;enriched+=Number(payload.enriched)||0;fullTextChars+=Number(payload.full_text_chars)||0;if(Array.isArray(payload.assignments))allResults.push(...payload.assignments as Suggestion[]);
       }
@@ -89,14 +91,15 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
       setSuggestions(review);
       const noMatch=allResults.filter(s=>!s.dossier_id||Number(s.confidence)<REVIEW_THRESHOLD).length;
       const readLabel=fullTextChars>=1_000_000?`${(fullTextChars/1_000_000).toFixed(1)} M caractères lus`:fullTextChars>=1_000?`${Math.round(fullTextChars/1_000)} k caractères lus`:`${fullTextChars} caractères lus`;
-      setQualificationMessage(`${automatic?"Automatisation terminée":"Qualification terminée"} · ${allResults.length} analysé(s) · ${enriched} texte(s) officiel(s) lu(s) · ${readLabel} · ${autoLinked} rattachement(s) automatique(s) · ${review.length} suggestion(s) à valider · ${noMatch} sans correspondance solide. Seuil RA : 75 %. Moteur : ${engine}.`);
-    }catch(error:any){setQualificationMessage(`Qualification impossible : ${error?.message||"erreur inconnue"}`);}finally{setQualifying(false);}
+      setQualificationMessage(`${autoLinked} publication(s) rattachée(s) automatiquement, ${review.length} à valider et ${noMatch} sans correspondance suffisante.`);
+      setQualificationTechnical(`${allResults.length} publication(s) analysée(s) · ${enriched} texte(s) officiel(s) lu(s) · ${readLabel} · seuil automatique 75 % · moteur ${engine}.`);
+    }catch(error:any){setQualificationMessage("L’analyse n’a pas pu être terminée. Les publications existantes restent disponibles.");setQualificationTechnical(error?.message||"Erreur inconnue");}finally{setQualifying(false);}
   }
 
   async function manualLink(watchId:string,dossierId:string|null){
     if(!supabase){await link(watchId,dossierId);return;}
     const {error}=await supabase.from("watch_items").update({suggested_dossier_id:null,qualification_confidence:null,qualification_reason:dossierId?"Rattachement manuel.":null,qualified_at:dossierId?new Date().toISOString():null}).eq("id",watchId);
-    if(error){setQualificationMessage(`Impossible de modifier le rattachement : ${error.message}`);return;}
+    if(error){setQualificationMessage("Le rattachement n’a pas pu être enregistré.");setQualificationTechnical(error.message);return;}
     setSuggestions(current=>current.filter(x=>x.watch_id!==watchId));
     setIgnored(current=>current.filter(id=>id!==watchId));
     await link(watchId,dossierId);
@@ -106,7 +109,7 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
   async function ignoreSuggestion(watchId:string){
     if(!supabase)return;
     const {error}=await supabase.from("watch_items").update({suggested_dossier_id:null,qualification_confidence:null,qualification_reason:`${IGNORED_REASON}.`,qualified_at:new Date().toISOString()}).eq("id",watchId);
-    if(error){setQualificationMessage(`Impossible d’ignorer cette suggestion : ${error.message}`);return;}
+    if(error){setQualificationMessage("La suggestion n’a pas pu être ignorée.");setQualificationTechnical(error.message);return;}
     setSuggestions(current=>current.filter(x=>x.watch_id!==watchId));
     setIgnored(current=>[...new Set([...current,watchId])]);
   }
@@ -117,9 +120,9 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
     <div className={styles.kpis}><div className={styles.kpi}><span>Total surveillé</span><strong>{items.length}</strong><small><FileText size={15}/> Publications suivies</small></div><div className={styles.kpi}><span>Rattachés</span><strong>{linked}</strong><small><Building2 size={15}/> Liés à un dossier</small></div><div className={styles.kpi}><span>À qualifier</span><strong>{unlinked}</strong><small><Search size={15}/> Non rattachés</small></div><div className={styles.kpi}><span>Priorités fortes</span><strong>{urgent}</strong><small><AlertTriangle size={15}/> Action rapide</small></div></div>
 
     <section className={styles.qualification}>
-      <div className={styles.qualificationHead}><div><h2><Sparkles size={17}/> Mode automatique</h2><p>Myvor lit le texte officiel complet disponible sur la page institutionnelle avant de rattacher une publication. Toute correspondance atteignant 75 % est désormais rattachée automatiquement.</p></div><button className={styles.qualificationButton} onClick={()=>qualify(false)} disabled={qualifying||!unlinked||!dossiers.length}><Sparkles size={15}/> {qualifying?"Lecture en cours…":"Relancer l’analyse"}</button></div>
-      <div className={styles.qualificationStats}><span>Texte officiel complet</span><span>RA automatique ≥ 75 %</span><span>Validation manuelle : 55–74 %</span></div>
-      {qualificationMessage&&<div className={styles.syncMessage}>{qualificationMessage}</div>}
+      <div className={styles.qualificationHead}><div><h2><Sparkles size={17}/> Analyse automatique</h2><p>Myvor identifie les publications pertinentes pour chaque dossier. Les correspondances les plus solides sont rattachées automatiquement.</p></div><button className={styles.qualificationButton} onClick={()=>qualify(false)} disabled={qualifying||!unlinked||!dossiers.length}><Sparkles size={15}/> {qualifying?"Analyse en cours…":"Relancer l’analyse"}</button></div>
+      <div className={styles.qualificationStats}><span>Sources officielles</span><span>Rattachement automatique</span><span>Validation des cas incertains</span></div>
+      <VeilleStatusMessage summary={qualificationMessage} technical={qualificationTechnical}/>
     </section>
 
     <div className={styles.sourceNotice}><b>Collecte automatique :</b> institutions parlementaires et gouvernementales, juridictions, Cour des comptes, CNIL, ARCEP et EUR-Lex.</div>{syncMessage&&<div className={styles.syncMessage}>{syncMessage}</div>}

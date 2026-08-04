@@ -1,0 +1,43 @@
+name: Myvor client smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "myvor-v1/**"
+      - ".github/workflows/client-smoke.yml"
+  schedule:
+    - cron: "17 5 * * *"
+
+jobs:
+  public-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: myvor-v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: myvor-v1/package-lock.json
+      - name: Install dependencies
+        run: npm install
+      - name: Install browsers
+        run: npx playwright install --with-deps chromium webkit
+      - name: Public and authenticated smoke tests
+        env:
+          E2E_BASE_URL: ${{ vars.E2E_BASE_URL || 'https://myvor.app' }}
+          E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+          E2E_ALLOW_WRITES: ${{ vars.E2E_ALLOW_WRITES || 'false' }}
+        run: npm run test:e2e
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: myvor-v1/playwright-report
+          retention-days: 14
