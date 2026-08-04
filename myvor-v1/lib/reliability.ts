@@ -8,10 +8,12 @@ export type RetryOptions={
 function sleep(ms:number){return new Promise(resolve=>setTimeout(resolve,ms));}
 
 export function isTransientError(error:unknown){
+  const name=String((error as any)?.name||"").toLowerCase();
   const message=String((error as any)?.message||error||"").toLowerCase();
   const status=Number((error as any)?.status||(error as any)?.statusCode||0);
+  if(name==="aborterror")return true;
   if(status===408||status===409||status===425||status===429||status>=500)return true;
-  return ["timeout","timed out","network","fetch failed","failed to fetch","connection","temporarily","econnreset","etimedout","aborterror"].some(token=>message.includes(token));
+  return ["timeout","timed out","network","fetch failed","failed to fetch","connection","temporarily","econnreset","etimedout","aborted"].some(token=>message.includes(token));
 }
 
 export async function withRetry<T>(operation:()=>Promise<T>,options:RetryOptions={}):Promise<T>{
