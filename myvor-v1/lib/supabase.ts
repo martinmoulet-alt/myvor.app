@@ -1,10 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
+import { createResilientSupabaseFetch } from "@/lib/supabaseReadCache";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 export const isSupabaseConfigured = Boolean(url && key);
-export const supabase = isSupabaseConfigured ? createClient(url!, key!) : null;
+const clientOptions = typeof window!=="undefined"&&url ? {global:{fetch:createResilientSupabaseFetch(url)}} : undefined;
+export const supabase = isSupabaseConfigured ? createClient(url!, key!, clientOptions) : null;
 
 function shouldAttachUserToken(rawUrl:string){
   if(typeof window==="undefined")return false;
