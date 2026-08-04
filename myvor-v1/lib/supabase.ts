@@ -6,6 +6,17 @@ const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 export const isSupabaseConfigured = Boolean(url && key);
 export const supabase = isSupabaseConfigured ? createClient(url!, key!) : null;
 
+const readCache=new Map<string,{status:number;statusText:string;headers:[string,string][];body:string;storedAt:number}>();
+const READ_CACHE_TTL_MS=10*60*1000;
+
+function sleep(ms:number){return new Promise(resolve=>setTimeout(resolve,ms));}
+function retryableStatus(status:number){return status===408||status===425||status===429||status>=500;}
+function isSupabaseRead(rawUrl:string,method:string){if(!url||method!=="GET")return false;try{const target=new URL(rawUrl,typeof window!=="undefined"?window.location.origin:undefined);return target.origin===new URL(url).origin&&target.pathname.startsWith("/rest/v1/");}catch{return false;}}
+function cacheKey(userId:string,rawUrl:string){return `${userId}|${rawUrl}`;}
+function cachedResponse(userId:string,rawUrl:string){const cached=readCache.get(cacheKey(userId,rawUrl));if(!cached||Date.now()-cached.storedAt>READ_CACHE_TTL_MS){if(cached)readCache.delete(cacheKey(userId,rawUrl));return null;}return new Response(cached.body,{status:cached.status,statusText:cached.statusText,headers:cached.headers});}
+async function rememberResponse(userId:string,rawUrl:string,response:Response){try{const body=await response.clone().text();readCache.set(cacheKey(userId,rawUrl),{status:response.status,statusText:response.statusText,headers:[...response.headers.entries()],body,storedAt:Date.now()});}catch{}}
+async function reliableRead(originalFetch:typeof window.fetch,input:RequestInfo|URL,init:RequestInit|undefined,userId:string,rawUrl:string){let lastResponse:Response|null=null;let lastError:unknown=null;for(let attempt=1;attempt<=3;attempt++){try{const response=await originalFetch(input,init);lastResponse=response;if(response.ok){await rememberResponse(userId,rawUrl,response);return response;}if(!retryableStatus(response.status))return response;}catch(error){lastError=error;}if(attempt<3)await sleep(attempt===1?180:520);}const cached=cachedResponse(userId,rawUrl);if(cached)return cached;if(lastResponse)return lastResponse;throw lastError||new Error("Lecture Supabase indisponible.");}
+
 function shouldAttachUserToken(rawUrl:string){
   if(typeof window==="undefined")return false;
   try{
@@ -104,11 +115,21 @@ if(typeof window!=="undefined"&&supabase&&!(window as any).__myvorAuthenticatedF
   const originalFetch=window.fetch.bind(window);
   window.fetch=async(input:RequestInfo|URL,init?:RequestInit)=>{
     const rawUrl=typeof input==="string"?input:input instanceof URL?input.toString():input.url;
-    if(!shouldAttachUserToken(rawUrl))return originalFetch(input,init);
+    const method=String(init?.method||(input instanceof Request?input.method:"GET")||"GET").toUpperCase();
 
     const {data}=await supabase.auth.getSession();
-    const accessToken=data.session?.access_token;
-    if(!accessToken)return originalFetch(input,init);
+    const session=data.session;
+    const accessToken=session?.access_token;
+    const userId=session?.user?.id||"anonymous";
+
+    if(isSupabaseRead(rawUrl,method)){
+      const headers=new Headers(input instanceof Request?input.headers:undefined);
+      if(init?.headers)new Headers(init.headers).forEach((value,name)=>headers.set(name,value));
+      const requestInput=input instanceof Request?new Request(input,{...init,headers}):input;
+      return reliableRead(originalFetch,requestInput,input instanceof Request?undefined:{...init,headers},userId,rawUrl);
+    }
+
+    if(!shouldAttachUserToken(rawUrl)||!accessToken)return originalFetch(input,init);
 
     const splitResponse=await maybeRunImpactSplit(originalFetch,rawUrl,init,accessToken);
     if(splitResponse)return splitResponse;
