@@ -1,0 +1,28 @@
+name: Full V1 audit
+on:
+  pull_request:
+    paths:
+      - 'myvor-v1/**'
+      - '.github/workflows/full-v1-audit.yml'
+permissions:
+  contents: read
+jobs:
+  audit-test-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: myvor-v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: myvor-v1/package-lock.json
+      - run: npm install
+      - name: Dependency audit
+        run: |
+          npm audit --json > /tmp/myvor-audit.json || true
+          cat /tmp/myvor-audit.json
+      - run: npm test
+      - run: npm run build
