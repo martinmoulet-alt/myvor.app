@@ -79,7 +79,9 @@ export function createResilientSupabaseFetch(supabaseUrl:string,fetchImpl:FetchL
             const clone=response.clone();
             const body=await clone.text();
             if(body.length<=MAX_CACHE_BODY_CHARS){
-              cache.set(key,{body,headers:Array.from(clone.headers.entries()),storedAt:Date.now()});
+              const responseHeaders:Array<[string,string]>=[];
+              clone.headers.forEach((value,name)=>responseHeaders.push([name,value]));
+              cache.set(key,{body,headers:responseHeaders,storedAt:Date.now()});
               prune(cache);
             }
           }catch{}
