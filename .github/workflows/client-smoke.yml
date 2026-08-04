@@ -12,7 +12,7 @@ on:
 jobs:
   public-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: myvor-v1
@@ -23,16 +23,17 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: myvor-v1/package-lock.json
-      - run: npm ci
-      - run: npm install --no-save @playwright/test
-      - run: npx playwright install --with-deps chromium
+      - name: Install dependencies
+        run: npm install
+      - name: Install browser
+        run: npx playwright install --with-deps chromium
       - name: Public and authenticated smoke tests
         env:
           E2E_BASE_URL: ${{ vars.E2E_BASE_URL || 'https://myvor.app' }}
           E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
           E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
           E2E_ALLOW_WRITES: ${{ vars.E2E_ALLOW_WRITES || 'false' }}
-        run: npx playwright test
+        run: npm run test:e2e
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
