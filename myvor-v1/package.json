@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "npm run test:impact",
-    "test:impact": "rm -rf .test-dist && tsc lib/impactAudit.ts lib/impactDeadline.ts lib/impactSource.ts lib/impactPdf.ts lib/impactContinuity.ts lib/radarAudit.ts lib/presentation.ts --outDir .test-dist --module commonjs --target ES2021 --lib ES2021,DOM --esModuleInterop --skipLibCheck && tsc tests/deno-globals.d.ts supabase/functions/impact-analysis/index.ts --noEmit --module esnext --target ES2021 --lib ES2021,DOM --skipLibCheck && node --test tests/*.test.cjs && rm -rf .test-dist",
+    "test:impact": "rm -rf .test-dist && tsc lib/impactAudit.ts lib/impactDeadline.ts lib/impactSource.ts lib/impactPdf.ts lib/impactContinuity.ts lib/radarAudit.ts lib/presentation.ts lib/reliability.ts --outDir .test-dist --module commonjs --target ES2021 --lib ES2021,DOM --esModuleInterop --skipLibCheck && tsc tests/deno-globals.d.ts supabase/functions/impact-analysis/index.ts --noEmit --module esnext --target ES2021 --lib ES2021,DOM --skipLibCheck && node --test tests/*.test.cjs && rm -rf .test-dist",
     "check": "npm run test && npm run build"
   },
   "dependencies": {
