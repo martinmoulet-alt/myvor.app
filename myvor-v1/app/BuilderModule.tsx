@@ -3,6 +3,7 @@
 import { useMemo,useState } from "react";
 import { Copy,Download,FileText,Sparkles } from "lucide-react";
 import { listProductions,saveProduction } from "@/lib/productions";
+import { filterPresentableLines,filterPresentableStrings,presentableText } from "@/lib/presentation";
 import { supabase } from "@/lib/supabase";
 import styles from "./BuilderCorporate.module.css";
 
@@ -36,6 +37,16 @@ function contentParagraphs(content:string){
     .split(/\n+/)
     .map(line=>line.trim())
     .filter(Boolean);
+}
+
+function sanitizeDocument(document:BuiltDocument):BuiltDocument{
+  return{
+    title:presentableText(document?.title)||"Document généré",
+    subject:presentableText(document?.subject),
+    content:filterPresentableLines(document?.content),
+    key_points:filterPresentableStrings(document?.key_points),
+    sources:(Array.isArray(document?.sources)?document.sources:[]).map(source=>({title:presentableText(source?.title),url:String(source?.url||"").trim()})).filter(source=>source.title),
+  };
 }
 
 function documentBodyHtml(content:string){
@@ -83,7 +94,8 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
       if(payload?.error)throw new Error(String(payload.error));
       if(!payload?.document)throw new Error("Le Note Builder n’a renvoyé aucun document.");
 
-      const nextDocument=payload.document as BuiltDocument;
+      const rawDocument=payload.document as BuiltDocument;
+      const nextDocument=sanitizeDocument(rawDocument);
       setDocument(nextDocument);
 
       const saved=await saveProduction({
@@ -92,6 +104,7 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
         title:nextDocument.title||`Document — ${dossier.title}`,
         content:{
           document:nextDocument,
+          raw_document:rawDocument,
           format,
           audience,
           tone,
@@ -102,14 +115,7 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
         },
       });
 
-      const contextUsed=payload.context_used||{};
-      const contextParts=[
-        `${Number(contextUsed.watch_items)||related.length} élément(s) de veille`,
-        contextUsed.impact?"dernière Note d’impact":null,
-        contextUsed.radar?"dernier Radar d’influence":null,
-      ].filter(Boolean).join(" + ");
-      const savedText=saved.error?`Document généré, mais non enregistré : ${saved.error.message}`:"Document enregistré dans l’historique du dossier.";
-      setSaveMessage(`${savedText} Moteur Supabase actif. Contexte utilisé : ${contextParts}.`);
+      setSaveMessage(saved.error?`Document généré, mais non enregistré : ${saved.error.message}`:"Document enregistré dans l’historique du dossier.");
     }catch(err:any){
       const message=String(err?.message||"");
       setError(message.includes("Failed to send a request")?"Impossible de joindre la fonction Supabase note-builder. Vérifie qu’elle est bien déployée.":message||"Génération impossible");
@@ -160,7 +166,7 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
 
     {document&&<section className={styles.document}>
       <div className={styles.documentHead}><div><div className={styles.eyebrow}>Document généré</div><h2>{document.title}</h2>{document.subject&&<div className={styles.subject}><b>Objet :</b> {document.subject}</div>}</div><div className={styles.documentActions}><button className={styles.pdf} onClick={exportPdf}><Download size={16}/>Exporter PDF</button><button className={styles.copy} onClick={copyDocument}><Copy size={16}/>{copied?"Copié":"Copier"}</button></div></div>
-      <div className={styles.content}>{paragraphs.map((paragraph,index)=><p key={index} className={styles.contentParagraph}>{paragraph}</p>)}</div>
+      {paragraphs.length>0&&<div className={styles.content}>{paragraphs.map((paragraph,index)=><p key={index} className={styles.contentParagraph}>{paragraph}</p>)}</div>}
       {!!document.key_points?.length&&<div className={styles.points}><h3>Points clés</h3><ul>{document.key_points.map((point,index)=><li key={index}>{point}</li>)}</ul></div>}
       {!!document.sources?.length&&<div className={styles.sources}><h3>Sources utilisées</h3>{document.sources.map((source,index)=><div className={styles.sourceRow} key={`${source.url}-${index}`}><span><FileText size={15}/>{source.title}</span>{source.url&&<a href={source.url} target="_blank" rel="noreferrer">Lire la source</a>}</div>)}</div>}
     </section>}
