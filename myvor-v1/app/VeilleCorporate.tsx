@@ -10,8 +10,8 @@ type Dossier={id:string;client:string;title:string;objective:string;context:stri
 type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string;source_name?:string|null;published_at?:string|null;suggested_dossier_id?:string|null;qualification_confidence?:number|null;qualification_reason?:string|null};
 type Suggestion={watch_id:string;dossier_id:string|null;confidence:number;reason:string};
 
-const AUTO_LINK_THRESHOLD=0.50;
-const REVIEW_THRESHOLD=0.40;
+const AUTO_LINK_THRESHOLD=0.95;
+const REVIEW_THRESHOLD=0.60;
 const IGNORED_REASON="Ignoré manuellement";
 const AUTO_SYNC_INTERVAL=15*60*1000;
 const AUTO_SYNC_CHECK_INTERVAL=60*1000;
@@ -67,7 +67,7 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
     if(!supabase)return;
     const qualifiedAt=new Date().toISOString();
     for(const suggestion of review){
-      const {error}=await supabase.from("watch_items").update({suggested_dossier_id:suggestion.dossier_id,qualification_confidence:suggestion.confidence,qualification_reason:suggestion.reason.slice(0,500),qualified_at:qualifiedAt}).eq("id",suggestion.watch_id);
+      const {error}=await supabase.from("watch_items").update({suggested_dossier_id:suggestion.dossier_id,qualification_confidence:suggestion.confidence,qualification_reason:suggestion.reason.slice(0,500),qualified_at:qualifiedAt}).eq("id",suggestion.watch_id).is("dossier_id",null);
       if(error)throw error;
     }
   }
@@ -86,14 +86,19 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
         const payload=await response.json();if(!response.ok)throw new Error(payload?.error||"Qualification impossible");engine=payload.engine||engine;enriched+=Number(payload.enriched)||0;fullTextChars+=Number(payload.full_text_chars)||0;if(Array.isArray(payload.assignments))allResults.push(...payload.assignments as Suggestion[]);
       }
       const automaticLinks=allResults.filter(s=>s.dossier_id&&Number(s.confidence)>=AUTO_LINK_THRESHOLD);let autoLinked=0;
-      for(const s of automaticLinks){await link(s.watch_id,s.dossier_id);autoLinked++;}
+      for(const s of automaticLinks){
+        const {data,error}=await supabase.from("watch_items").update({dossier_id:s.dossier_id,suggested_dossier_id:null,qualification_confidence:s.confidence,qualification_reason:s.reason.slice(0,500),qualified_at:new Date().toISOString()}).eq("id",s.watch_id).is("dossier_id",null).select("id").maybeSingle();
+        if(error)throw error;
+        if(!data)continue;
+        await link(s.watch_id,s.dossier_id);autoLinked++;
+      }
       const review=allResults.filter(s=>s.dossier_id&&Number(s.confidence)>=REVIEW_THRESHOLD&&Number(s.confidence)<AUTO_LINK_THRESHOLD);
       await persistReviewSuggestions(review);
       setSuggestions(review);
       const noMatch=allResults.filter(s=>!s.dossier_id||Number(s.confidence)<REVIEW_THRESHOLD).length;
       const readLabel=fullTextChars>=1_000_000?`${(fullTextChars/1_000_000).toFixed(1)} M caractères lus`:fullTextChars>=1_000?`${Math.round(fullTextChars/1_000)} k caractères lus`:`${fullTextChars} caractères lus`;
       setQualificationMessage(`${autoLinked} publication(s) rattachée(s) automatiquement, ${review.length} à valider et ${noMatch} sans correspondance suffisante.`);
-      setQualificationTechnical(`${allResults.length} publication(s) analysée(s) · ${enriched} texte(s) officiel(s) lu(s) · ${readLabel} · seuil automatique 50 % · moteur ${engine}.`);
+      setQualificationTechnical(`${allResults.length} publication(s) analysée(s) · ${enriched} texte(s) officiel(s) lu(s) · ${readLabel} · seuil automatique 95 % · moteur ${engine}.`);
     }catch(error:any){setQualificationMessage("L’analyse n’a pas pu être terminée. Les publications existantes restent disponibles.");setQualificationTechnical(error?.message||"Erreur inconnue");}finally{setQualifying(false);}
   }
 
