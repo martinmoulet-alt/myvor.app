@@ -2,7 +2,6 @@
 
 import {useMemo,useState,type ReactNode} from "react";
 import {AlertTriangle,ArrowRight,CheckCircle2,CircleDot,ExternalLink,FileText,Plus,RefreshCw,ShieldCheck,Sparkles,Target,Users} from "lucide-react";
-import {fetchJsonWithRetry} from "@/lib/reliability";
 import {supabase} from "@/lib/supabase";
 import styles from "./WarZoneView.module.css";
 
@@ -24,10 +23,12 @@ function evidenceLabel(index:number,watch:WarZoneWatch[]){const item=evidenceFor
 
 async function postStrategy<T>(body:unknown):Promise<T>{
   if(!supabase)throw new Error("La connexion Supabase de Myvor n’est pas configurée.");
-  const {data}=await supabase.auth.getSession();
-  const token=data.session?.access_token;
-  if(!token)throw new Error("Session Myvor requise.");
-  return fetchJsonWithRetry<T>("/api/warzone/strategy",{method:"POST",headers:{"Content-Type":"application/json;charset=UTF-8",Authorization:`Bearer ${token}`},body:JSON.stringify(body)},{attempts:1,timeoutMs:58000});
+  const {data:sessionData}=await supabase.auth.getSession();
+  if(!sessionData.session?.access_token)throw new Error("Session Myvor requise.");
+  const {data,error}=await supabase.functions.invoke("warzone-strategy",{body});
+  if(error)throw new Error(error.message||"La stratégie détaillée est indisponible.");
+  if(!data)throw new Error("La War Zone n’a retourné aucune donnée.");
+  return data as T;
 }
 
 export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions}:Props){
