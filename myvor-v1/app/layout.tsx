@@ -4,6 +4,7 @@ import "./dashboard-fixes.css";
 import "./myvor-dossier-dark.css";
 import "./myvor-veille-dark.css";
 import "./myvor-impact-background.css";
+import "./note-builder-fullbleed.css";
 import PwaRegister from "./PwaRegister";
 import StartupRecovery from "./StartupRecovery";
 
