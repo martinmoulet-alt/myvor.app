@@ -31,3 +31,5 @@ npm run dev
 - Niveaux d’impact vert/orange/rouge/bordeaux
 - Écrans Note d’impact, Radar d’influence et Note Builder préparés
 - Sécurité RLS : chaque utilisateur ne voit que ses données
+
+<!-- redeploy trigger: 2026-08-08 -->
