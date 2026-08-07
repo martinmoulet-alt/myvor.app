@@ -44,6 +44,8 @@ async function requireAuthenticatedQuota(req:Request,feature:string){
 Deno.serve(async(req)=>{
   if(req.method==="OPTIONS")return new Response("ok",{headers:corsHeaders});
   if(req.method!=="POST")return json({error:"Méthode non autorisée."},405);
+  const contentLength=Number(req.headers.get("content-length")||0);
+  if(Number.isFinite(contentLength)&&contentLength>120000)return json({error:"Requête trop volumineuse."},413);
 
   const body=await req.json().catch(()=>null);
   const mode=String(body?.mode||"generate");
@@ -75,7 +77,7 @@ Deno.serve(async(req)=>{
     ].join("\n");
     const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),30000);
     try{
-      const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:"gpt-4.1-mini",input:prompt,max_output_tokens:900}),signal:controller.signal});
+      const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:"gpt-4.1-mini",input:prompt,max_output_tokens:900,store:false}),signal:controller.signal});
       if(!response.ok){const raw=await response.text();return json({error:`OpenAI a refusé la requête (${response.status}) : ${raw.slice(0,220)}`},502);}
       const text=extractOutputText(await response.json()).trim();if(!text)return json({error:"La réécriture n’a renvoyé aucun texte."},502);
       return json({text,engine:"supabase-note-builder-edit"});
@@ -135,7 +137,7 @@ Deno.serve(async(req)=>{
   const controller=new AbortController();
   const timer=setTimeout(()=>controller.abort(),75000);
   try{
-    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:"gpt-4.1-mini",input:prompt,max_output_tokens:1900,text:{format:{type:"json_object"}}}),signal:controller.signal});
+    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:"gpt-4.1-mini",input:prompt,max_output_tokens:1900,text:{format:{type:"json_object"}},store:false}),signal:controller.signal});
     if(!response.ok){const raw=await response.text();let message=raw;try{message=JSON.parse(raw)?.error?.message||raw;}catch{}return json({error:`OpenAI a refusé la requête (${response.status}) : ${String(message).slice(0,260)}`},502);}
     const payload=await response.json();
     let document:any={};
