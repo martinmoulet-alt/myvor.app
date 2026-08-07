@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 10;
+export const maxDuration = 20;
+
+const MAX_CONTEXT_ITEMS = 24;
 
 type Dossier = {
   id: string;
@@ -72,17 +74,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Sélectionne un dossier client." }, { status: 400 });
     }
     if (!incoming.length) {
-      return NextResponse.json({ error: "Aucun texte n’est rattaché à ce dossier." }, { status: 400 });
+      return NextResponse.json({ error: "Aucune évolution n’est disponible pour ce dossier." }, { status: 400 });
     }
 
     const items = [...incoming]
       .sort((a, b) => urgency(b.urgency) - urgency(a.urgency))
       .filter((item) => Boolean(item.source_url))
-      .slice(0, 4);
+      .slice(0, MAX_CONTEXT_ITEMS);
 
     if (!items.length) {
       return NextResponse.json(
-        { error: "Les textes liés n’ont pas d’URL source exploitable." },
+        { error: "Les évolutions sélectionnées n’ont pas d’URL source exploitable." },
         { status: 422 },
       );
     }
@@ -113,7 +115,7 @@ export async function POST(request: Request) {
       orbit: index < 2 ? 1 : index < 4 ? 2 : 3,
       position: "inconnue",
       influence: index < 2 ? 5 : index < 4 ? 4 : 3,
-      why: "Acteur identifié dans la fiche stratégique du dossier et à qualifier à partir des sources institutionnelles rattachées.",
+      why: `Acteur identifié dans la fiche stratégique du dossier et à qualifier à partir de ${items.length} évolution${items.length > 1 ? "s" : ""} institutionnelle${items.length > 1 ? "s" : ""} sélectionnée${items.length > 1 ? "s" : ""}.`,
       window: deadline,
       action: "Vérifier sa position dans les sources officielles, puis préparer une action de contact ou de suivi adaptée.",
       certainty: "a_confirmer",
@@ -121,7 +123,7 @@ export async function POST(request: Request) {
         source_index: 1,
         source_title: firstSource.title,
         source_url: firstSource.source_url || "",
-        excerpt: "Acteur issu de la fiche stratégique du dossier — qualification institutionnelle à confirmer.",
+        excerpt: `Acteur issu de la fiche stratégique du dossier — qualification à consolider à partir de ${items.length} évolution${items.length > 1 ? "s" : ""}.`,
         confidence: 0.6,
         verified: true,
       },
@@ -130,7 +132,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       actors,
-      engine: "myvor-radar-stable-v1",
+      engine: "myvor-radar-stable-v2",
       model: "deterministic",
       quality: {
         status: "review_required",
@@ -146,7 +148,7 @@ export async function POST(request: Request) {
       grounding: {
         official_sources_requested: items.length,
         official_sources_fetched: 0,
-        max_official_sources: 4,
+        max_official_sources: MAX_CONTEXT_ITEMS,
         statuses: items.map((item) => ({
           url: item.source_url,
           resolved_url: item.source_url,
