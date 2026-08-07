@@ -1,0 +1,82 @@
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+const MAX_CONTEXT_ITEMS = 24;
+
+type Dossier = { id:string; client:string; title:string; objective:string; context?:string; key_deadlines?:string[] };
+type WatchItem = { id:string; title:string; nature:string; source_url?:string; urgency?:string };
+type Actor = { id:string; name:string; role:string; orbit:1|2|3; position:"favorable"|"inconnue"|"reserve"|"opposition"; influence:number; why:string; window:string; action:string; certainty:"confirme"|"probable"|"a_confirmer"; evidence:Record<string,unknown>; contact_email?:string; contact_phone?:string; contact_url?:string; contact_verified?:boolean };
+
+const OUTPUT_SCHEMA={type:"object",additionalProperties:false,properties:{actors:{type:"array",maxItems:6,items:{type:"object",additionalProperties:false,properties:{role:{type:"string"},orbit:{type:"integer",enum:[1,2,3]},influence:{type:"integer",minimum:1,maximum:5},why:{type:"string"},window:{type:"string"},action:{type:"string"}},required:["role","orbit","influence","why","window","action"]}}},required:["actors"]};
+function json(body:unknown,status=200){return new Response(JSON.stringify(body),{status,headers:{...corsHeaders,"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}});}
+function text(value:unknown,max=1000){return String(value??"").normalize("NFKC").replace(/[\u0000-\u001F\u007F]/g,"").slice(0,max).trim();}
+function cleanApiKey(raw:string){const normalized=String(raw||"").normalize("NFKC");const match=normalized.match(/sk-[A-Za-z0-9_-]+/);return match?.[0]||"";}
+function outputText(payload:any){if(typeof payload?.output_text==="string")return payload.output_text.trim();return(payload?.output||[]).flatMap((item:any)=>item?.content||[]).filter((part:any)=>part?.type==="output_text").map((part:any)=>part?.text||"").join("").trim();}
+
+async function requireAuthenticatedQuota(req:Request){
+  const authorization=req.headers.get("authorization")||"";
+  if(!authorization.toLowerCase().startsWith("bearer "))return json({error:"Session Myvor requise."},401);
+  const supabaseUrl=(Deno.env.get("SUPABASE_URL")||"").replace(/\/$/,"");
+  const anonKey=Deno.env.get("SUPABASE_ANON_KEY")||"";
+  if(!supabaseUrl||!anonKey)return json({error:"La sécurité Supabase de Myvor n’est pas configurée."},503);
+  try{
+    const userResponse=await fetch(`${supabaseUrl}/auth/v1/user`,{method:"GET",headers:{apikey:anonKey,Authorization:authorization}});
+    if(!userResponse.ok)return json({error:"Session Myvor invalide ou expirée."},401);
+    const user=await userResponse.json().catch(()=>null);
+    if(!user?.id)return json({error:"Session Myvor invalide ou expirée."},401);
+    const quotaResponse=await fetch(`${supabaseUrl}/rest/v1/rpc/consume_ai_quota`,{method:"POST",headers:{apikey:anonKey,Authorization:authorization,"Content-Type":"application/json"},body:JSON.stringify({p_feature:"radar-enrich"})});
+    if(!quotaResponse.ok)return json({error:"Impossible de vérifier le quota IA du Radar."},503);
+    const allowed=await quotaResponse.json().catch(()=>false);
+    if(allowed!==true)return json({error:"Trop d’enrichissements Radar en peu de temps. Réessaie dans quelques minutes."},429);
+    return null;
+  }catch{return json({error:"Impossible de vérifier la session Myvor."},503);}
+}
+
+Deno.serve(async(req)=>{
+  if(req.method==="OPTIONS")return new Response("ok",{headers:corsHeaders});
+  if(req.method!=="POST")return json({error:"Méthode non autorisée."},405);
+  const contentLength=Number(req.headers.get("content-length")||0);
+  if(Number.isFinite(contentLength)&&contentLength>180000)return json({error:"Requête Radar trop volumineuse."},413);
+  const authError=await requireAuthenticatedQuota(req);if(authError)return authError;
+  const body=await req.json().catch(()=>null);
+  const dossier=(body?.dossier||null) as Dossier|null;
+  const items=(Array.isArray(body?.items)?body.items:[]) as WatchItem[];
+  const actors=(Array.isArray(body?.actors)?body.actors:[]).slice(0,6) as Actor[];
+  if(!dossier||!actors.length)return json({error:"Génère d’abord le Radar stable avant de l’enrichir."},400);
+  const apiKey=cleanApiKey(Deno.env.get("OPENAI_API_KEY")||"");
+  if(!apiKey)return json({error:"Le secret OPENAI_API_KEY n’est pas configuré dans Supabase."},503);
+
+  const actorInput=actors.map(actor=>({name:text(actor.name,180),current_role:text(actor.role,260),current_orbit:actor.orbit,current_influence:actor.influence}));
+  const sourceInput=items.slice(0,MAX_CONTEXT_ITEMS).map(item=>({title:text(item.title,420),nature:text(item.nature,120),urgency:text(item.urgency,80),url:text(item.source_url,700)}));
+  const prompt=[
+    "MYVOR — enrichissement stratégique du Radar d’influence.",
+    "Tu enrichis UNIQUEMENT les acteurs déjà fournis. N’ajoute, ne supprime et ne renomme aucun acteur.",
+    `Tu dois prendre en compte l’ensemble des ${sourceInput.length} évolutions de veille fournies pour construire une lecture transversale du dossier.`,
+    "Tu n’as pas le contenu intégral des sources : les titres et URL sont seulement des repères. N’invente aucun fait, position politique, date précise, compétence formelle ou citation à partir d’un titre ou d’une URL.",
+    "Ton travail porte sur la lecture stratégique : rôle générique, proximité décisionnelle (orbite), niveau d’influence estimé, raison de pertinence, fenêtre d’action prudente et action recommandée.",
+    "Les recommandations doivent être opérationnelles pour un consultant en affaires publiques, mais toute information non établie doit rester formulée comme hypothèse ou point à vérifier.",
+    "Ne déduis jamais une position favorable, réservée ou opposée : la position restera gérée séparément par Myvor.",
+    "Réponds dans le même ordre que la liste ACTEURS et avec exactement le même nombre d’éléments.",
+    `CLIENT: ${text(dossier.client,240)}`,
+    `DOSSIER: ${text(dossier.title,320)}`,
+    `OBJECTIF: ${text(dossier.objective,1200)}`,
+    `CONTEXTE: ${text(dossier.context,1800)||"Non renseigné"}`,
+    `ÉCHÉANCES FOURNIES: ${JSON.stringify((dossier.key_deadlines||[]).slice(0,5).map(value=>text(value,220)))}`,
+    `ACTEURS: ${JSON.stringify(actorInput)}`,
+    `ÉVOLUTIONS DE VEILLE (${sourceInput.length}): ${JSON.stringify(sourceInput)}`,
+  ].join("\n");
+
+  const model=text(Deno.env.get("OPENAI_RADAR_ENRICH_MODEL")||Deno.env.get("OPENAI_RADAR_MODEL")||"gpt-4.1-mini",120);
+  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),50000);
+  try{
+    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model,input:prompt,max_output_tokens:1300,store:false,text:{format:{type:"json_schema",name:"myvor_radar_enrichment_v3",strict:true,schema:OUTPUT_SCHEMA}}}),signal:controller.signal});
+    if(!response.ok){const raw=await response.text();let message=raw;try{message=JSON.parse(raw)?.error?.message||raw;}catch{}return json({error:`Enrichissement IA indisponible (${response.status}) : ${String(message).slice(0,240)}`},502);}
+    const payload=await response.json();let parsed:any=null;try{parsed=JSON.parse(outputText(payload));}catch{}
+    const enrichment=Array.isArray(parsed?.actors)?parsed.actors:[];
+    if(enrichment.length!==actors.length)return json({error:"L’enrichissement IA n’a pas renvoyé une cartographie cohérente."},502);
+    const enrichedActors=actors.map((actor,index)=>{const item=enrichment[index]||{};return{...actor,role:text(item.role,260)||actor.role,orbit:[1,2,3].includes(Number(item.orbit))?Number(item.orbit):actor.orbit,influence:Math.max(1,Math.min(5,Math.round(Number(item.influence)||actor.influence))),why:text(item.why,650)||actor.why,window:text(item.window,360)||actor.window,action:text(item.action,520)||actor.action,position:actor.position,certainty:"a_confirmer"};});
+    return json({actors:enrichedActors,enrichment:{status:"strategic_enrichment",grounded:false,source_content_read:false,actor_discovery:false,watch_items_used:sourceInput.length},engine:"supabase-radar-enrichment-v3",model});
+  }catch(error:any){if(error?.name==="AbortError")return json({error:"L’enrichissement IA a dépassé 50 secondes. Le Radar stable reste disponible."},504);return json({error:error?.message||"Enrichissement Radar impossible."},500);}finally{clearTimeout(timer);}
+});
