@@ -4,6 +4,7 @@ export const runtime = "nodejs";
 export const maxDuration = 20;
 
 const MAX_CONTEXT_ITEMS = 24;
+const MAX_ACTORS = 6;
 
 type Dossier = {
   id: string;
@@ -24,6 +25,15 @@ type WatchItem = {
   created_at?: string;
 };
 
+type ActorSeed = {
+  name: string;
+  role: string;
+  certainty: "confirme" | "a_confirmer";
+  source?: WatchItem | null;
+  baseInfluence?: number;
+  origin: "dossier" | "source";
+};
+
 function text(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -34,6 +44,92 @@ function urgency(value: unknown) {
   if (key === "fort") return 3;
   if (key === "moyen") return 2;
   return 1;
+}
+
+function normalized(value: unknown) {
+  return text(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function hostname(url: string) {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function institutionFromSource(item: WatchItem): ActorSeed | null {
+  const host = hostname(text(item.source_url));
+  if (!host) return null;
+
+  const matches: Array<[string, string, string, number]> = [
+    ["assemblee-nationale.fr", "Assemblée nationale", "Institution parlementaire", 5],
+    ["senat.fr", "Sénat", "Institution parlementaire", 5],
+    ["gouvernement.fr", "Gouvernement", "Exécutif", 5],
+    ["economie.gouv.fr", "Ministère de l’Économie", "Ministère", 5],
+    ["ecologie.gouv.fr", "Ministère de la Transition écologique", "Ministère", 5],
+    ["interieur.gouv.fr", "Ministère de l’Intérieur", "Ministère", 5],
+    ["travail-emploi.gouv.fr", "Ministère du Travail", "Ministère", 5],
+    ["sante.gouv.fr", "Ministère de la Santé", "Ministère", 5],
+    ["agriculture.gouv.fr", "Ministère de l’Agriculture", "Ministère", 5],
+    ["diplomatie.gouv.fr", "Ministère de l’Europe et des Affaires étrangères", "Ministère", 5],
+    ["conseil-etat.fr", "Conseil d’État", "Institution", 4],
+    ["conseil-constitutionnel.fr", "Conseil constitutionnel", "Institution", 4],
+    ["courdescomptes.fr", "Cour des comptes", "Institution", 4],
+    ["eur-lex.europa.eu", "Institutions de l’Union européenne", "Institution européenne", 4],
+  ];
+
+  const match = matches.find(([domain]) => host === domain || host.endsWith(`.${domain}`));
+  if (!match) return null;
+
+  return {
+    name: match[1],
+    role: match[2],
+    certainty: "confirme",
+    source: item,
+    baseInfluence: match[3],
+    origin: "source",
+  };
+}
+
+function buildSeeds(dossier: Dossier, items: WatchItem[]) {
+  const seeds: ActorSeed[] = [];
+  const seen = new Set<string>();
+  const clientKey = normalized(dossier.client);
+
+  const push = (seed: ActorSeed) => {
+    const key = normalized(seed.name);
+    if (!key || key === clientKey || seen.has(key)) return;
+    seen.add(key);
+    seeds.push(seed);
+  };
+
+  const trackedActors = Array.isArray(dossier.key_actors)
+    ? dossier.key_actors.map(text).filter(Boolean)
+    : [];
+
+  trackedActors.forEach((name, index) => {
+    push({
+      name,
+      role: "Acteur clé suivi dans le dossier",
+      certainty: "a_confirmer",
+      source: items[index % Math.max(1, items.length)] || null,
+      baseInfluence: index < 2 ? 5 : index < 4 ? 4 : 3,
+      origin: "dossier",
+    });
+  });
+
+  items.forEach((item) => {
+    const inferred = institutionFromSource(item);
+    if (inferred) push(inferred);
+  });
+
+  return seeds.slice(0, MAX_ACTORS);
 }
 
 async function verifySession(request: Request) {
@@ -73,81 +169,84 @@ export async function POST(request: Request) {
     if (!dossier) {
       return NextResponse.json({ error: "Sélectionne un dossier client." }, { status: 400 });
     }
-    if (!incoming.length) {
-      return NextResponse.json({ error: "Aucune évolution n’est disponible pour ce dossier." }, { status: 400 });
-    }
 
     const items = [...incoming]
-      .sort((a, b) => urgency(b.urgency) - urgency(a.urgency))
-      .filter((item) => Boolean(item.source_url))
+      .sort(
+        (a, b) =>
+          urgency(b.urgency) - urgency(a.urgency) ||
+          new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime(),
+      )
+      .filter((item) => Boolean(text(item.source_url)))
       .slice(0, MAX_CONTEXT_ITEMS);
 
-    if (!items.length) {
-      return NextResponse.json(
-        { error: "Les évolutions sélectionnées n’ont pas d’URL source exploitable." },
-        { status: 422 },
-      );
-    }
-
-    const trackedActors = Array.isArray(dossier.key_actors)
-      ? dossier.key_actors.map(text).filter(Boolean)
-      : [];
-
-    if (!trackedActors.length) {
-      return NextResponse.json(
-        {
-          error:
-            "Aucun acteur n’est encore renseigné dans la fiche stratégique du dossier. Ouvre le dossier, complète ou pré-remplis « Acteurs clés », puis relance le Radar.",
-        },
-        { status: 422 },
-      );
-    }
-
-    const firstSource = items[0];
+    const seeds = buildSeeds(dossier, items);
     const deadline = Array.isArray(dossier.key_deadlines) && dossier.key_deadlines.length
       ? text(dossier.key_deadlines[0])
       : "À déterminer";
 
-    const actors = trackedActors.slice(0, 6).map((name, index) => ({
-      id: `tracked-${index + 1}`,
-      name,
-      role: "Acteur clé suivi dans le dossier",
-      orbit: index < 2 ? 1 : index < 4 ? 2 : 3,
-      position: "inconnue",
-      influence: index < 2 ? 5 : index < 4 ? 4 : 3,
-      why: `Acteur identifié dans la fiche stratégique du dossier et à qualifier à partir de ${items.length} évolution${items.length > 1 ? "s" : ""} institutionnelle${items.length > 1 ? "s" : ""} sélectionnée${items.length > 1 ? "s" : ""}.`,
-      window: deadline,
-      action: "Vérifier sa position dans les sources officielles, puis préparer une action de contact ou de suivi adaptée.",
-      certainty: "a_confirmer",
-      evidence: {
-        source_index: 1,
-        source_title: firstSource.title,
-        source_url: firstSource.source_url || "",
-        excerpt: `Acteur issu de la fiche stratégique du dossier — qualification à consolider à partir de ${items.length} évolution${items.length > 1 ? "s" : ""}.`,
-        confidence: 0.6,
-        verified: true,
-      },
-      contact_verified: false,
-    }));
+    const actors = seeds.map((seed, index) => {
+      const source = seed.source || null;
+      const influence = Math.max(1, Math.min(5, seed.baseInfluence || (index < 2 ? 5 : index < 4 ? 4 : 3)));
+      const sourceCount = items.length;
+
+      return {
+        id: `${seed.origin}-${index + 1}`,
+        name: seed.name,
+        role: seed.role,
+        orbit: (index < 2 ? 1 : index < 4 ? 2 : 3) as 1 | 2 | 3,
+        position: "inconnue" as const,
+        influence,
+        why:
+          seed.origin === "source"
+            ? "Institution directement reliée à une source officielle du dossier. Sa position reste inconnue tant qu’elle n’est pas documentée."
+            : `Acteur renseigné dans la fiche stratégique du dossier${sourceCount ? ` et à qualifier à partir de ${sourceCount} évolution${sourceCount > 1 ? "s" : ""} liée${sourceCount > 1 ? "s" : ""}` : ""}.`,
+        window: deadline,
+        action:
+          seed.origin === "source"
+            ? "Identifier les décideurs ou relais pertinents au sein de cette institution, puis documenter leur position avant toute action."
+            : "Vérifier sa fonction et sa position dans les sources disponibles, puis préparer une action de contact ou de suivi adaptée.",
+        certainty: seed.certainty,
+        evidence: {
+          source_index: source ? Math.max(1, items.findIndex((item) => item.id === source.id) + 1) : 0,
+          source_title: source?.title || "Fiche stratégique du dossier",
+          source_url: source?.source_url || "",
+          excerpt:
+            seed.origin === "source"
+              ? `Institution identifiée à partir de la source officielle « ${source?.title || "source liée"} ».`
+              : "Acteur issu de la fiche stratégique du dossier. Sa qualification doit être consolidée par les sources.",
+          confidence: seed.certainty === "confirme" ? 0.95 : source ? 0.7 : 0.55,
+          verified: seed.origin === "source" && Boolean(source?.source_url),
+        },
+        contact_verified: false,
+      };
+    });
+
+    const groundedActors = actors.filter((actor) => actor.evidence.verified).length;
+    const status = actors.length
+      ? groundedActors === actors.length
+        ? "grounded"
+        : "review_required"
+      : "insufficient_context";
 
     return NextResponse.json({
       actors,
-      engine: "myvor-radar-stable-v2",
+      engine: "myvor-radar-stable-v3",
       model: "deterministic",
       quality: {
-        status: "review_required",
+        status,
         client_excluded: true,
         generic_unsubstantiated_filtered: true,
         structured_output: true,
-        grounded_actors: 0,
+        grounded_actors: groundedActors,
         total_actors: actors.length,
-        grounding_rate: 0,
+        grounding_rate: actors.length ? groundedActors / actors.length : 0,
         official_contact_lookup: false,
         verified_contact_pages: 0,
+        fallback_used: !Array.isArray(dossier.key_actors) || !dossier.key_actors.map(text).filter(Boolean).length,
       },
       grounding: {
         official_sources_requested: items.length,
-        official_sources_fetched: 0,
+        official_sources_fetched: groundedActors,
         max_official_sources: MAX_CONTEXT_ITEMS,
         statuses: items.map((item) => ({
           url: item.source_url,
