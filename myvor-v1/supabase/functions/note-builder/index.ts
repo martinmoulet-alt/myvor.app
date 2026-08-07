@@ -7,6 +7,7 @@ type Dossier={id:string;client:string;title:string;objective:string;context?:str
 type WatchItem={id:string;title:string;nature:string;source_url?:string;urgency?:string};
 
 const MONTH_INDEX:Record<string,number>={janvier:1,fevrier:2,mars:3,avril:4,mai:5,juin:6,juillet:7,aout:8,septembre:9,octobre:10,novembre:11,decembre:12};
+const MAX_WATCH_ITEMS=24;
 
 function json(body:unknown,status=200){return new Response(JSON.stringify(body),{status,headers:{...corsHeaders,"Content-Type":"application/json; charset=utf-8"}});}
 function cleanApiKey(raw:string){const normalized=String(raw||"").normalize("NFKC");const match=normalized.match(/sk-[A-Za-z0-9_-]+/);return match?.[0]||"";}
@@ -45,7 +46,7 @@ Deno.serve(async(req)=>{
   if(req.method==="OPTIONS")return new Response("ok",{headers:corsHeaders});
   if(req.method!=="POST")return json({error:"Méthode non autorisée."},405);
   const contentLength=Number(req.headers.get("content-length")||0);
-  if(Number.isFinite(contentLength)&&contentLength>120000)return json({error:"Requête trop volumineuse."},413);
+  if(Number.isFinite(contentLength)&&contentLength>180000)return json({error:"Requête trop volumineuse."},413);
 
   const body=await req.json().catch(()=>null);
   const mode=String(body?.mode||"generate");
@@ -85,7 +86,7 @@ Deno.serve(async(req)=>{
   }
 
   const dossier:Dossier|null=body?.dossier||null;
-  const items:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,8):[];
+  const items:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,MAX_WATCH_ITEMS):[];
   const format=String(body?.format||"note-client");
   const audience=String(body?.audience||"Client").slice(0,120);
   const tone=String(body?.tone||"professionnel et direct").slice(0,120);
@@ -97,7 +98,7 @@ Deno.serve(async(req)=>{
   const currentDateFr=new Intl.DateTimeFormat("fr-FR",{day:"2-digit",month:"long",year:"numeric",timeZone:"Europe/Paris"}).format(now);
 
   if(!dossier)return json({error:"Sélectionne un dossier client."},400);
-  if(!items.length)return json({error:"Aucun texte n’est rattaché à ce dossier."},400);
+  if(!items.length)return json({error:"Aucune évolution n’est disponible pour ce dossier."},400);
 
   const cleanedItems=items.map(item=>({title:cleanSourceTitle(item.title),nature:clip(item.nature,100),urgency:clip(item.urgency,80),source_url:clip(item.source_url,700)}));
   const formatRules:Record<string,string>={
@@ -113,6 +114,7 @@ Deno.serve(async(req)=>{
     "Tu es le Note Builder de Myvor, outil professionnel d’affaires publiques.",
     "Transforme les analyses existantes en un document directement exploitable par un consultant. Le résultat doit ressembler à un livrable métier, jamais à une réponse générique d’assistant IA.",
     `DATE DE GÉNÉRATION : ${currentDateFr} (${currentDateIso}).`,
+    `Tu dois traiter transversalement l’ensemble des ${cleanedItems.length} évolutions de veille fournies. Ne réduis pas l’analyse à la première source et fais ressortir convergences, divergences et signaux cumulés lorsqu’ils existent.`,
     "IMPORTANT : les données temporelles antérieures à aujourd’hui ont été retirées du contexte. N’essaie pas de reconstruire ou de deviner un ancien calendrier. Si aucun calendrier actuel fiable n’est fourni, indique seulement qu’une vérification du calendrier institutionnel actuel est requise.",
     "RÈGLE DE FIABILITÉ : la Note d’impact et le Radar d’influence sont des analyses Myvor dérivées, pas des sources primaires. Les dates, procédures, noms d'acteurs, positions, compétences institutionnelles, dispositions précises ou chiffres provenant uniquement de ces analyses doivent être formulés comme à confirmer, sauf lorsqu'ils sont explicitement établis par les éléments de veille fournis.",
     "Les titres et URL de veille servent de références. N'infère jamais le contenu intégral d'un texte à partir de son seul titre ou de son URL.",
@@ -135,9 +137,9 @@ Deno.serve(async(req)=>{
   ].filter(Boolean).join("\n");
 
   const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),75000);
+  const timer=setTimeout(()=>controller.abort(),90000);
   try{
-    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:"gpt-4.1-mini",input:prompt,max_output_tokens:1900,text:{format:{type:"json_object"}},store:false}),signal:controller.signal});
+    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:"gpt-4.1-mini",input:prompt,max_output_tokens:2100,text:{format:{type:"json_object"}},store:false}),signal:controller.signal});
     if(!response.ok){const raw=await response.text();let message=raw;try{message=JSON.parse(raw)?.error?.message||raw;}catch{}return json({error:`OpenAI a refusé la requête (${response.status}) : ${String(message).slice(0,260)}`},502);}
     const payload=await response.json();
     let document:any={};
@@ -145,7 +147,7 @@ Deno.serve(async(req)=>{
     const cleanedContent=sanitizeGeneratedContent(document?.content,now);
     if(!cleanedContent)return json({error:"La réponse IA est incomplète. Réessaie."},502);
     const cleanedKeyPoints=Array.isArray(document.key_points)?document.key_points.map((item:any)=>removePastTemporalSentences(String(item),now)).filter(Boolean).slice(0,6):[];
-    return json({document:{title:String(document.title||`Document — ${dossier.title}`),subject:String(document.subject||""),content:cleanedContent,key_points:cleanedKeyPoints,sources:cleanedItems.slice(0,10).map(item=>({title:item.title,url:item.source_url||""}))},engine:"supabase-note-builder-authenticated",context_used:{impact:!!impact,radar:!!radar,watch_items:items.length,generation_date:currentDateIso,past_dates_filtered:true}});
-  }catch(error:any){if(error?.name==="AbortError")return json({error:"La génération IA a dépassé 75 secondes. Réessaie."},504);return json({error:`Erreur du Note Builder : ${error?.message||"inconnue"}`},500);}
+    return json({document:{title:String(document.title||`Document — ${dossier.title}`),subject:String(document.subject||""),content:cleanedContent,key_points:cleanedKeyPoints,sources:cleanedItems.map(item=>({title:item.title,url:item.source_url||""}))},engine:"supabase-note-builder-authenticated-v2",context_used:{impact:!!impact,radar:!!radar,watch_items:items.length,generation_date:currentDateIso,past_dates_filtered:true}});
+  }catch(error:any){if(error?.name==="AbortError")return json({error:"La génération IA a dépassé 90 secondes. Réessaie."},504);return json({error:`Erreur du Note Builder : ${error?.message||"inconnue"}`},500);}
   finally{clearTimeout(timer);}
 });
