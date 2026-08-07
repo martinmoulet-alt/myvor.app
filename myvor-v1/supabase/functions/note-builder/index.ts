@@ -20,7 +20,7 @@ function removePastTemporalSentences(value:unknown,now:Date){const raw=String(va
 function cleanDerivedList(value:any,maxItems:number,maxChars:number,now:Date){if(!Array.isArray(value))return [];return value.slice(0,maxItems).map((item:any)=>removePastTemporalSentences(clip(item,maxChars),now)).filter(Boolean);}
 function compactImpact(value:any,now:Date){const note=value?.note||value||null;if(!note)return null;const dispositions=Array.isArray(note.dispositions_concernees)?note.dispositions_concernees.slice(0,6).map((item:any)=>({disposition:removePastTemporalSentences(clip(item?.disposition,500),now),impact_client:removePastTemporalSentences(clip(item?.impact_client,700),now),niveau:clip(item?.niveau,80)})).filter((item:any)=>item.disposition||item.impact_client):[];return{executive_summary:removePastTemporalSentences(clip(note.executive_summary,1600),now),score:note.score??null,level:clip(note.level,80),rationale:removePastTemporalSentences(clip(note.rationale,1000),now),risks:cleanDerivedList(note.risks,5,450,now),opportunities:cleanDerivedList(note.opportunities,5,450,now),deadlines:cleanDerivedList(note.deadlines,5,350,now),recommendations:cleanDerivedList(note.recommendations,6,500,now),dispositions_concernees:dispositions};}
 function compactRadar(value:any,now:Date){const actors=Array.isArray(value?.actors)?value.actors:Array.isArray(value)?value:[];if(!actors.length)return null;return actors.slice(0,8).map((actor:any)=>({name:clip(actor.name,180),role:removePastTemporalSentences(clip(actor.role,240),now),orbit:actor.orbit??null,position:clip(actor.position,80),influence:actor.influence??null,why:removePastTemporalSentences(clip(actor.why,550),now),window:removePastTemporalSentences(clip(actor.window,350),now),action:removePastTemporalSentences(clip(actor.action,450),now),certainty:clip(actor.certainty,80)}));}
-function sanitizeGeneratedContent(value:unknown,now:Date){return removePastTemporalSentences(stripLeadingSubject(value),now).replace(/\n\s*(Fenêtres? d[’']action|Prochaines étapes|Calendrier(?: institutionnel| législatif)?)\s*:\s*(?=\n|$)/giu,"").replace(/\n{3,}/g,"\n\n").trim();}
+function sanitizeGeneratedContent(value:unknown,now:Date){return removePastTemporalSentences(stripLeadingSubject(value),now).replace(/\n\s*(Fenêtres? d[’']action|Prochaines étapes|Calendrier(?: institutionnel| législatif)?)\s*:\s*(?=\n|$)/giu,"").replace(/\s+(?=\d+\.\s)/g,"\n\n").replace(/\n{3,}/g,"\n\n").trim();}
 
 async function requireAuthenticatedQuota(req:Request,feature:string){
   const authorization=req.headers.get("authorization")||"";
@@ -122,6 +122,7 @@ Deno.serve(async(req)=>{
     "Les recommandations peuvent être déduites du contexte, mais doivent être présentées comme recommandations.",
     "Évite les banalités, les introductions longues, les répétitions et les phrases de type 'il convient de noter'.",
     "Ne répète pas Objet dans le champ content : l'objet doit apparaître uniquement dans le champ subject.",
+    "Dans le champ content, chaque grande partie numérotée (1., 2., 3., etc.) doit commencer après une ligne vide. Ne colle jamais deux parties numérotées dans le même paragraphe.",
     "Les key_points doivent être 3 à 6 points réellement décisionnels, pas un résumé phrase par phrase.",
     "Réponds uniquement en JSON valide avec exactement cette structure :",
     JSON.stringify({title:"string",subject:"string",content:"string",key_points:["string"]}),
@@ -132,9 +133,9 @@ Deno.serve(async(req)=>{
   ].filter(Boolean).join("\n");
 
   const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),45000);
+  const timer=setTimeout(()=>controller.abort(),75000);
   try{
-    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:"gpt-4.1-mini",input:prompt,max_output_tokens:2100,text:{format:{type:"json_object"}}}),signal:controller.signal});
+    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:"gpt-4.1-mini",input:prompt,max_output_tokens:1900,text:{format:{type:"json_object"}}}),signal:controller.signal});
     if(!response.ok){const raw=await response.text();let message=raw;try{message=JSON.parse(raw)?.error?.message||raw;}catch{}return json({error:`OpenAI a refusé la requête (${response.status}) : ${String(message).slice(0,260)}`},502);}
     const payload=await response.json();
     let document:any={};
@@ -143,6 +144,6 @@ Deno.serve(async(req)=>{
     if(!cleanedContent)return json({error:"La réponse IA est incomplète. Réessaie."},502);
     const cleanedKeyPoints=Array.isArray(document.key_points)?document.key_points.map((item:any)=>removePastTemporalSentences(String(item),now)).filter(Boolean).slice(0,6):[];
     return json({document:{title:String(document.title||`Document — ${dossier.title}`),subject:String(document.subject||""),content:cleanedContent,key_points:cleanedKeyPoints,sources:cleanedItems.slice(0,10).map(item=>({title:item.title,url:item.source_url||""}))},engine:"supabase-note-builder-authenticated",context_used:{impact:!!impact,radar:!!radar,watch_items:items.length,generation_date:currentDateIso,past_dates_filtered:true}});
-  }catch(error:any){if(error?.name==="AbortError")return json({error:"La génération IA a dépassé 45 secondes. Réessaie."},504);return json({error:`Erreur du Note Builder : ${error?.message||"inconnue"}`},500);}
+  }catch(error:any){if(error?.name==="AbortError")return json({error:"La génération IA a dépassé 75 secondes. Réessaie."},504);return json({error:`Erreur du Note Builder : ${error?.message||"inconnue"}`},500);}
   finally{clearTimeout(timer);}
 });
