@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect,useMemo,useState } from "react";
+import { useEffect,useMemo,useState,type CSSProperties,type ReactNode } from "react";
 import { Building2,CalendarDays,ExternalLink,FileText,Orbit,RefreshCw,ShieldCheck,Target,Users } from "lucide-react";
 import { listProductions,saveProduction } from "@/lib/productions";
 import { presentableText } from "@/lib/presentation";
 import { fetchJsonWithRetry } from "@/lib/reliability";
 import { supabase } from "@/lib/supabase";
+import WarZoneView,{type WarZoneActor,type WarZoneActionDraft} from "./WarZoneView";
 import styles from "./RadarCorporate.module.css";
 
 type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string;key_actors?:string[];key_deadlines?:string[]};
@@ -17,7 +18,7 @@ type Actor={id:string;name:string;role:string;institution?:string;orbit:1|2|3;po
 type RadarPayload={actors?:Actor[];quality?:any;grounding?:any;engine?:string;model?:string};
 type ActorDetailPayload={actor?:Actor;enrichment?:any;engine?:string;model?:string};
 type RadarView="radar"|"warzone";
-type ActionDraft={dossier_id:string;type:string;title:string;description?:string;actor_name?:string;priority:string;due_date?:string|null};
+type ActionDraft=WarZoneActionDraft;
 
 const PRIORITY_COLORS={critical:"#d6574f",high:"#e69b35",medium:"#4b9b6a",low:"#61758b"};
 const POSITION_COLORS={favorable:"#39a86b",reserve:"#e69b35",opposition:"#d6574f",inconnue:"#71869e"};
@@ -47,7 +48,7 @@ async function authedPost<T>(url:string,body:unknown,timeoutMs:number):Promise<T
 function postRadar<T>(body:unknown){return authedPost<T>("/api/radar/fast",body,18000);}
 function postRadarEnrich<T>(body:unknown){return authedPost<T>("/api/radar/enrich",body,55000);}
 
-export default function RadarModule({dossiers,watch}:{dossiers:Dossier[];watch:Watch[];onActions?:(drafts:ActionDraft[])=>Promise<void>|void}){
+export default function RadarModule({dossiers,watch,onActions}:{dossiers:Dossier[];watch:Watch[];onActions?:(drafts:ActionDraft[])=>Promise<void>|void}){
   const [dossierId,setDossierId]=useState(dossiers[0]?.id||"");
   const [actors,setActors]=useState<Actor[]>([]);
   const [selected,setSelected]=useState<Actor|null>(null);
@@ -60,11 +61,6 @@ export default function RadarModule({dossiers,watch}:{dossiers:Dossier[];watch:W
   const [view,setView]=useState<RadarView>("radar");
   const dossier=dossiers.find(d=>d.id===dossierId)||null;
   const related=useMemo(()=>watch.filter(w=>w.dossier_id===dossierId),[watch,dossierId]);
-  const zones=useMemo(()=>[
-    {orbit:1,name:"Décision",subtitle:"Acteurs au plus près de la décision",actors:actors.filter(actor=>actor.orbit===1)},
-    {orbit:2,name:"Influence",subtitle:"Relais capables de faire évoluer l’arbitrage",actors:actors.filter(actor=>actor.orbit===2)},
-    {orbit:3,name:"Écosystème",subtitle:"Acteurs à surveiller autour du dossier",actors:actors.filter(actor=>actor.orbit===3)},
-  ],[actors]);
 
   useEffect(()=>{let active=true;setSelected(null);setError("");setDetailError("");setEnrichingId(null);if(!dossierId){setActors([]);setGenerated(false);return()=>{active=false;};}listProductions(dossierId).then(({data})=>{if(!active)return;const latest=data.find(item=>item.type==="radar");if(!latest){setActors([]);setGenerated(false);return;}const saved=actorsFromProduction(latest.content);setActors(saved.slice(0,6));setQuality((latest.content as any)?.quality||null);setGenerated(true);}).catch(()=>undefined);return()=>{active=false;};},[dossierId]);
 
@@ -96,6 +92,8 @@ export default function RadarModule({dossiers,watch}:{dossiers:Dossier[];watch:W
     finally{setEnrichingId(null);}
   }
 
+  function openFromWarZone(actor:WarZoneActor){setView("radar");void openActor(actor as Actor);}
+
   const reliability=quality?.status==="grounded"?"Vérifié":quality?.status==="review_required"?"À consolider":quality?.status==="insufficient_context"?"Contexte insuffisant":generated?"Disponible":"Non généré";
 
   return <div className={styles.page}>
@@ -116,20 +114,20 @@ export default function RadarModule({dossiers,watch}:{dossiers:Dossier[];watch:W
 
     {error&&<div className={styles.error}>{error}</div>}
 
-    <div className={styles.workspace}>
+    {view==="warzone"?<main className={styles.radarCard}>
+      <WarZoneView dossier={dossier} actors={actors} watch={related} onOpenActor={openFromWarZone} onActions={onActions}/>
+    </main>:<div className={styles.workspace}>
       <main className={styles.radarCard}>
-        {view==="radar"?<>
-          <div className={styles.radarTop}><div><strong>Acteurs clés</strong><span>{actors.length?"Cliquez sur un acteur : Myvor ouvre puis enrichit sa fiche détaillée.":"Le radar se construit à partir du dossier et de ses sources."}</span></div><div className={styles.legend}><Legend color={POSITION_COLORS.favorable} label="Favorable"/><Legend color={POSITION_COLORS.reserve} label="Réservée"/><Legend color={POSITION_COLORS.opposition} label="Opposition"/><Legend color={POSITION_COLORS.inconnue} label="Inconnue"/></div></div>
-          {actors.length?<div className={styles.canvas}>
-            {[3,2,1].map(orbit=><div key={orbit} className={styles.orbit} style={{width:ORBIT_RADII[orbit as 1|2|3]*2,height:ORBIT_RADII[orbit as 1|2|3]*2}}><span>{orbit===1?"Décision":orbit===2?"Influence":"Écosystème"}</span></div>)}
-            <div className={styles.center}><Orbit size={24}/><b>Myvor</b><small>{dossier?.title||"Dossier"}</small></div>
-            {actors.map(actor=>{const size=actorSize(actor);const motion=orbitMotion(actor,actors);const animationStyle:React.CSSProperties={animationDuration:`${motion.duration}s`,animationDelay:`${motion.delay}s`,animationDirection:motion.direction};const actorStyle={width:size,height:size,"--position-color":positionColor(actor),"--priority-color":priorityColor(actor)} as React.CSSProperties;return <div key={actor.id} className={`${styles.actorOrbit} ${selected?.id===actor.id?styles.actorOrbitPaused:""}`} style={animationStyle}><div className={styles.actorTravel} style={{transform:`translateX(${motion.radius}px)`}}><div className={styles.actorCounter} style={animationStyle}><button type="button" className={`${styles.actor} ${selected?.id===actor.id?styles.actorSelected:""}`} onClick={()=>void openActor(actor)} style={actorStyle} title={`${actor.name} — ${actorScore(actor)}/100`}><Users size={17}/><span>{actor.name}</span><small>{actorScore(actor)}</small></button></div></div></div>;})}
-          </div>:<EmptyRadar generated={generated} quality={quality}/>}<div className={styles.radarHint}><span>Couleur = position</span><span>Halo / taille = priorité</span><span>Rotation : 24–44 s selon l’orbite</span></div></>:
-          <div className={styles.zoneView}><div className={styles.radarTop}><div><strong>War Zone</strong><span>Les mêmes acteurs, regroupés par proximité avec la décision.</span></div></div><div className={styles.zoneGrid}>{zones.map(zone=><section key={zone.orbit} className={styles.zoneCard}><div className={styles.zoneHead}><span>Zone {zone.orbit}</span><b>{zone.name}</b><p>{zone.subtitle}</p></div><div className={styles.zoneActors}>{zone.actors.length?zone.actors.map(actor=><button key={actor.id} type="button" onClick={()=>void openActor(actor)} className={selected?.id===actor.id?styles.zoneActorActive:""}><i style={{background:positionColor(actor),boxShadow:`0 0 10px ${priorityColor(actor)}`}}/><span><b>{actor.name}</b><small>{actor.role}</small></span><em>{actorScore(actor)}/100</em></button>):<div className={styles.zoneEmpty}>Aucun acteur vérifiable dans cette zone.</div>}</div></section>)}</div></div>}
+        <div className={styles.radarTop}><div><strong>Acteurs clés</strong><span>{actors.length?"Cliquez sur un acteur : Myvor ouvre puis enrichit sa fiche détaillée.":"Le radar se construit à partir du dossier et de ses sources."}</span></div><div className={styles.legend}><Legend color={POSITION_COLORS.favorable} label="Favorable"/><Legend color={POSITION_COLORS.reserve} label="Réservée"/><Legend color={POSITION_COLORS.opposition} label="Opposition"/><Legend color={POSITION_COLORS.inconnue} label="Inconnue"/></div></div>
+        {actors.length?<div className={styles.canvas}>
+          {[3,2,1].map(orbit=><div key={orbit} className={styles.orbit} style={{width:ORBIT_RADII[orbit as 1|2|3]*2,height:ORBIT_RADII[orbit as 1|2|3]*2}}><span>{orbit===1?"Décision":orbit===2?"Influence":"Écosystème"}</span></div>)}
+          <div className={styles.center}><Orbit size={24}/><b>Myvor</b><small>{dossier?.title||"Dossier"}</small></div>
+          {actors.map(actor=>{const size=actorSize(actor);const motion=orbitMotion(actor,actors);const animationStyle:CSSProperties={animationDuration:`${motion.duration}s`,animationDelay:`${motion.delay}s`,animationDirection:motion.direction};const actorStyle={width:size,height:size,"--position-color":positionColor(actor),"--priority-color":priorityColor(actor)} as CSSProperties;return <div key={actor.id} className={`${styles.actorOrbit} ${selected?.id===actor.id?styles.actorOrbitPaused:""}`} style={animationStyle}><div className={styles.actorTravel} style={{transform:`translateX(${motion.radius}px)`}}><div className={styles.actorCounter} style={animationStyle}><button type="button" className={`${styles.actor} ${selected?.id===actor.id?styles.actorSelected:""}`} onClick={()=>void openActor(actor)} style={actorStyle} title={`${actor.name} — ${actorScore(actor)}/100`}><Users size={17}/><span>{actor.name}</span><small>{actorScore(actor)}</small></button></div></div></div>;})}
+        </div>:<EmptyRadar generated={generated} quality={quality}/>}<div className={styles.radarHint}><span>Couleur = position</span><span>Halo / taille = priorité</span><span>Rotation : 24–44 s selon l’orbite</span></div>
       </main>
 
-      <aside className={styles.actorPanel}>{selected?<ActorDetail actor={selected} loading={enrichingId===selected.id} error={detailError}/>:<div className={styles.actorEmpty}><Building2 size={34}/><h3>Sélectionnez un acteur</h3><p>Cliquez sur un acteur du Radar ou de la War Zone pour afficher sa fiche détaillée.</p></div>}</aside>
-    </div>
+      <aside className={styles.actorPanel}>{selected?<ActorDetail actor={selected} loading={enrichingId===selected.id} error={detailError}/>:<div className={styles.actorEmpty}><Building2 size={34}/><h3>Sélectionnez un acteur</h3><p>Cliquez sur un acteur du Radar pour afficher sa fiche détaillée.</p></div>}</aside>
+    </div>}
   </div>;
 }
 
@@ -137,8 +135,8 @@ function EmptyRadar({generated,quality}:{generated:boolean;quality:any}){return 
 function Legend({color,label}:{color:string;label:string}){return <span className={styles.legendItem}><i style={{background:color}}/>{label}</span>;}
 function ActorDetail({actor,loading,error}:{actor:Actor;loading:boolean;error:string}){const sourceTitle=presentableText(actor.evidence?.source_title);const sourceUrl=presentableText(actor.evidence?.source_url);const signals=Array.isArray(actor.signals)?actor.signals.slice(0,3):[];const score=actorScore(actor);return <div className={styles.actorDetail}>
   <div className={styles.actorPanelHead}><div><div className={styles.panelLabel}>Acteur sélectionné</div><h2>{actor.name}</h2><p>{actor.role}</p>{actor.institution&&<small className={styles.institution}>{actor.institution}</small>}</div><div className={styles.score}><strong>{score}</strong><span>/100</span><small>{priorityLabel(actor)}</small></div></div>
-  {loading&&<section className={styles.detail}><span><RefreshCw size={15} className={styles.spin}/>Enrichissement de la fiche</span><p>Myvor vérifie le rôle, l’institution, la position, le score et les sources pertinentes de cet acteur.</p></section>}
-  {error&&<section className={styles.detail}><span>Fiche détaillée indisponible</span><p>{error}</p></section>}
+  {loading&&<section className={styles.detail}><span><RefreshCw size={15}/>Enrichissement de la fiche</span><p>Myvor vérifie le rôle, le contexte stratégique et les sources pertinentes de cet acteur.</p></section>}
+  {error&&<section className={styles.detail}><span><ShieldCheck size={15}/>Enrichissement indisponible</span><p>{error}</p></section>}
   <div className={styles.quickFacts}><div><span>Position</span><b style={{color:positionColor(actor)}}>{positionLabel(actor.position)}</b></div><div><span>Fiabilité</span><b>{certaintyLabel(actor.certainty)}</b></div><div><span>Orbite</span><b>{actor.orbit}</b></div><div><span>Sources liées</span><b>{actor.source_count??(actor.evidence?.source_url?1:0)}</b></div></div>
   {actor.score_breakdown&&<ScoreDetail detail={actor.score_breakdown}/>} 
   <Detail title="Pourquoi cet acteur compte" text={actor.why}/>
@@ -149,4 +147,4 @@ function ActorDetail({actor,loading,error}:{actor:Actor;loading:boolean;error:st
   {(sourceTitle||sourceUrl)&&<section className={styles.detail}><span><ShieldCheck size={15}/>Source de qualification</span>{sourceTitle&&<p>{sourceTitle}</p>}{actor.evidence?.excerpt&&<small>{actor.evidence.excerpt}</small>}{sourceUrl&&<a href={sourceUrl} target="_blank" rel="noreferrer">Ouvrir la source <ExternalLink size={13}/></a>}<div className={styles.confidence}>Confiance source : {Math.round((Number(actor.evidence?.confidence)||0)*100)} %</div></section>}
 </div>;}
 function ScoreDetail({detail}:{detail:ScoreBreakdown}){const rows=[{label:"Pouvoir institutionnel",value:detail.institutional_power,max:35},{label:"Pertinence dossier",value:detail.dossier_relevance,max:30},{label:"Temporalité",value:detail.timing,max:20},{label:"Accessibilité",value:detail.accessibility,max:15}];return <section className={styles.detail}><span><Target size={15}/>Décomposition du score Myvor</span><div className={styles.scoreBreakdown}>{rows.map(row=><div key={row.label} className={styles.scoreRow}><div><b>{row.label}</b><em>{row.value}/{row.max}</em></div><div className={styles.scoreTrack}><i style={{width:`${Math.max(0,Math.min(100,row.value/row.max*100))}%`}}/></div></div>)}</div><small>Score indicatif calculé à partir des informations rattachées au dossier et de la qualification de l’acteur.</small></section>;}
-function Detail({title,text,icon}:{title:string;text:string;icon?:React.ReactNode}){const visible=presentableText(text);if(!visible)return null;return <section className={styles.detail}><span>{icon}{title}</span><p>{visible}</p></section>;}
+function Detail({title,text,icon}:{title:string;text:string;icon?:ReactNode}){const visible=presentableText(text);if(!visible)return null;return <section className={styles.detail}><span>{icon}{title}</span><p>{visible}</p></section>;}
