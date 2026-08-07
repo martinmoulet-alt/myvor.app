@@ -23,12 +23,17 @@ const securityHeaders=[
   {key:"Permissions-Policy",value:"camera=(), microphone=(), geolocation=()"},
   {key:"Strict-Transport-Security",value:"max-age=31536000; includeSubDomains"},
   {key:"X-DNS-Prefetch-Control",value:"off"},
+  {key:"Cross-Origin-Opener-Policy",value:"same-origin"},
+  {key:"X-Permitted-Cross-Domain-Policies",value:"none"},
 ];
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   async headers(){
-    return [{source:"/(.*)",headers:securityHeaders}];
+    return [
+      {source:"/(.*)",headers:securityHeaders},
+      {source:"/api/:path*",headers:[{key:"Cache-Control",value:"no-store, max-age=0"}]},
+    ];
   },
 };
 
