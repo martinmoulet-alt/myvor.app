@@ -32,7 +32,7 @@ async function postRadar<T>(body:unknown):Promise<T>{
   const {data}=await supabase.auth.getSession();
   const token=data.session?.access_token;
   if(!token)throw new Error("Session Myvor requise.");
-  return fetchJsonWithRetry<T>("/api/radar/fast",{method:"POST",headers:{"Content-Type":"application/json;charset=UTF-8",Authorization:`Bearer ${token}`},body:JSON.stringify(body)},{attempts:2,timeoutMs:18000,shouldRetry:status=>status>=500});
+  return fetchJsonWithRetry<T>("/api/radar/fast",{method:"POST",headers:{"Content-Type":"application/json;charset=UTF-8",Authorization:`Bearer ${token}`},body:JSON.stringify(body)},{attempts:2,timeoutMs:18000});
 }
 
 export default function RadarModule({dossiers,watch}:{dossiers:Dossier[];watch:Watch[];onActions?:unknown}){
