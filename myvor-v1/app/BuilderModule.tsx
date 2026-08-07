@@ -56,6 +56,8 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
   const dossier=dossiers.find(d=>d.id===dossierId)||null;
   const related=useMemo(()=>watch.filter(w=>w.dossier_id===dossierId),[watch,dossierId]);
 
+  function resizeEditor(){const el=contentRef.current;if(!el)return;el.style.height="auto";el.style.height=`${Math.max(el.scrollHeight,430)}px`;}
+
   useEffect(()=>{
     if(!dossierId||hydratedDraft.current===dossierId)return;
     hydratedDraft.current=dossierId;
@@ -74,6 +76,8 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
     },700);
     return()=>{if(draftTimer.current)window.clearTimeout(draftTimer.current);};
   },[dossierId,format,audience,tone,instruction,document]);
+
+  useEffect(()=>{if(!document)return;window.requestAnimationFrame(resizeEditor);},[document?.content]);
 
   async function generate(){
     if(!dossier){setError("Sélectionne un dossier client.");return;}if(!related.length){setError("Aucun texte n’est rattaché à ce dossier.");return;}if(!supabase){setError("Supabase n’est pas configuré.");return;}
@@ -98,7 +102,7 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
       const {data:payload,error:invokeError}=await supabase.functions.invoke("note-builder",{body:{mode:"edit",action,selected_text:selected,surrounding_text:document.content}});
       if(invokeError)throw new Error(await edgeFunctionError(invokeError));if(payload?.error)throw new Error(String(payload.error));const replacement=String(payload?.text||"").trim();if(!replacement)throw new Error("La réécriture n’a renvoyé aucun texte.");
       const next=document.content.slice(0,start)+replacement+document.content.slice(end);patchDocument({content:next});setSelection({start,end:start+replacement.length,text:replacement});
-      window.setTimeout(()=>{const el=contentRef.current;if(el){el.focus();el.setSelectionRange(start,start+replacement.length);}},40);
+      window.setTimeout(()=>{const el=contentRef.current;if(el){resizeEditor();el.focus();el.setSelectionRange(start,start+replacement.length);}},40);
       setSaveMessage("Passage réécrit. Le brouillon a été mis à jour.");
     }catch(err:any){setError(String(err?.message||"Réécriture impossible."));}finally{setEditing(null);}
   }
@@ -150,7 +154,7 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
             <input className={styles.subjectInput} value={document.subject} onChange={e=>patchDocument({subject:e.target.value})} placeholder="Objet du document"/>
             {!!document.sources?.length&&<div className={styles.sourceBanner}><span><FileText size={14}/>{document.sources.length} sources vérifiables mobilisées</span><div>{document.sources.slice(0,3).map((source,index)=><a key={`${source.url}-${index}`} href={source.url||undefined} target={source.url?"_blank":undefined} rel="noreferrer">[{index+1}] {source.title}</a>)}</div></div>}
             <div className={styles.aiEditBar}><div><Sparkles size={14}/><span>{selection.text?`${selection.text.length} caractères sélectionnés`:"Sélectionnez un passage pour le retravailler avec Myvor"}</span></div><div>{editActions.map(({id,label,icon:Icon})=><button key={id} type="button" onMouseDown={e=>e.preventDefault()} onClick={()=>applyEdit(id)} disabled={!!editing||!selection.text}><Icon size={13}/>{editing===id?"Traitement…":label}</button>)}</div></div>
-            <textarea ref={contentRef} className={styles.contentEditor} value={document.content} onSelect={captureSelection} onKeyUp={captureSelection} onMouseUp={captureSelection} onChange={e=>{patchDocument({content:e.target.value});window.setTimeout(captureSelection,0);}}/>
+            <textarea ref={contentRef} className={styles.contentEditor} value={document.content} onSelect={captureSelection} onKeyUp={captureSelection} onMouseUp={captureSelection} onChange={e=>{patchDocument({content:e.target.value});resizeEditor();window.setTimeout(captureSelection,0);}}/>
             {!!document.key_points?.length&&<div className={styles.points}><h3>Points clés</h3>{document.key_points.map((point,index)=><div key={index}>• {point}</div>)}</div>}
             {!!document.sources?.length&&<div className={styles.sources}><h3>Sources utilisées</h3>{document.sources.map((source,index)=><div className={styles.sourceRow} key={`${source.url}-${index}`}><span><FileText size={14}/><b>[{index+1}]</b>{source.title}</span>{source.url&&<a href={source.url} target="_blank" rel="noreferrer">Ouvrir la source</a>}</div>)}</div>}
           </div>}
