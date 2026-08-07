@@ -52,10 +52,12 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
   const [copied,setCopied]=useState(false);
   const hydratedDraft=useRef("");
   const draftTimer=useRef<number|null>(null);
+  const titleRef=useRef<HTMLTextAreaElement|null>(null);
   const contentRef=useRef<HTMLTextAreaElement|null>(null);
   const dossier=dossiers.find(d=>d.id===dossierId)||null;
   const related=useMemo(()=>watch.filter(w=>w.dossier_id===dossierId),[watch,dossierId]);
 
+  function resizeTitle(){const el=titleRef.current;if(!el)return;el.style.height="auto";el.style.height=`${Math.max(el.scrollHeight,42)}px`;}
   function resizeEditor(){const el=contentRef.current;if(!el)return;el.style.height="auto";el.style.height=`${Math.max(el.scrollHeight,430)}px`;}
 
   useEffect(()=>{
@@ -77,7 +79,7 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
     return()=>{if(draftTimer.current)window.clearTimeout(draftTimer.current);};
   },[dossierId,format,audience,tone,instruction,document]);
 
-  useEffect(()=>{if(!document)return;window.requestAnimationFrame(resizeEditor);},[document?.content]);
+  useEffect(()=>{if(!document)return;window.requestAnimationFrame(()=>{resizeTitle();resizeEditor();});},[document?.title,document?.content]);
 
   async function generate(){
     if(!dossier){setError("Sélectionne un dossier client.");return;}if(!related.length){setError("Aucun texte n’est rattaché à ce dossier.");return;}if(!supabase){setError("Supabase n’est pas configuré.");return;}
@@ -150,7 +152,7 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
         <section className={styles.editorCard}>
           <div className={styles.editorToolbar}><div><span className={styles.eyebrow}>Éditeur</span><strong>{document?"Document généré":"Nouveau document"}</strong></div><div className={styles.documentActions}>{document&&<><button className={styles.secondary} onClick={saveCurrent}><Save size={15}/>Enregistrer</button><button className={styles.secondary} onClick={copyDocument}><Copy size={15}/>{copied?"Copié":"Copier"}</button><button className={styles.secondary} onClick={exportWord}><FileDown size={15}/>Word</button><button className={styles.primarySmall} onClick={exportPdf}><Download size={15}/>PDF</button></>}</div></div>
           {!document?<div className={styles.editorEmpty}><div className={styles.spark}><Sparkles size={22}/></div><h2>Votre document apparaîtra ici</h2><p>Myvor utilisera le dossier, la veille liée, la Note d’impact et le Radar d’influence disponibles.</p><button onClick={generate} disabled={loading||!dossier||!related.length}><Sparkles size={17}/>{loading?"Rédaction en cours…":"Générer le document"}</button></div>:<div className={styles.editorFields}>
-            <input className={styles.titleInput} value={document.title} onChange={e=>patchDocument({title:e.target.value})}/>
+            <textarea ref={titleRef} rows={1} className={styles.titleInput} value={document.title} onChange={e=>{patchDocument({title:e.target.value});resizeTitle();}}/>
             <input className={styles.subjectInput} value={document.subject} onChange={e=>patchDocument({subject:e.target.value})} placeholder="Objet du document"/>
             {!!document.sources?.length&&<div className={styles.sourceBanner}><span><FileText size={14}/>{document.sources.length} sources vérifiables mobilisées</span><div>{document.sources.slice(0,3).map((source,index)=><a key={`${source.url}-${index}`} href={source.url||undefined} target={source.url?"_blank":undefined} rel="noreferrer">[{index+1}] {source.title}</a>)}</div></div>}
             <div className={styles.aiEditBar}><div><Sparkles size={14}/><span>{selection.text?`${selection.text.length} caractères sélectionnés`:"Sélectionnez un passage pour le retravailler avec Myvor"}</span></div><div>{editActions.map(({id,label,icon:Icon})=><button key={id} type="button" onMouseDown={e=>e.preventDefault()} onClick={()=>applyEdit(id)} disabled={!!editing||!selection.text}><Icon size={13}/>{editing===id?"Traitement…":label}</button>)}</div></div>
