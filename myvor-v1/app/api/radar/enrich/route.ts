@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 15;
+export const maxDuration = 18;
+
+const MAX_CONTEXT_ITEMS = 24;
 
 type Dossier = {
   id: string;
@@ -156,7 +158,7 @@ export async function POST(request: Request) {
     current_orbit: actor.orbit,
     current_influence: actor.influence,
   }));
-  const sourceInput = items.slice(0, 6).map((item) => ({
+  const sourceInput = items.slice(0, MAX_CONTEXT_ITEMS).map((item) => ({
     title: text(item.title, 420),
     nature: text(item.nature, 120),
     urgency: text(item.urgency, 80),
@@ -166,6 +168,7 @@ export async function POST(request: Request) {
   const prompt = [
     "MYVOR — enrichissement stratégique du Radar d’influence.",
     "Tu enrichis UNIQUEMENT les acteurs déjà fournis. N’ajoute, ne supprime et ne renomme aucun acteur.",
+    `Tu dois prendre en compte l’ensemble des ${sourceInput.length} évolutions de veille fournies pour construire une lecture transversale du dossier.`,
     "Tu n’as pas le contenu intégral des sources : les titres et URL sont seulement des repères. N’invente aucun fait, position politique, date précise, compétence formelle ou citation à partir d’un titre ou d’une URL.",
     "Ton travail porte sur la lecture stratégique : rôle générique, proximité décisionnelle (orbite), niveau d’influence estimé, raison de pertinence, fenêtre d’action prudente et action recommandée.",
     "Les recommandations doivent être opérationnelles pour un consultant en affaires publiques, mais toute information non établie doit rester formulée comme hypothèse ou point à vérifier.",
@@ -177,12 +180,12 @@ export async function POST(request: Request) {
     `CONTEXTE: ${text(dossier.context, 1800) || "Non renseigné"}`,
     `ÉCHÉANCES FOURNIES: ${JSON.stringify((dossier.key_deadlines || []).slice(0, 5).map((value) => text(value, 220)))}`,
     `ACTEURS: ${JSON.stringify(actorInput)}`,
-    `SOURCES LIÉES (métadonnées uniquement): ${JSON.stringify(sourceInput)}`,
+    `ÉVOLUTIONS DE VEILLE (${sourceInput.length}): ${JSON.stringify(sourceInput)}`,
   ].join("\n");
 
   const model = text(process.env.OPENAI_RADAR_ENRICH_MODEL || process.env.OPENAI_RADAR_MODEL || "gpt-4.1-mini", 120);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 9000);
+  const timer = setTimeout(() => controller.abort(), 12000);
 
   try {
     const response = await fetch("https://api.openai.com/v1/responses", {
@@ -194,12 +197,12 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         model,
         input: prompt,
-        max_output_tokens: 1100,
+        max_output_tokens: 1300,
         store: false,
         text: {
           format: {
             type: "json_schema",
-            name: "myvor_radar_enrichment_v1",
+            name: "myvor_radar_enrichment_v2",
             strict: true,
             schema: OUTPUT_SCHEMA,
           },
@@ -254,8 +257,9 @@ export async function POST(request: Request) {
         grounded: false,
         source_content_read: false,
         actor_discovery: false,
+        watch_items_used: sourceInput.length,
       },
-      engine: "myvor-radar-enrichment-v1",
+      engine: "myvor-radar-enrichment-v2",
       model,
     });
   } catch (error: any) {
