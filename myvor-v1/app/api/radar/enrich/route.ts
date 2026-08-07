@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+// Radar enrichment is authenticated by the Myvor session and then proxied to Supabase.
 export async function POST(request: Request) {
   const authorization = request.headers.get("authorization") || "";
   if (!authorization.toLowerCase().startsWith("bearer ")) {
