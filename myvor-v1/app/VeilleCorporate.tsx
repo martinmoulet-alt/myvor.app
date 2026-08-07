@@ -67,7 +67,7 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
     if(!supabase)return;
     const qualifiedAt=new Date().toISOString();
     for(const suggestion of review){
-      const {error}=await supabase.from("watch_items").update({suggested_dossier_id:suggestion.dossier_id,qualification_confidence:suggestion.confidence,qualification_reason:suggestion.reason.slice(0,500),qualified_at:qualifiedAt}).eq("id",suggestion.watch_id).is("dossier_id",null);
+      const {error}=await supabase.from("watch_items").update({suggested_dossier_id:suggestion.dossier_id,qualification_confidence:suggestion.confidence,qualification_reason:suggestion.reason.slice(0,500),qualified_at:qualifiedAt}).eq("id",suggestion.watch_id);
       if(error)throw error;
     }
   }
@@ -86,12 +86,7 @@ export default function VeilleCorporate({items,dossiers,add,sync,syncing,syncMes
         const payload=await response.json();if(!response.ok)throw new Error(payload?.error||"Qualification impossible");engine=payload.engine||engine;enriched+=Number(payload.enriched)||0;fullTextChars+=Number(payload.full_text_chars)||0;if(Array.isArray(payload.assignments))allResults.push(...payload.assignments as Suggestion[]);
       }
       const automaticLinks=allResults.filter(s=>s.dossier_id&&Number(s.confidence)>=AUTO_LINK_THRESHOLD);let autoLinked=0;
-      for(const s of automaticLinks){
-        const {data,error}=await supabase.from("watch_items").update({dossier_id:s.dossier_id,suggested_dossier_id:null,qualification_confidence:s.confidence,qualification_reason:s.reason.slice(0,500),qualified_at:new Date().toISOString()}).eq("id",s.watch_id).is("dossier_id",null).select("id").maybeSingle();
-        if(error)throw error;
-        if(!data)continue;
-        await link(s.watch_id,s.dossier_id);autoLinked++;
-      }
+      for(const s of automaticLinks){await link(s.watch_id,s.dossier_id);autoLinked++;}
       const review=allResults.filter(s=>s.dossier_id&&Number(s.confidence)>=REVIEW_THRESHOLD&&Number(s.confidence)<AUTO_LINK_THRESHOLD);
       await persistReviewSuggestions(review);
       setSuggestions(review);
