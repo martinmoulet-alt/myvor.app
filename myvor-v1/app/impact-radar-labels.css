@@ -1,0 +1,10 @@
+/* Position the six criterion numbers directly on the impact radar axes. */
+svg[class*="radarChart"]{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Cg fill='%23f4bd2a' font-family='Arial,sans-serif' font-size='10' font-weight='800' text-anchor='middle' dominant-baseline='middle'%3E%3Ccircle cx='100' cy='10' r='8' fill='%23102d52'/%3E%3Ctext x='100' y='10'%3E1%3C/text%3E%3Ccircle cx='183' cy='58' r='8' fill='%23102d52'/%3E%3Ctext x='183' y='58'%3E2%3C/text%3E%3Ccircle cx='183' cy='145' r='8' fill='%23102d52'/%3E%3Ctext x='183' y='145'%3E3%3C/text%3E%3Ccircle cx='100' cy='191' r='8' fill='%23102d52'/%3E%3Ctext x='100' y='191'%3E4%3C/text%3E%3Ccircle cx='17' cy='145' r='8' fill='%23102d52'/%3E%3Ctext x='17' y='145'%3E5%3C/text%3E%3Ccircle cx='17' cy='58' r='8' fill='%23102d52'/%3E%3Ctext x='17' y='58'%3E6%3C/text%3E%3C/g%3E%3C/svg%3E");
+  background-repeat:no-repeat;
+  background-position:center;
+  background-size:100% 100%;
+}
+
+/* The legend keeps the criterion names; the numbers now belong to the radar itself. */
+div[class*="radarLegend"] i{display:none!important;}
