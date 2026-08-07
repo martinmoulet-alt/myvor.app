@@ -21,7 +21,7 @@ async function reliableSupabase<T extends {error:any;status?:number}>(operation:
 function watchTime(item:Watch){const preferred=item.published_at?Date.parse(item.published_at):NaN;if(Number.isFinite(preferred))return preferred;const fallback=Date.parse(item.created_at);return Number.isFinite(fallback)?fallback:0;}
 function watchDate(item:Watch){const time=watchTime(item);return time?new Date(time).toLocaleDateString("fr-FR",{day:"2-digit",month:"short",year:"numeric"}):"—";}
 
-export default function DossiersCorporate({items,watch,add,search,searching,messages,open,launch}:{items:Dossier[];watch:Watch[];add:()=>void;search:(d:Dossier)=>void;searching:string|null;messages:Record<string,string>;open:(d:Dossier)=>void;launch:(target:ModuleTarget,dossier:Dossier,watchId?:string)=>void}){
+export default function DossiersCorporate({items,watch,add,search,searching,messages,open,launch}:{items:Dossier[];watch:Watch[];add:()=>void;search:(d:Dossier)=>void;searching:string|null;messages:Record<string,string>;open:(d:Dossier)=>void;launch:(target:ModuleTarget,dossier:Dossier,watchIds?:string|string[])=>void}){
   const [query,setQuery]=useState("");
   const [filter,setFilter]=useState<"all"|"active"|"urgent">("all");
   const [menuId,setMenuId]=useState<string|null>(null);
@@ -110,7 +110,7 @@ export default function DossiersCorporate({items,watch,add,search,searching,mess
       <section className={styles.rightPanel}>
         <div className={styles.panelHead}><div><span>Veille ciblée</span><h2>Évolutions pertinentes</h2>{selected&&<p>{selected.client} · {selected.title}</p>}</div><div className={styles.relevanceBadge}>Seuil 50 %</div></div>
         {!selected?<div className={styles.empty}><Sparkles size={34}/><h2>Sélectionnez un dossier</h2><p>Ses évolutions pertinentes apparaîtront ici.</p></div>:<>
-          <div className={styles.evolutionSummary}><span><b>{evolutions.length}</b> évolution(s) pertinente(s)</span><button onClick={()=>open(selected)}>Ouvrir la fiche dossier</button></div>
+          <div className={styles.evolutionSummary}><span><b>{evolutions.length}</b> évolution(s) pertinente(s)</span><div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}><button onClick={()=>open(selected)}>Ouvrir la fiche dossier</button><button type="button" disabled={evolutionLoading||!evolutions.length} onClick={()=>launch("impact",selected,evolutions.map(evolution=>evolution.item.id))} style={{border:"1px solid #e8ae17",background:evolutionLoading||!evolutions.length?"#3a3f48":"linear-gradient(135deg,#ffc928,#f3bd3e)",color:evolutionLoading||!evolutions.length?"#9aa4b1":"#07162c",borderRadius:9,padding:"9px 12px",fontWeight:900,cursor:evolutionLoading||!evolutions.length?"not-allowed":"pointer"}}><Sparkles size={14} style={{verticalAlign:"middle",marginRight:6}}/>Générer l’analyse avec {evolutions.length||0} évolution{evolutions.length>1?"s":""}</button></div></div>
           {evolutionLoading&&<div className={styles.analysisState}><Sparkles size={16}/> Analyse des publications récentes…</div>}
           {evolutionError&&<div className={styles.message}>{evolutionError}</div>}
           {!evolutionLoading&&evolutions.length?<div className={styles.evolutionList}>{evolutions.map(({item,confidence,reason,linkedHere,linkedElsewhere})=><article className={styles.evolutionCard} key={item.id}>
