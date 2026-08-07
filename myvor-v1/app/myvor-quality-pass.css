@@ -1,0 +1,88 @@
+/* Myvor quality pass — global SaaS polish, accessibility and mobile consistency */
+:root{
+  --myvor-focus:#f3bd3e;
+  --myvor-navy:#07162c;
+  --myvor-surface:#0a213d;
+  --myvor-line:#173653;
+}
+
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{overscroll-behavior-y:none;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased}
+::selection{background:rgba(243,189,62,.28);color:inherit}
+
+button,a,input,textarea,select{touch-action:manipulation}
+button:disabled{cursor:not-allowed;opacity:.55}
+button:not(:disabled),a[href]{-webkit-tap-highlight-color:rgba(243,189,62,.12)}
+
+:where(button,a,input,textarea,select,[role="button"]):focus-visible{
+  outline:2px solid var(--myvor-focus)!important;
+  outline-offset:3px!important;
+}
+
+.btn,.corp-primary,.logout,.navbtn,.today-review,.corp-panel-head button,.corp-deadline button,.corp-score-card button{
+  min-height:44px;
+}
+
+.btn,.corp-primary,.logout,.navbtn,.today-review,.corp-kpi,.corp-list-row,.today-action,.dash-deadline-row{
+  transition:transform .14s ease,background-color .16s ease,border-color .16s ease,box-shadow .16s ease,filter .16s ease,color .16s ease;
+}
+
+.btn:not(:disabled):active,.corp-primary:not(:disabled):active,.today-review:not(:disabled):active,.corp-list-row:not(:disabled):active,.today-action:not(:disabled):active{
+  transform:translateY(1px) scale(.99);
+}
+
+.field input,.field textarea,.field select{
+  min-height:44px;
+  transition:border-color .15s ease,box-shadow .15s ease,background .15s ease;
+}
+.field input:focus,.field textarea:focus,.field select:focus{
+  border-color:#6b8db7;
+  box-shadow:0 0 0 4px rgba(34,86,145,.12);
+  outline:none;
+}
+.field textarea{line-height:1.55}
+
+.modal{backdrop-filter:blur(7px)}
+.modalbox{box-shadow:0 28px 80px rgba(3,11,24,.24)}
+
+.empty,.corp-empty,.dash-empty-state{
+  min-height:120px;
+  display:grid;
+  place-items:center;
+  align-content:center;
+  line-height:1.55;
+}
+
+.badge,.corp-impact,.corp-status,.today-cta{letter-spacing:.01em}
+
+.corp-panel,.card,.row{overflow:hidden}
+.corp-panel-head h2,.row h3{overflow-wrap:anywhere}
+.corp-list-copy small,.today-action-copy small{line-height:1.35}
+
+/* Make all mobile navigation feel like the same premium product. */
+@media(max-width:850px){
+  .mobile-nav{
+    background:rgba(5,20,40,.97)!important;
+    border-top:1px solid #173653!important;
+    box-shadow:0 -10px 28px rgba(0,0,0,.22);
+    backdrop-filter:blur(16px);
+  }
+  .mobile-nav button{color:#8fa4bc!important;min-width:52px;min-height:50px;border-radius:12px!important;padding:5px 7px!important}
+  .mobile-nav button.active{color:#f3bd3e!important;background:rgba(243,189,62,.08)!important}
+  .topbar{padding-left:max(14px,env(safe-area-inset-left));padding-right:max(14px,env(safe-area-inset-right))}
+  .main{padding-left:max(15px,env(safe-area-inset-left));padding-right:max(15px,env(safe-area-inset-right))}
+  .corp-search{min-height:46px}
+}
+
+@media(max-width:560px){
+  .h1,.corp-head h1{font-size:clamp(27px,8vw,32px)!important;line-height:1.08}
+  .lead,.corp-head p{line-height:1.5}
+  .corp-panel,.card,.row,.today-panel{border-radius:16px}
+  .corp-kpi strong{font-size:29px}
+  .modal{padding:12px}
+  .modalbox{border-radius:18px;padding:18px}
+}
+
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}
