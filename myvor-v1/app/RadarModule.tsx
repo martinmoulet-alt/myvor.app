@@ -14,6 +14,7 @@ type ActorEvidence={source_index:number;source_title:string;source_url:string;ex
 type Actor={id:string;name:string;role:string;orbit:1|2|3;position?:"favorable"|"inconnue"|"reserve"|"opposition"|string;influence:number;why:string;window:string;action:string;certainty?:"confirme"|"probable"|"a_confirmer"|string;evidence:ActorEvidence};
 type RadarPayload={actors?:Actor[];quality?:any;grounding?:any;engine?:string;model?:string};
 type RadarView="radar"|"warzone";
+type ActionDraft={dossier_id:string;type:string;title:string;description?:string;actor_name?:string;priority:string;due_date?:string|null};
 
 const PRIORITY_COLORS={critical:"#f0b429",high:"#d9a62f",medium:"#4d8fbf",low:"#61758b"};
 const ORBIT_RADII:{[key in 1|2|3]:number}={1:128,2:220,3:305};
@@ -35,7 +36,7 @@ async function postRadar<T>(body:unknown):Promise<T>{
   return fetchJsonWithRetry<T>("/api/radar/fast",{method:"POST",headers:{"Content-Type":"application/json;charset=UTF-8",Authorization:`Bearer ${token}`},body:JSON.stringify(body)},{attempts:2,timeoutMs:18000});
 }
 
-export default function RadarModule({dossiers,watch}:{dossiers:Dossier[];watch:Watch[];onActions?:unknown}){
+export default function RadarModule({dossiers,watch}:{dossiers:Dossier[];watch:Watch[];onActions?:(drafts:ActionDraft[])=>Promise<void>|void}){
   const [dossierId,setDossierId]=useState(dossiers[0]?.id||"");
   const [actors,setActors]=useState<Actor[]>([]);
   const [selected,setSelected]=useState<Actor|null>(null);
