@@ -1,0 +1,27 @@
+/* Note Builder only: force the whole content area to stay Myvor navy. */
+.main:has([class*="BuilderCorporate_page"]){
+  max-width:none!important;
+  width:100%!important;
+  margin:0!important;
+  padding:28px 0 0!important;
+  background:#071426!important;
+  overflow-x:hidden!important;
+}
+.shell:has([class*="BuilderCorporate_page"]){
+  background:#071426!important;
+}
+body:has([class*="BuilderCorporate_page"]){
+  background:#071426!important;
+}
+[class*="BuilderCorporate_page"]{
+  width:100%!important;
+  max-width:none!important;
+  margin:0!important;
+  background:radial-gradient(circle at top right,rgba(208,167,64,.10),transparent 28%),linear-gradient(180deg,#071426 0%,#091a31 100%)!important;
+  box-shadow:0 0 0 100vmax #071426!important;
+  clip-path:inset(0 -100vmax)!important;
+}
+@media(max-width:850px){
+  .main:has([class*="BuilderCorporate_page"]){padding:20px 0 88px!important}
+  [class*="BuilderCorporate_page"]{width:100vw!important}
+}
