@@ -32,7 +32,20 @@ button:not(:disabled),a[href]{-webkit-tap-highlight-color:rgba(243,189,62,.12)}
 .field textarea{line-height:1.55}
 
 .modal{backdrop-filter:blur(7px)}
-.modalbox{box-shadow:0 28px 80px rgba(3,11,24,.24)}
+.modalbox{box-shadow:0 28px 80px rgba(3,11,24,.24);color:#152033!important}
+.modalbox h1,.modalbox h2,.modalbox h3,.modalbox p,.modalbox label,.modalbox small,.modalbox span{color:#152033}
+.modalbox .field label{color:#26364f!important;font-weight:850}
+.modalbox .field input,.modalbox .field textarea,.modalbox .field select{
+  color:#152033!important;
+  background:#fff!important;
+  border-color:#cfd8e6!important;
+  caret-color:#07162c;
+}
+.modalbox .field input::placeholder,.modalbox .field textarea::placeholder{color:#7c899c!important;opacity:1}
+.modalbox .eyebrow,.modalbox .muted{color:#66758b!important}
+.modalbox .btn.ghost{color:#152033!important;background:#edf1f7!important}
+.modalbox .btn.primary{color:#07162c!important;background:#f3bd3e!important}
+.modalbox button[aria-label],.modalbox button[type="button"]{color:inherit}
 
 .empty,.corp-empty,.dash-empty-state{min-height:120px;display:grid;place-items:center;align-content:center;line-height:1.55}
 .badge,.corp-impact,.corp-status,.today-cta{letter-spacing:.01em}
