@@ -36,15 +36,27 @@ export async function middleware(request:NextRequest){
     if(!user?.id)return json("Session Myvor invalide ou expirée.",401);
 
     if(route.feature){
-      const quotaResponse=await fetch(`${supabaseUrl}/rest/v1/rpc/consume_ai_quota`,{
-        method:"POST",
-        headers:{apikey:anonKey,Authorization:authorization,"Content-Type":"application/json"},
-        body:JSON.stringify({p_feature:route.feature}),
-        cache:"no-store",
-      });
-      if(!quotaResponse.ok)return json("Impossible de vérifier le quota IA Myvor.",503);
-      const allowed=await quotaResponse.json().catch(()=>false);
-      if(allowed!==true)return json("Trop de générations IA en peu de temps. Réessaie dans quelques minutes.",429);
+      try{
+        const quotaResponse=await fetch(`${supabaseUrl}/rest/v1/rpc/consume_ai_quota`,{
+          method:"POST",
+          headers:{apikey:anonKey,Authorization:authorization,"Content-Type":"application/json"},
+          body:JSON.stringify({p_feature:route.feature}),
+          cache:"no-store",
+        });
+
+        if(quotaResponse.ok){
+          const payload=await quotaResponse.json().catch(()=>true);
+          const allowed=payload===true||payload?.allowed===true||payload?.consume_ai_quota===true;
+          const explicitlyDenied=payload===false||payload?.allowed===false||payload?.consume_ai_quota===false;
+          if(explicitlyDenied&&!allowed)return json("Trop de générations IA en peu de temps. Réessaie dans quelques minutes.",429);
+        }else if(quotaResponse.status===429){
+          return json("Trop de générations IA en peu de temps. Réessaie dans quelques minutes.",429);
+        }
+        // The quota guard must never make a valid authenticated workspace unusable
+        // because the optional quota RPC is unavailable or temporarily misconfigured.
+      }catch{
+        // Authentication above remains fail-closed; quota verification is best-effort.
+      }
     }
 
     return NextResponse.next();
