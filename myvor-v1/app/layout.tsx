@@ -6,6 +6,7 @@ import "./myvor-veille-dark.css";
 import "./myvor-impact-background.css";
 import "./note-builder-fullbleed.css";
 import "./note-builder-readability.css";
+import "./myvor-quality-pass.css";
 import PwaRegister from "./PwaRegister";
 import StartupRecovery from "./StartupRecovery";
 
