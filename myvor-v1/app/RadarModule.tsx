@@ -21,7 +21,19 @@ const COLORS={favorable:"#3d9553",inconnue:"#65758a",reserve:"#d76b22",oppositio
 const ORBIT_RADII:{[key in 1|2|3]:number}={1:145,2:230,3:315};
 const ORBIT_DURATIONS:{[key in 1|2|3]:number}={1:25,2:33,3:42};
 
-async function postJson<T>(url:string,body:unknown):Promise<T>{if(!supabase)throw new Error("La connexion Supabase de Myvor n’est pas configurée.");const {data}=await supabase.auth.getSession();const token=data.session?.access_token;if(!token)throw new Error("Session Myvor requise.");return fetchJsonWithRetry<T>(url,{method:"POST",headers:{"Content-Type":"application/json;charset=UTF-8",Authorization:`Bearer ${token}`},body:JSON.stringify(body)},{attempts:2,baseDelayMs:450,timeoutMs:32000,shouldRetry:error=>isTransientError(error)});}
+async function postJson<T>(url:string,body:unknown):Promise<T>{
+  if(!supabase)throw new Error("La connexion Supabase de Myvor n’est pas configurée.");
+  const {data}=await supabase.auth.getSession();
+  const token=data.session?.access_token;
+  if(!token)throw new Error("Session Myvor requise.");
+  const options={method:"POST",headers:{"Content-Type":"application/json;charset=UTF-8",Authorization:`Bearer ${token}`},body:JSON.stringify(body)};
+  try{
+    return await fetchJsonWithRetry<T>(url,options,{attempts:1,baseDelayMs:250,timeoutMs:18000,shouldRetry:error=>isTransientError(error)});
+  }catch(error:any){
+    if(url!=="/api/radar"||!isTransientError(error))throw error;
+    return fetchJsonWithRetry<T>("/api/radar/fast",options,{attempts:1,baseDelayMs:200,timeoutMs:14000,shouldRetry:()=>false});
+  }
+}
 function bubbleSize(influence:number){return 72+Math.max(1,Math.min(5,Math.round(Number(influence)||1)))*10;}
 function bubbleFontSize(name:string,size:number){const length=String(name||"").length;if(length>54)return 9;if(length>38)return 10;if(length>24)return 11;return Math.min(13,size/8.8);}
 function orbitMotion(actor:Actor,actors:Actor[]){const same=actors.filter(item=>item.orbit===actor.orbit);const rank=Math.max(0,same.findIndex(item=>item.id===actor.id));const duration=ORBIT_DURATIONS[actor.orbit];const delay=-(duration*(rank/Math.max(1,same.length)))-(actor.orbit*.7);return{radius:ORBIT_RADII[actor.orbit],duration,delay,direction:actor.orbit===2?"reverse":"normal"};}
