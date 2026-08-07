@@ -4,6 +4,7 @@ import "./dashboard-fixes.css";
 import "./myvor-dossier-dark.css";
 import "./myvor-veille-dark.css";
 import "./myvor-impact-background.css";
+import "./impact-radar-labels.css";
 import "./note-builder-fullbleed.css";
 import "./note-builder-readability.css";
 import "./myvor-quality-pass.css";
