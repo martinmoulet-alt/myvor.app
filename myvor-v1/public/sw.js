@@ -1,4 +1,4 @@
-const CACHE_NAME="myvor-shell-v1";
+const CACHE_NAME="myvor-shell-v2";
 const STATIC_ASSETS=[];
 
 self.addEventListener("install",event=>{
