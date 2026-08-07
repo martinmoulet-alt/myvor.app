@@ -14,6 +14,7 @@ type StrategyTarget={actor_id:string;name:string;role:string;institution:string;
 type StrategyStep={order:number;title:string;target_actor_id:string;target_name:string;objective:string;why_now:string;means:string[];deliverable:string;message_frame:string;evidence_indexes:number[];timing:string;dependency:string;success_signal:string;fallback:string;risk:string};
 type DetailedStrategy={diagnosis:{objective:string;decision_point:string;current_constraint:string;opportunity_window:string;recommended_path:string};targets:StrategyTarget[];sequence:StrategyStep[];evidence_gaps:string[];stop_rules:string[];review_trigger:string};
 type StrategyPayload={strategy?:DetailedStrategy;engine?:string;model?:string;watch_items_used?:number;actors_used?:number};
+type StrategyRequest={dossier:WarZoneDossier;actors:WarZoneActor[];watch:WarZoneWatch[]};
 type Props={dossier:WarZoneDossier|null;actors:WarZoneActor[];watch:WarZoneWatch[];onOpenActor:(actor:WarZoneActor)=>void;onActions?:(drafts:WarZoneActionDraft[])=>Promise<void>|void};
 
 function score(actor:WarZoneActor){const raw=Number(actor.influence_score);return Number.isFinite(raw)?Math.max(0,Math.min(100,Math.round(raw))):Math.max(20,Math.min(100,Math.round((actor.influence||1)*20)));}
@@ -21,7 +22,7 @@ function strategicIndex(actors:WarZoneActor[],watch:WarZoneWatch[]){if(!actors.l
 function evidenceFor(index:number,watch:WarZoneWatch[]){return index>=1&&index<=watch.length?watch[index-1]:null;}
 function evidenceLabel(index:number,watch:WarZoneWatch[]){const item=evidenceFor(index,watch);return item?`${item.nature} — ${item.title}`:`Source ${index}`;}
 
-async function postStrategy<T>(body:unknown):Promise<T>{
+async function postStrategy<T>(body:StrategyRequest):Promise<T>{
   if(!supabase)throw new Error("La connexion Supabase de Myvor n’est pas configurée.");
   const {data:sessionData}=await supabase.auth.getSession();
   if(!sessionData.session?.access_token)throw new Error("Session Myvor requise.");
