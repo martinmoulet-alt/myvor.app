@@ -1,0 +1,15 @@
+/* Note Builder readability refinements */
+[class*="BuilderCorporate_titleInput"]{
+  font-size:clamp(16px,1.8vw,22px)!important;
+  line-height:1.3!important;
+  letter-spacing:-.02em!important;
+  overflow:visible!important;
+  text-overflow:clip!important;
+}
+[class*="BuilderCorporate_contentEditor"]{
+  line-height:1.95!important;
+}
+@media(max-width:850px){
+  [class*="BuilderCorporate_titleInput"]{font-size:17px!important}
+  [class*="BuilderCorporate_contentEditor"]{line-height:1.9!important}
+}
