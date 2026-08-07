@@ -9,6 +9,7 @@ import "./note-builder-readability.css";
 import "./myvor-quality-pass.css";
 import PwaRegister from "./PwaRegister";
 import StartupRecovery from "./StartupRecovery";
+import NetworkStatus from "./NetworkStatus";
 
 export const metadata: Metadata = {
   title: "Myvor — Anticipez l’impact",
@@ -33,5 +34,5 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="fr"><body><PwaRegister/><StartupRecovery/>{children}</body></html>;
+  return <html lang="fr"><body><PwaRegister/><StartupRecovery/><NetworkStatus/>{children}</body></html>;
 }
