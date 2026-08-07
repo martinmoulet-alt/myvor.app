@@ -21,13 +21,16 @@ type WatchItem = {
   title: string;
   nature: string;
   source_url?: string;
+  source_name?: string | null;
   urgency?: string;
   created_at?: string;
+  published_at?: string | null;
 };
 
 type ActorSeed = {
   name: string;
   role: string;
+  institution?: string;
   certainty: "confirme" | "a_confirmer";
   source?: WatchItem | null;
   baseInfluence?: number;
@@ -90,6 +93,7 @@ function institutionFromSource(item: WatchItem): ActorSeed | null {
   return {
     name: match[1],
     role: match[2],
+    institution: match[1],
     certainty: "confirme",
     source: item,
     baseInfluence: match[3],
@@ -117,6 +121,7 @@ function buildSeeds(dossier: Dossier, items: WatchItem[]) {
     push({
       name,
       role: "Acteur clé suivi dans le dossier",
+      institution: "",
       certainty: "a_confirmer",
       source: items[index % Math.max(1, items.length)] || null,
       baseInfluence: index < 2 ? 5 : index < 4 ? 4 : 3,
@@ -130,6 +135,40 @@ function buildSeeds(dossier: Dossier, items: WatchItem[]) {
   });
 
   return seeds.slice(0, MAX_ACTORS);
+}
+
+function signalsForSeed(seed: ActorSeed, items: WatchItem[]) {
+  const actorKey = normalized(seed.name);
+  const matched = items.filter((item) => {
+    if (seed.origin === "source") {
+      const sourceActor = institutionFromSource(item);
+      return sourceActor?.name === seed.name;
+    }
+    return actorKey.length > 3 && normalized(item.title).includes(actorKey);
+  });
+
+  return matched.slice(0, 3).map((item) => ({
+    title: item.title,
+    nature: item.nature,
+    date: text(item.published_at) || text(item.created_at),
+    url: text(item.source_url),
+    source_name: text(item.source_name),
+    urgency: text(item.urgency) || "faible",
+  }));
+}
+
+function scoreForSeed(seed: ActorSeed, signals: ReturnType<typeof signalsForSeed>, items: WatchItem[]) {
+  const base = Math.max(1, Math.min(5, seed.baseInfluence || 3));
+  const institutionalByLevel: Record<number, number> = { 1: 10, 2: 16, 3: 23, 4: 29, 5: 35 };
+  const institutional = institutionalByLevel[base] || 23;
+  const relevance = Math.min(30, (seed.origin === "dossier" ? 24 : 22) + Math.min(6, signals.length * 2));
+  const urgencyPool = signals.length ? signals.map((signal) => urgency(signal.urgency)) : items.slice(0, 3).map((item) => urgency(item.urgency));
+  const maxUrgency = urgencyPool.length ? Math.max(...urgencyPool) : 1;
+  const timingByUrgency: Record<number, number> = { 1: 8, 2: 12, 3: 16, 4: 20 };
+  const timing = timingByUrgency[maxUrgency] || 8;
+  const accessibility = seed.origin === "dossier" ? 9 : 7;
+  const total = Math.max(0, Math.min(100, institutional + relevance + timing + accessibility));
+  return { total, institutional, relevance, timing, accessibility };
 }
 
 async function verifySession(request: Request) {
@@ -174,7 +213,7 @@ export async function POST(request: Request) {
       .sort(
         (a, b) =>
           urgency(b.urgency) - urgency(a.urgency) ||
-          new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime(),
+          new Date(b.published_at || b.created_at || 0).getTime() - new Date(a.published_at || a.created_at || 0).getTime(),
       )
       .filter((item) => Boolean(text(item.source_url)))
       .slice(0, MAX_CONTEXT_ITEMS);
@@ -186,26 +225,41 @@ export async function POST(request: Request) {
 
     const actors = seeds.map((seed, index) => {
       const source = seed.source || null;
-      const influence = Math.max(1, Math.min(5, seed.baseInfluence || (index < 2 ? 5 : index < 4 ? 4 : 3)));
-      const sourceCount = items.length;
+      const signals = signalsForSeed(seed, items);
+      const score = scoreForSeed(seed, signals, items);
+      const influence = Math.max(1, Math.min(5, Math.ceil(score.total / 20)));
+      const sourceCount = seed.origin === "source" ? Math.max(1, signals.length) : signals.length;
 
       return {
         id: `${seed.origin}-${index + 1}`,
         name: seed.name,
         role: seed.role,
+        institution: seed.institution || "",
         orbit: (index < 2 ? 1 : index < 4 ? 2 : 3) as 1 | 2 | 3,
         position: "inconnue" as const,
+        position_reason: "Aucune position explicite n’est documentée dans les données actuellement rattachées au dossier.",
         influence,
+        influence_score: score.total,
+        score_breakdown: {
+          institutional_power: score.institutional,
+          dossier_relevance: score.relevance,
+          timing: score.timing,
+          accessibility: score.accessibility,
+        },
         why:
           seed.origin === "source"
-            ? "Institution directement reliée à une source officielle du dossier. Sa position reste inconnue tant qu’elle n’est pas documentée."
-            : `Acteur renseigné dans la fiche stratégique du dossier${sourceCount ? ` et à qualifier à partir de ${sourceCount} évolution${sourceCount > 1 ? "s" : ""} liée${sourceCount > 1 ? "s" : ""}` : ""}.`,
+            ? `Institution directement reliée à ${sourceCount} source${sourceCount > 1 ? "s" : ""} officielle${sourceCount > 1 ? "s" : ""} du dossier. Sa proximité institutionnelle avec la décision explique son niveau de priorité.`
+            : signals.length
+              ? `Acteur renseigné dans la fiche stratégique du dossier et cité explicitement dans ${signals.length} évolution${signals.length > 1 ? "s" : ""} rattachée${signals.length > 1 ? "s" : ""}.`
+              : "Acteur renseigné dans la fiche stratégique du dossier. Aucune occurrence nominative supplémentaire n’a encore été détectée dans les titres des évolutions rattachées.",
         window: deadline,
         action:
           seed.origin === "source"
-            ? "Identifier les décideurs ou relais pertinents au sein de cette institution, puis documenter leur position avant toute action."
-            : "Vérifier sa fonction et sa position dans les sources disponibles, puis préparer une action de contact ou de suivi adaptée.",
+            ? "Identifier les décideurs ou relais pertinents au sein de cette institution, documenter leur position puis préparer l’approche avant la prochaine échéance du dossier."
+            : "Vérifier sa fonction, documenter sa position et préparer une action de contact ou de suivi adaptée à la prochaine échéance.",
         certainty: seed.certainty,
+        signals,
+        source_count: sourceCount,
         evidence: {
           source_index: source ? Math.max(1, items.findIndex((item) => item.id === source.id) + 1) : 0,
           source_title: source?.title || "Fiche stratégique du dossier",
@@ -230,7 +284,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       actors,
-      engine: "myvor-radar-stable-v3",
+      engine: "myvor-radar-stable-v4",
       model: "deterministic",
       quality: {
         status,
