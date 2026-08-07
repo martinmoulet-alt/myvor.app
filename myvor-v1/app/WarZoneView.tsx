@@ -1,7 +1,7 @@
 "use client";
 
-import {useMemo,useState} from "react";
-import {AlertTriangle,ArrowRight,CheckCircle2,CircleDot,ExternalLink,FileText,Flag,Plus,RefreshCw,ShieldCheck,Sparkles,Target,Users} from "lucide-react";
+import {useMemo,useState,type ReactNode} from "react";
+import {AlertTriangle,ArrowRight,CheckCircle2,CircleDot,ExternalLink,FileText,Plus,RefreshCw,ShieldCheck,Sparkles,Target,Users} from "lucide-react";
 import {fetchJsonWithRetry} from "@/lib/reliability";
 import {supabase} from "@/lib/supabase";
 import styles from "./WarZoneView.module.css";
@@ -142,7 +142,7 @@ export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions}
   </div>;
 }
 
-function Empty({icon,title,text}:{icon:React.ReactNode;title:string;text:string}){return <div className={styles.empty}>{icon}<h3>{title}</h3><p>{text}</p></div>}
+function Empty({icon,title,text}:{icon:ReactNode;title:string;text:string}){return <div className={styles.empty}>{icon}<h3>{title}</h3><p>{text}</p></div>}
 function SectionTitle({number,title,subtitle}:{number:string;title:string;subtitle:string}){return <div className={styles.sectionTitle}><span>{number}</span><div><h3>{title}</h3><p>{subtitle}</p></div></div>}
 function Diagnostic({label,value}:{label:string;value:string}){return <div className={styles.diagnostic}><span>{label}</span><p>{value}</p></div>}
 function TargetField({label,value}:{label:string;value:string}){return <div className={styles.targetField}><span>{label}</span><p>{value||"À préciser"}</p></div>}
