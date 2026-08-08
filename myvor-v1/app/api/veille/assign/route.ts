@@ -58,7 +58,7 @@ function keywordAssignments(items:WatchItem[],dossiers:Dossier[]):Assignment[]{r
 
 export async function POST(request:Request){
   const body=await request.json().catch(()=>null);
-  const rawItems:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,24):[];
+  const rawItems:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,40):[];
   const dossiers:Dossier[]=Array.isArray(body?.dossiers)?body.dossiers.slice(0,50):[];
   if(!rawItems.length||!dossiers.length)return NextResponse.json({assignments:[],engine:"myvor-relevance-guard-v5",enriched:0,full_text_chars:0});
   const items=await enrichItems(rawItems);
