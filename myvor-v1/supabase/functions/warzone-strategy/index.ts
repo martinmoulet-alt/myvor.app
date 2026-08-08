@@ -55,8 +55,13 @@ Deno.serve(async(req)=>{
   const prompt=[
     "MYVOR — WAR ZONE : stratégie opérationnelle d’affaires publiques.",
     "Construis exclusivement à partir du dossier, des acteurs Radar qualifiés et de la veille fournie.",
-    "Pour chaque cible précise QUI, QUOI, POURQUOI, COMMENT, QUAND, les preuves, le signal de réussite et le fallback.",
-    "Ne présume jamais une position politique ou une préférence personnelle. Si une donnée manque, ajoute-la à evidence_gaps.",
+    "RÈGLE DE RÉDACTION OBLIGATOIRE : tous les champs explicatifs doivent être rédigés en phrases complètes, concrètes et directement exécutables. Une phrase doit préciser qui agit ou qui est concerné, ce qui doit être fait ou obtenu, sur quel sujet, pourquoi et quel résultat est attendu lorsque les données le permettent.",
+    "N’utilise jamais de fragments comme 'prendre contact', 'brief cabinet', 'fenêtre favorable', 'sécuriser le texte', 'à surveiller' ou 'risque politique' sans les transformer en phrases qui expliquent précisément l’action, l’objet, le moment et le résultat recherché.",
+    "Les seuls champs qui peuvent rester courts sont les identifiants, noms, institutions, priorités et titres. diagnosis, why_this_target, institutional_goal, precise_subject, recommended_channel, recommended_format, factual_angles, timing, success_signal, fallback, do_not_assume, objective, why_now, means, deliverable, message_frame, dependency, risk, evidence_gaps, stop_rules et review_trigger doivent être des phrases complètes.",
+    "Pour recommended_channel et recommended_format, formule une recommandation explicite, par exemple 'Privilégier un rendez-vous de travail avec le cabinet afin de clarifier...' plutôt qu'un simple libellé comme 'rendez-vous cabinet'.",
+    "Pour chaque cible, précise QUI, QUOI, POURQUOI, COMMENT, QUAND, les preuves, le signal de réussite et le fallback, en reliant chaque élément à l’objectif du dossier.",
+    "Pour chaque mouvement de la séquence, indique une action concrète, un livrable identifiable, une dépendance vérifiable, un critère de réussite observable et une solution de repli précise.",
+    "Ne présume jamais une position politique ou une préférence personnelle. Si une donnée manque, ajoute-la à evidence_gaps sous forme de phrase précisant ce qui doit être vérifié et pourquoi.",
     "Aucune manipulation, pression indue, tromperie, astroturfing, donnée privée, vulnérabilité personnelle ou microciblage politique individuel.",
     "La séquence contient 3 à 5 mouvements avec livrable, dépendance, critère de réussite et solution de repli.",
     `CLIENT: ${text(dossier.client,220)}`,
@@ -71,10 +76,10 @@ Deno.serve(async(req)=>{
   const model=text(Deno.env.get("OPENAI_WARZONE_MODEL")||Deno.env.get("OPENAI_RADAR_ENRICH_MODEL")||"gpt-4.1-mini",120);
   const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),40000);
   try{
-    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model,input:prompt,max_output_tokens:3000,store:false,text:{format:{type:"json_schema",name:"myvor_warzone_strategy_v3",strict:true,schema:OUTPUT_SCHEMA}}}),signal:controller.signal});
+    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model,input:prompt,max_output_tokens:3000,store:false,text:{format:{type:"json_schema",name:"myvor_warzone_strategy_v4",strict:true,schema:OUTPUT_SCHEMA}}}),signal:controller.signal});
     if(!response.ok){const raw=await response.text();let message=raw;try{message=JSON.parse(raw)?.error?.message||raw;}catch{}return json({error:`War Zone indisponible (${response.status}) : ${String(message).slice(0,300)}`},502);}
     const payload=await response.json();let parsed:any=null;try{parsed=JSON.parse(outputText(payload));}catch{}
     if(!parsed?.strategy)return json({error:"Le moteur n’a pas retourné de stratégie exploitable."},502);
-    return json({strategy:parsed.strategy,engine:"supabase-warzone-strategy-v3",model,watch_items_used:watch.length,actors_used:actors.length});
+    return json({strategy:parsed.strategy,engine:"supabase-warzone-strategy-v4",model,watch_items_used:watch.length,actors_used:actors.length,complete_sentence_style:true});
   }catch(error:any){if(error?.name==="AbortError")return json({error:"La génération détaillée a dépassé le délai prévu."},504);return json({error:error?.message||"Génération War Zone impossible."},500);}finally{clearTimeout(timer);}
 });
