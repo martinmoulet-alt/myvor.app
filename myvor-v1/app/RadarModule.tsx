@@ -38,6 +38,7 @@ function actorsFromProduction(content:Record<string,unknown>){const raw=(content
 function actorSize(actor:Actor){return 62+Math.max(0,Math.min(5,Math.ceil(actorScore(actor)/20)))*5;}
 function orbitMotion(actor:Actor,actors:Actor[]){const same=actors.filter(item=>item.orbit===actor.orbit);const rank=Math.max(0,same.findIndex(item=>item.id===actor.id));const duration=ORBIT_DURATIONS[actor.orbit];const delay=-(duration*(rank/Math.max(1,same.length)))-(actor.orbit*.6);return{radius:ORBIT_RADII[actor.orbit],duration,delay,direction:(actor.orbit===2?"reverse":"normal") as "normal"|"reverse"};}
 function formatSignalDate(value:string){if(!value)return "Date non disponible";const date=new Date(value);if(Number.isNaN(date.getTime()))return value;return new Intl.DateTimeFormat("fr-FR",{day:"2-digit",month:"short",year:"numeric"}).format(date);}
+function navigateShell(index:number){if(typeof document==="undefined")return;const desktop=Array.from(document.querySelectorAll<HTMLButtonElement>(".sidebar .navbtn"));const mobile=Array.from(document.querySelectorAll<HTMLButtonElement>(".mobile-menu-nav button"));(desktop[index]||mobile[index])?.click();window.scrollTo({top:0,behavior:"smooth"});}
 
 async function authedPost<T>(url:string,body:unknown,timeoutMs:number):Promise<T>{
   if(!supabase)throw new Error("La connexion Supabase de Myvor n’est pas configurée.");
@@ -62,6 +63,8 @@ export default function RadarModule({dossiers,watch,onActions,onOpenBuilder,onOp
   const [view,setView]=useState<RadarView>("radar");
   const dossier=dossiers.find(d=>d.id===dossierId)||null;
   const related=useMemo(()=>watch.filter(w=>w.dossier_id===dossierId),[watch,dossierId]);
+  const openBuilder=onOpenBuilder||(()=>navigateShell(5));
+  const openActions=onOpenActions||(()=>navigateShell(0));
 
   useEffect(()=>{let active=true;setSelected(null);setError("");setDetailError("");setEnrichingId(null);if(!dossierId){setActors([]);setGenerated(false);return()=>{active=false;};}listProductions(dossierId).then(({data})=>{if(!active)return;const latest=data.find(item=>item.type==="radar");if(!latest){setActors([]);setGenerated(false);return;}const saved=actorsFromProduction(latest.content);setActors(saved.slice(0,6));setQuality((latest.content as any)?.quality||null);setGenerated(true);}).catch(()=>undefined);return()=>{active=false;};},[dossierId]);
 
@@ -116,7 +119,7 @@ export default function RadarModule({dossiers,watch,onActions,onOpenBuilder,onOp
     {error&&<div className={styles.error}>{error}</div>}
 
     {view==="warzone"?<main className={styles.radarCard}>
-      <WarZoneView dossier={dossier} actors={actors} watch={related} onOpenActor={openFromWarZone} onActions={onActions} onOpenBuilder={onOpenBuilder} onOpenActions={onOpenActions}/>
+      <WarZoneView dossier={dossier} actors={actors} watch={related} onOpenActor={openFromWarZone} onActions={onActions} onOpenBuilder={openBuilder} onOpenActions={openActions}/>
     </main>:<div className={styles.workspace}>
       <main className={styles.radarCard}>
         <div className={styles.radarTop}><div><strong>Acteurs clés</strong><span>{actors.length?"Cliquez sur un acteur : Myvor ouvre puis enrichit sa fiche détaillée.":"Le radar se construit à partir du dossier et de ses sources."}</span></div><div className={styles.legend}><Legend color={POSITION_COLORS.favorable} label="Favorable"/><Legend color={POSITION_COLORS.reserve} label="Réservée"/><Legend color={POSITION_COLORS.opposition} label="Opposition"/><Legend color={POSITION_COLORS.inconnue} label="Inconnue"/></div></div>
