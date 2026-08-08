@@ -19,6 +19,7 @@ type RadarPayload={actors?:Actor[];quality?:any;grounding?:any;engine?:string;mo
 type ActorDetailPayload={actor?:Actor;enrichment?:any;engine?:string;model?:string};
 type RadarView="radar"|"warzone";
 type ActionDraft=WarZoneActionDraft;
+type Props={dossiers:Dossier[];watch:Watch[];onActions?:(drafts:ActionDraft[])=>Promise<void>|void;onOpenBuilder?:(dossierId:string)=>void;onOpenActions?:()=>void};
 
 const PRIORITY_COLORS={critical:"#d6574f",high:"#e69b35",medium:"#4b9b6a",low:"#61758b"};
 const POSITION_COLORS={favorable:"#39a86b",reserve:"#e69b35",opposition:"#d6574f",inconnue:"#71869e"};
@@ -48,7 +49,7 @@ async function authedPost<T>(url:string,body:unknown,timeoutMs:number):Promise<T
 function postRadar<T>(body:unknown){return authedPost<T>("/api/radar/fast",body,18000);}
 function postRadarEnrich<T>(body:unknown){return authedPost<T>("/api/radar/enrich",body,55000);}
 
-export default function RadarModule({dossiers,watch,onActions}:{dossiers:Dossier[];watch:Watch[];onActions?:(drafts:ActionDraft[])=>Promise<void>|void}){
+export default function RadarModule({dossiers,watch,onActions,onOpenBuilder,onOpenActions}:Props){
   const [dossierId,setDossierId]=useState(dossiers[0]?.id||"");
   const [actors,setActors]=useState<Actor[]>([]);
   const [selected,setSelected]=useState<Actor|null>(null);
@@ -102,7 +103,7 @@ export default function RadarModule({dossiers,watch,onActions}:{dossiers:Dossier
       <button className={styles.updateButton} onClick={generate} disabled={loading||!dossier}><RefreshCw size={17} className={loading?styles.spin:""}/>{loading?"Mise à jour…":generated?"Actualiser":"Générer"}</button>
     </header>
 
-    <div className={styles.tabs} role="tablist" aria-label="Vues du Radar d’influence">
+    <div className={styles.tabs} role="tablist" aria-label="Vues du Radar d’influence et de la War Zone">
       <button type="button" className={view==="radar"?styles.tabActive:""} onClick={()=>setView("radar")}>Radar</button>
       <button type="button" className={view==="warzone"?styles.tabActive:""} onClick={()=>setView("warzone")}>War Zone</button>
     </div>
@@ -115,7 +116,7 @@ export default function RadarModule({dossiers,watch,onActions}:{dossiers:Dossier
     {error&&<div className={styles.error}>{error}</div>}
 
     {view==="warzone"?<main className={styles.radarCard}>
-      <WarZoneView dossier={dossier} actors={actors} watch={related} onOpenActor={openFromWarZone} onActions={onActions}/>
+      <WarZoneView dossier={dossier} actors={actors} watch={related} onOpenActor={openFromWarZone} onActions={onActions} onOpenBuilder={onOpenBuilder} onOpenActions={onOpenActions}/>
     </main>:<div className={styles.workspace}>
       <main className={styles.radarCard}>
         <div className={styles.radarTop}><div><strong>Acteurs clés</strong><span>{actors.length?"Cliquez sur un acteur : Myvor ouvre puis enrichit sa fiche détaillée.":"Le radar se construit à partir du dossier et de ses sources."}</span></div><div className={styles.legend}><Legend color={POSITION_COLORS.favorable} label="Favorable"/><Legend color={POSITION_COLORS.reserve} label="Réservée"/><Legend color={POSITION_COLORS.opposition} label="Opposition"/><Legend color={POSITION_COLORS.inconnue} label="Inconnue"/></div></div>
