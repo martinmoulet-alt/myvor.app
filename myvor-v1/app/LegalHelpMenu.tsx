@@ -1,13 +1,14 @@
 "use client";
 
-import { BookOpen, FileText, Scale, X } from "lucide-react";
+import { BookOpen, FileText, Scale, ShieldCheck, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
-type Panel = "cgu" | "legal" | "manual";
+type Panel = "cgu" | "legal" | "ai-act" | "manual";
 
 const tabs: Array<{ id: Panel; label: string; icon: typeof Scale }> = [
   { id: "cgu", label: "CGU", icon: Scale },
   { id: "legal", label: "Mentions légales", icon: FileText },
+  { id: "ai-act", label: "Myvor et l’AI Act", icon: ShieldCheck },
   { id: "manual", label: "Manuel", icon: BookOpen },
 ];
 
@@ -60,6 +61,7 @@ export default function LegalHelpMenu() {
             <div className="myvor-info-content">
               {open === "cgu" && <Cgu />}
               {open === "legal" && <Legal />}
+              {open === "ai-act" && <AiAct />}
               {open === "manual" && <Manual />}
             </div>
           </section>
@@ -87,10 +89,17 @@ export default function LegalHelpMenu() {
         .myvor-info-content ul,.myvor-info-content ol{margin:7px 0 12px;padding-left:20px;color:#cbd7e5}
         .myvor-info-content li{margin:5px 0}
         .myvor-info-content strong{color:#fff}
+        .myvor-info-content a{color:#f2cf71;text-decoration:none;font-weight:760}
+        .myvor-info-content a:hover{text-decoration:underline}
         .myvor-legal-warning{margin:0 0 18px;padding:13px 15px;border-radius:12px;background:rgba(215,173,67,.1);border:1px solid rgba(215,173,67,.3);color:#f3d985;font-size:13px}
+        .myvor-ai-status{margin:0 0 18px;padding:14px 16px;border-radius:12px;background:rgba(58,166,105,.1);border:1px solid rgba(95,210,147,.28);color:#b8efd0;font-size:13px}
+        .myvor-ai-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:12px 0 18px}
+        .myvor-ai-grid div{border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.035);border-radius:12px;padding:12px}
+        .myvor-ai-grid strong{display:block;font-size:12px;margin-bottom:4px}
+        .myvor-ai-grid span{display:block;color:#aebed2;font-size:12px;line-height:1.5}
         .myvor-manual-flow{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;margin:14px 0 20px}
         .myvor-manual-flow span{border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);border-radius:10px;padding:9px;text-align:center;font-size:11px;font-weight:760;color:#e4edf7}
-        @media(max-width:850px){.myvor-legal-links{right:58px;top:max(9px,env(safe-area-inset-top));gap:4px}.myvor-legal-links button{width:34px;padding:0;justify-content:center}.myvor-legal-links button span{display:none}.myvor-info-backdrop{padding:8px;place-items:end center}.myvor-info-modal{width:100%;max-height:88vh;border-radius:20px 20px 10px 10px}.myvor-info-head{padding:18px 18px 14px}.myvor-info-tabs{padding:12px 16px}.myvor-info-content{padding:18px 18px 28px}.myvor-manual-flow{grid-template-columns:1fr}}
+        @media(max-width:850px){.myvor-legal-links{right:58px;top:max(9px,env(safe-area-inset-top));gap:4px}.myvor-legal-links button{width:34px;padding:0;justify-content:center}.myvor-legal-links button span{display:none}.myvor-info-backdrop{padding:8px;place-items:end center}.myvor-info-modal{width:100%;max-height:88vh;border-radius:20px 20px 10px 10px}.myvor-info-head{padding:18px 18px 14px}.myvor-info-tabs{padding:12px 16px}.myvor-info-content{padding:18px 18px 28px}.myvor-ai-grid,.myvor-manual-flow{grid-template-columns:1fr}}
       `}</style>
     </>
   );
@@ -136,6 +145,49 @@ function Legal() {
     <p>Myvor traite les données nécessaires à l’authentification, au fonctionnement des dossiers et aux fonctionnalités de la plateforme. Les utilisateurs disposent des droits prévus par la réglementation applicable en matière de protection des données. Les modalités détaillées devront être complétées dans une politique de confidentialité dédiée avant ouverture commerciale.</p>
     <h4>Propriété intellectuelle</h4>
     <p>Myvor, son identité visuelle, ses interfaces et ses composants sont protégés. Les marques, textes institutionnels et contenus tiers restent la propriété de leurs titulaires respectifs.</p>
+  </article>;
+}
+
+function AiAct() {
+  return <article>
+    <h3>Myvor et l’AI Act</h3>
+    <div className="myvor-ai-status">Mise à jour : 8 août 2026. Myvor intègre des garde-fous de transparence, de traçabilité et de validation humaine dans ses modules utilisant l’intelligence artificielle.</div>
+    <p>L’AI Act européen suit une approche fondée sur les risques. Les obligations de transparence prévues notamment par son article 50 sont applicables depuis le <strong>2 août 2026</strong>. Myvor est conçu comme un outil professionnel d’assistance à l’analyse et à la rédaction : il prépare des analyses, des cartographies et des livrables, mais la décision finale reste humaine.</p>
+
+    <h4>1. Où l’intelligence artificielle intervient</h4>
+    <div className="myvor-ai-grid">
+      <div><strong>Note d’impact</strong><span>L’IA analyse le corpus rattaché au dossier et propose une synthèse, des impacts, des risques, des opportunités et des recommandations.</span></div>
+      <div><strong>Radar d’influence</strong><span>L’IA peut enrichir la fiche d’un acteur, mais une position politique ne doit pas être attribuée sans source publique vérifiable.</span></div>
+      <div><strong>War Zone</strong><span>L’IA transforme le dossier, la veille et les acteurs qualifiés en stratégie opérationnelle structurée et vérifiable.</span></div>
+      <div><strong>Note Builder</strong><span>L’IA produit ou réécrit des livrables à partir du contexte du dossier et des analyses déjà disponibles dans Myvor.</span></div>
+    </div>
+
+    <h4>2. Transparence pour l’utilisateur</h4>
+    <p>Les modules concernés affichent un indicateur précisant que l’analyse est assistée par IA et qu’une vérification humaine est requise avant usage externe. Cette information permet à l’utilisateur d’identifier immédiatement les contenus produits ou enrichis avec l’aide d’un système d’IA.</p>
+
+    <h4>3. Validation humaine</h4>
+    <p>Myvor ne considère pas un contenu généré comme automatiquement prêt à être diffusé. Les Notes d’impact et les documents du Note Builder suivent un processus de vérification et de validation humaine. L’utilisateur doit contrôler les faits, les sources, les dates, les acteurs et les recommandations avant toute communication externe ou décision professionnelle.</p>
+
+    <h4>4. Traçabilité des générations</h4>
+    <p>Les productions Myvor conservent des informations de provenance telles que la date de génération, le moteur ou modèle disponible, le statut de revue humaine et, lorsqu’une validation intervient, sa date et son auteur. Les exports génératifs peuvent également embarquer des informations de provenance destinées à rendre l’origine assistée par IA identifiable.</p>
+
+    <h4>5. Acteurs, positions et données sensibles</h4>
+    <p>Le Radar est conçu pour distinguer les fonctions institutionnelles, les informations publiques et les inférences. Une position favorable, réservée ou opposée ne doit être affichée que lorsqu’elle est appuyée par une source publique vérifiable ; à défaut, Myvor affiche la position comme <strong>« Inconnue »</strong>. Myvor n’utilise pas de reconnaissance des émotions, de catégorisation biométrique ou de profilage politique fondé sur des données privées.</p>
+
+    <h4>6. Sources et limites</h4>
+    <p>Myvor privilégie les sources institutionnelles et officielles rattachées aux dossiers. Une génération peut néanmoins contenir une erreur, une information incomplète ou une inférence qui doit être contrôlée. Les mentions « à confirmer », les niveaux de confiance et les preuves associées font partie du dispositif de vérification et ne doivent pas être ignorés.</p>
+
+    <h4>7. Maîtrise de l’IA</h4>
+    <p>Myvor documente les usages prévus de ses fonctions d’IA et leurs limites afin que les utilisateurs comprennent quand l’IA intervient, quelles vérifications sont attendues et quelles informations ne doivent pas être considérées comme établies sans source. Cette démarche participe à la maîtrise de l’IA attendue par le cadre européen.</p>
+
+    <h4>8. Références officielles</h4>
+    <ul>
+      <li><a href="https://digital-strategy.ec.europa.eu/en/library/guidelines-transparency-obligations-providers-and-deployers-ai-systems" target="_blank" rel="noreferrer">Commission européenne — lignes directrices sur les obligations de transparence de l’article 50</a></li>
+      <li><a href="https://digital-strategy.ec.europa.eu/en/faqs/transparency-obligations-under-article-50-ai-act" target="_blank" rel="noreferrer">Commission européenne — questions-réponses sur l’article 50</a></li>
+      <li><a href="https://eur-lex.europa.eu/eli/reg/2024/1689/oj" target="_blank" rel="noreferrer">EUR-Lex — règlement (UE) 2024/1689 sur l’intelligence artificielle</a></li>
+    </ul>
+
+    <div className="myvor-legal-warning">Cette rubrique présente l’approche produit et les garde-fous mis en œuvre par Myvor. Elle ne constitue pas un avis juridique ni une certification de conformité réglementaire.</div>
   </article>;
 }
 
