@@ -8,7 +8,7 @@ import styles from "./DossiersCorporate.module.css";
 
 type ModuleTarget="impact"|"radar"|"builder";
 type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string;watch_keywords?:string[];watch_priority_phrases?:string[];watch_excluded_keywords?:string[]};
-type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string;published_at?:string|null;source_name?:string|null};
+type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string;published_at?:string|null;source_name?:string|null;suggested_dossier_id?:string|null;qualification_confidence?:number|null;qualification_reason?:string|null};
 type EditDraft={client:string;title:string;objective:string;context:string;status:string};
 type ImpactProductionRow={dossier_id:string;content:any;created_at:string};
 type ImpactTone="critical"|"strong"|"medium"|"low";
@@ -56,7 +56,7 @@ export default function DossiersCorporate({items,watch,add,search,searching,mess
     const timer=setTimeout(async()=>{
       setEvolutionLoading(true);setEvolutionError("");
       try{
-        const candidates=[...watch].sort((a,b)=>watchTime(b)-watchTime(a)).slice(0,24);
+        const candidates=[...watch].sort((a,b)=>watchTime(b)-watchTime(a)).slice(0,40);
         if(!candidates.length){if(!cancelled)setAssignments([]);return;}
         const response=await fetch("/api/veille/assign",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:candidates.map(item=>({id:item.id,title:item.title,nature:item.nature,source_url:item.source_url})),dossiers:[{id:selected.id,title:selected.title,objective:selected.objective,context:selected.context,watch_keywords:selected.watch_keywords||[],watch_priority_phrases:selected.watch_priority_phrases||[],watch_excluded_keywords:selected.watch_excluded_keywords||[]}]})});
         const payload=await response.json();
@@ -75,9 +75,13 @@ export default function DossiersCorporate({items,watch,add,search,searching,mess
       const assignment=assignmentByWatch.get(item.id);
       const linkedHere=item.dossier_id===selected.id;
       const linkedElsewhere=!!item.dossier_id&&item.dossier_id!==selected.id;
-      if(!linkedHere&&(!assignment||Number(assignment.confidence)<0.5))return null;
-      return{item,confidence:assignment?Number(assignment.confidence):null,reason:assignment?.reason||(linkedHere?"Texte déjà rattaché à ce dossier.":"Correspondance détectée."),linkedHere,linkedElsewhere};
-    }).filter(Boolean).sort((a,b)=>((b!.confidence??0)-(a!.confidence??0))||watchTime(b!.item)-watchTime(a!.item)) as Evolution[];
+      const persistedMatch=!item.dossier_id&&item.suggested_dossier_id===selected.id&&Number(item.qualification_confidence)>=0.60;
+      const persistedConfidence=persistedMatch?Number(item.qualification_confidence):null;
+      const confidence=assignment?Number(assignment.confidence):persistedConfidence;
+      if(!linkedHere&&(confidence==null||confidence<0.60))return null;
+      const reason=assignment?.reason||(persistedMatch?item.qualification_reason||"Correspondance enregistrée par la veille, à valider.":linkedHere?"Texte déjà rattaché à ce dossier.":"Correspondance détectée.");
+      return{item,confidence,reason,linkedHere,linkedElsewhere};
+    }).filter(Boolean).sort((a,b)=>((b!.confidence??1)-(a!.confidence??1))||watchTime(b!.item)-watchTime(a!.item)) as Evolution[];
   },[selected,watch,assignments]);
 
   function beginEdit(dossier:Dossier){setMenuId(null);setEditMessage("");setEditing(dossier);setDraft({client:dossier.client,title:dossier.title,objective:dossier.objective,context:dossier.context||"",status:dossier.status||"Actif"});}
@@ -100,7 +104,7 @@ export default function DossiersCorporate({items,watch,add,search,searching,mess
       <section className={styles.leftPanel}>
         <div className={styles.panelHead}><div><span>Portefeuille</span><h2>Dossiers</h2></div><strong>{filtered.length}</strong></div>
         {filtered.length?<div className={styles.dossierList}>{filtered.map(dossier=>{const rel=related(dossier.id);const urgent=rel.filter(w=>["fort","absolument urgent"].includes(w.urgency)).length;const score=impactScores[dossier.id];const latest=rel.reduce((max,item)=>Math.max(max,watchTime(item)),0);return <article className={`${styles.dossierCard} ${selected?.id===dossier.id?styles.selected:""}`} key={dossier.id} onClick={()=>setSelectedId(dossier.id)}>
-          <div className={styles.dossierTop}><div className={styles.dossierIdentity}><span className={styles.folderBadge}><Folder size={18}/></span><div><small>{dossier.client}</small><h3>{dossier.title}</h3></div></div><div className={styles.menuCell}><button className={styles.menuButton} onClick={e=>{e.stopPropagation();setMenuId(menuId===dossier.id?null:dossier.id);}} aria-label="Actions du dossier"><MoreHorizontal size={19}/></button>{menuId===dossier.id&&<div className={styles.menu} onClick={e=>e.stopPropagation()}><button onClick={()=>open(dossier)}>Ouvrir le dossier</button><button disabled={!!searching} onClick={()=>{setMenuId(null);search(dossier);}}><Sparkles size={14}/>{searching===dossier.id?"Analyse en cours…":"Rattacher les évolutions ≥ 50 %"}</button><button onClick={()=>launch("impact",dossier)}>Note d’impact</button><button onClick={()=>launch("radar",dossier)}>Radar d’influence</button><button onClick={()=>launch("builder",dossier)}>Note Builder</button><button onClick={()=>beginEdit(dossier)}>Modifier le dossier</button><button className={styles.danger} disabled={deleting===dossier.id} onClick={()=>void removeDossier(dossier)}><Trash2 size={14}/>{deleting===dossier.id?"Suppression…":"Supprimer"}</button></div>}</div></div>
+          <div className={styles.dossierTop}><div className={styles.dossierIdentity}><span className={styles.folderBadge}><Folder size={18}/></span><div><small>{dossier.client}</small><h3>{dossier.title}</h3></div></div><div className={styles.menuCell}><button className={styles.menuButton} onClick={e=>{e.stopPropagation();setMenuId(menuId===dossier.id?null:dossier.id);}} aria-label="Actions du dossier"><MoreHorizontal size={19}/></button>{menuId===dossier.id&&<div className={styles.menu} onClick={e=>e.stopPropagation()}><button onClick={()=>open(dossier)}>Ouvrir le dossier</button><button disabled={!!searching} onClick={()=>{setMenuId(null);search(dossier);}}><Sparkles size={14}/>{searching===dossier.id?"Analyse en cours…":"Rattacher automatiquement ≥ 95 %"}</button><button onClick={()=>launch("impact",dossier)}>Note d’impact</button><button onClick={()=>launch("radar",dossier)}>Radar d’influence</button><button onClick={()=>launch("builder",dossier)}>Note Builder</button><button onClick={()=>beginEdit(dossier)}>Modifier le dossier</button><button className={styles.danger} disabled={deleting===dossier.id} onClick={()=>void removeDossier(dossier)}><Trash2 size={14}/>{deleting===dossier.id?"Suppression…":"Supprimer"}</button></div>}</div></div>
           <p>{dossier.objective||"Objectif à préciser"}</p>
           <div className={styles.dossierMeta}><span className={`${styles.status} ${dossier.status.toLowerCase()==="actif"?styles.statusActive:styles.statusIdle}`}>{dossier.status}</span><span><Bell size={13}/>{urgent} alerte{urgent>1?"s":""}</span><span><CalendarDays size={13}/>{latest?new Date(latest).toLocaleDateString("fr-FR",{day:"2-digit",month:"short"}):"Aucune évolution"}</span>{score!=null&&<span className={styles.scorePill}>Impact {score}%</span>}</div>
           {messages[dossier.id]&&<div className={styles.rowMessage}>{messages[dossier.id]}</div>}
@@ -108,19 +112,19 @@ export default function DossiersCorporate({items,watch,add,search,searching,mess
       </section>
 
       <section className={styles.rightPanel}>
-        <div className={styles.panelHead}><div><span>Veille ciblée</span><h2>Évolutions pertinentes</h2>{selected&&<p>{selected.client} · {selected.title}</p>}</div><div className={styles.relevanceBadge}>Seuil 50 %</div></div>
+        <div className={styles.panelHead}><div><span>Veille ciblée</span><h2>Évolutions pertinentes</h2>{selected&&<p>{selected.client} · {selected.title}</p>}</div><div className={styles.relevanceBadge}>Pertinence ≥ 60 %</div></div>
         {!selected?<div className={styles.empty}><Sparkles size={34}/><h2>Sélectionnez un dossier</h2><p>Ses évolutions pertinentes apparaîtront ici.</p></div>:<>
-          <div className={styles.evolutionSummary}><span><b>{evolutions.length}</b> évolution(s) pertinente(s)</span><div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}><button onClick={()=>open(selected)}>Ouvrir la fiche dossier</button><button type="button" disabled={evolutionLoading||!evolutions.length} onClick={()=>launch("impact",selected,evolutions.map(evolution=>evolution.item.id))} style={{border:"1px solid #e8ae17",background:evolutionLoading||!evolutions.length?"#3a3f48":"linear-gradient(135deg,#ffc928,#f3bd3e)",color:evolutionLoading||!evolutions.length?"#9aa4b1":"#07162c",borderRadius:9,padding:"9px 12px",fontWeight:900,cursor:evolutionLoading||!evolutions.length?"not-allowed":"pointer"}}><Sparkles size={14} style={{verticalAlign:"middle",marginRight:6}}/>Générer l’analyse avec {evolutions.length||0} évolution{evolutions.length>1?"s":""}</button></div></div>
-          {evolutionLoading&&<div className={styles.analysisState}><Sparkles size={16}/> Analyse des publications récentes…</div>}
+          <div className={styles.evolutionSummary}><span><b>{evolutions.length}</b> évolution(s) pertinente(s)</span><div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}><button onClick={()=>open(selected)}>Ouvrir la fiche dossier</button><button type="button" disabled={!evolutions.length} onClick={()=>launch("impact",selected,evolutions.map(evolution=>evolution.item.id))} style={{border:"1px solid #e8ae17",background:!evolutions.length?"#3a3f48":"linear-gradient(135deg,#ffc928,#f3bd3e)",color:!evolutions.length?"#9aa4b1":"#07162c",borderRadius:9,padding:"9px 12px",fontWeight:900,cursor:!evolutions.length?"not-allowed":"pointer"}}><Sparkles size={14} style={{verticalAlign:"middle",marginRight:6}}/>Générer l’analyse avec {evolutions.length||0} évolution{evolutions.length>1?"s":""}</button></div></div>
+          {evolutionLoading&&<div className={styles.analysisState}><Sparkles size={16}/> Vérification des publications récentes…</div>}
           {evolutionError&&<div className={styles.message}>{evolutionError}</div>}
-          {!evolutionLoading&&evolutions.length?<div className={styles.evolutionList}>{evolutions.map(({item,confidence,reason,linkedHere,linkedElsewhere})=><article className={styles.evolutionCard} key={item.id}>
+          {evolutions.length?<div className={styles.evolutionList}>{evolutions.map(({item,confidence,reason,linkedHere,linkedElsewhere})=><article className={styles.evolutionCard} key={item.id}>
             <div className={styles.evolutionTop}><div className={styles.evolutionTags}><span>{item.nature}</span><span className={`${styles.urgency} ${styles[item.urgency.replaceAll(" ","-") as keyof typeof styles]||""}`}>{item.urgency}</span></div>{confidence!=null?<strong className={styles.confidence}>{Math.round(confidence*100)} %</strong>:<strong className={styles.linkedBadge}>Rattaché</strong>}</div>
             <h3>{item.title}</h3>
-            <div className={styles.evolutionMeta}><span><CalendarDays size={13}/>{watchDate(item)}</span><span>{linkedHere?"Rattaché à ce dossier":linkedElsewhere?"Déjà lié à un autre dossier":"Détecté par Myvor"}</span></div>
+            <div className={styles.evolutionMeta}><span><CalendarDays size={13}/>{watchDate(item)}</span><span>{linkedHere?"Rattaché à ce dossier":linkedElsewhere?"Déjà lié à un autre dossier":confidence!=null&&confidence<0.95?"Suggestion à valider":"Détecté par Myvor"}</span></div>
             <p>{reason}</p>
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:12}}><button type="button" onClick={()=>launch("impact",selected,item.id)} style={{border:"1px solid #e8ae17",background:"linear-gradient(135deg,#ffc928,#f3bd3e)",color:"#07162c",borderRadius:9,padding:"8px 10px",fontWeight:850,cursor:"pointer"}}>Note d’impact</button><button type="button" onClick={()=>launch("radar",selected,item.id)} style={{border:"1px solid #29445f",background:"#0a213a",color:"#e7eef7",borderRadius:9,padding:"8px 10px",fontWeight:800,cursor:"pointer"}}>Radar d’influence</button><button type="button" onClick={()=>launch("builder",selected,item.id)} style={{border:"1px solid #29445f",background:"#0a213a",color:"#e7eef7",borderRadius:9,padding:"8px 10px",fontWeight:800,cursor:"pointer"}}>Note Builder</button></div>
             <div className={styles.evolutionFooter}>{item.source_url?<a href={item.source_url} target="_blank" rel="noreferrer">Lire la source <ExternalLink size={13}/></a>:<span/>}<span>{item.source_name||"Source officielle"}</span></div>
-          </article>)}</div>:!evolutionLoading&&<div className={styles.empty}><FileText size={34}/><h2>Aucune évolution ≥ 50 %</h2><p>Myvor n’a pas identifié de publication suffisamment pertinente pour ce dossier dans les éléments récents.</p></div>}
+          </article>)}</div>:!evolutionLoading&&<div className={styles.empty}><FileText size={34}/><h2>Aucune évolution ≥ 60 %</h2><p>Myvor n’a pas identifié de publication suffisamment pertinente pour ce dossier.</p></div>}
         </>}
       </section>
     </div>
