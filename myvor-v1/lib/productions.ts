@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase";
 
-export type ProductionType="impact"|"radar"|"builder";
+export type ProductionType="impact"|"radar"|"builder"|"warzone";
 export type Production={
   id:string;
   dossier_id:string;
