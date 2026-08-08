@@ -78,7 +78,7 @@ const OFFICIAL_HOSTS=["assemblee-nationale.fr","senat.fr","legifrance.gouv.fr","
 const depthConfig:Record<ImpactDepth,DepthConfig>={
   express:{label:"Express",maxItems:24,maxUrls:2,corpusChars:14000,timeoutMs:42000,instruction:"NOTE EXPRESS. Traite jusqu’à 24 évolutions de veille en synthèse, puis va à l'essentiel. Maximum 3 risques, 2 opportunités, 2 échéances et 3 recommandations prioritaires."},
   standard:{label:"Standard",maxItems:24,maxUrls:4,corpusChars:30000,timeoutMs:50000,instruction:"NOTE STANDARD. Traite transversalement jusqu’à 24 évolutions de veille et produis une analyse complète, concise et opérationnelle pour le suivi quotidien du dossier."},
-  deep:{label:"Approfondie",maxItems:24,maxUrls:6,corpusChars:39000,timeoutMs:58000,instruction:"NOTE APPROFONDIE. Traite transversalement jusqu’à 24 évolutions de veille, croise les sources, distingue faits, incertitudes et recommandations, et justifie séparément les six critères. Maximum 5 dispositions, 5 risques, 4 opportunités, 4 échéances et 6 recommandations."},
+  deep:{label:"Approfondie",maxItems:24,maxUrls:24,corpusChars:39000,timeoutMs:58000,instruction:"NOTE APPROFONDIE. Traite transversalement jusqu’à 24 évolutions de veille et utilise toutes leurs sources uniques disponibles, croise les sources, distingue faits, incertitudes et recommandations, et justifie séparément les six critères. Maximum 5 dispositions, 5 risques, 4 opportunités, 4 échéances et 6 recommandations."},
 };
 
 function asText(value:unknown){return typeof value==="string"?value.trim():"";}
