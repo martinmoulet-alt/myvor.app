@@ -7,6 +7,20 @@ function json(body:unknown,status=200){return new Response(JSON.stringify(body),
 function safeEqual(a:string,b:string){const aa=new TextEncoder().encode(a);const bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]^bb[i];return diff===0;}
 async function sha256(value:string){const bytes=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value));return Array.from(new Uint8Array(bytes)).map(byte=>byte.toString(16).padStart(2,"0")).join("");}
 function adminKey(){const modern=Deno.env.get("SUPABASE_SECRET_KEYS");if(modern){try{const keys=JSON.parse(modern);const value=keys?.default||Object.values(keys||{})[0];if(typeof value==="string"&&value)return value;}catch{}}return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")||"";}
+const sleep=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
+
+async function callSyncWatch(url:string,key:string,internalCronSecret:string){
+  return fetch(`${url}/functions/v1/sync-watch`,{
+    method:"POST",
+    headers:{
+      apikey:key,
+      Authorization:`Bearer ${key}`,
+      "Content-Type":"application/json",
+      "x-myvor-cron-secret":internalCronSecret,
+    },
+    body:JSON.stringify({source:"supabase-cron",requested_at:new Date().toISOString()}),
+  });
+}
 
 Deno.serve(async(req)=>{
   if(req.method!=="POST")return json({error:"Méthode non autorisée."},405);
@@ -21,18 +35,18 @@ Deno.serve(async(req)=>{
   if(!url||!key||!internalCronSecret)return json({error:"Configuration Supabase serveur incomplète."},503);
 
   try{
-    const response=await fetch(`${url}/functions/v1/sync-watch`,{
-      method:"POST",
-      headers:{
-        apikey:key,
-        Authorization:`Bearer ${key}`,
-        "Content-Type":"application/json",
-        "x-myvor-cron-secret":internalCronSecret,
-      },
-      body:JSON.stringify({source:"supabase-cron",requested_at:new Date().toISOString()}),
-    });
-    const raw=await response.text();
-    let payload:unknown;try{payload=raw?JSON.parse(raw):{};}catch{payload={error:raw||`HTTP ${response.status}`};}
-    return json(payload,response.status);
+    let lastStatus=502;
+    let lastPayload:unknown={error:"Synchronisation indisponible."};
+    for(let attempt=1;attempt<=3;attempt++){
+      const response=await callSyncWatch(url,key,internalCronSecret);
+      const raw=await response.text();
+      let payload:unknown;try{payload=raw?JSON.parse(raw):{};}catch{payload={error:raw||`HTTP ${response.status}`};}
+      lastStatus=response.status;lastPayload=payload;
+      if(response.ok)return json({...((payload&&typeof payload==="object")?payload:{}),cron_attempt:attempt},response.status);
+      const retryable=response.status===502||response.status===503||response.status===504;
+      if(!retryable||attempt===3)break;
+      await sleep(attempt*900);
+    }
+    return json(lastPayload,lastStatus);
   }catch(error){return json({error:error instanceof Error?error.message:String(error)},502);}
 });
