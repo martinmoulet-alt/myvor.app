@@ -76,9 +76,9 @@ const MAX_PDF_BYTES=15*1024*1024;
 const MAX_HTML_BYTES=2_500_000;
 const OFFICIAL_HOSTS=["assemblee-nationale.fr","senat.fr","legifrance.gouv.fr","vie-publique.fr","gouvernement.fr","economie.gouv.fr","ecologie.gouv.fr","conseil-constitutionnel.fr","conseil-etat.fr","courdecassation.fr","ccomptes.fr","cnil.fr","arcep.fr","cre.fr","amf-france.org","autoritedelaconcurrence.fr","eur-lex.europa.eu"];
 const depthConfig:Record<ImpactDepth,DepthConfig>={
-  express:{label:"Express",maxItems:3,maxUrls:2,corpusChars:14000,timeoutMs:42000,instruction:"NOTE EXPRESS. Va à l'essentiel. Maximum 3 risques, 2 opportunités, 2 échéances et 3 recommandations prioritaires."},
-  standard:{label:"Standard",maxItems:10,maxUrls:4,corpusChars:30000,timeoutMs:50000,instruction:"NOTE STANDARD. Produis une analyse complète, concise et opérationnelle pour le suivi quotidien du dossier."},
-  deep:{label:"Approfondie",maxItems:12,maxUrls:6,corpusChars:39000,timeoutMs:58000,instruction:"NOTE APPROFONDIE. Croise les sources, distingue faits, incertitudes et recommandations, et justifie séparément les six critères. Maximum 5 dispositions, 5 risques, 4 opportunités, 4 échéances et 6 recommandations."},
+  express:{label:"Express",maxItems:24,maxUrls:2,corpusChars:14000,timeoutMs:42000,instruction:"NOTE EXPRESS. Traite jusqu’à 24 évolutions de veille en synthèse, puis va à l'essentiel. Maximum 3 risques, 2 opportunités, 2 échéances et 3 recommandations prioritaires."},
+  standard:{label:"Standard",maxItems:24,maxUrls:4,corpusChars:30000,timeoutMs:50000,instruction:"NOTE STANDARD. Traite transversalement jusqu’à 24 évolutions de veille et produis une analyse complète, concise et opérationnelle pour le suivi quotidien du dossier."},
+  deep:{label:"Approfondie",maxItems:24,maxUrls:6,corpusChars:39000,timeoutMs:58000,instruction:"NOTE APPROFONDIE. Traite transversalement jusqu’à 24 évolutions de veille, croise les sources, distingue faits, incertitudes et recommandations, et justifie séparément les six critères. Maximum 5 dispositions, 5 risques, 4 opportunités, 4 échéances et 6 recommandations."},
 };
 
 function asText(value:unknown){return typeof value==="string"?value.trim():"";}
@@ -149,7 +149,7 @@ async function prepareImpact(body:any):Promise<PreparedImpact>{
   return{depth,dossier,items,raw_item_ids:rawItems.map(item=>item.id),omitted_ids:omitted,include_internal_notes:includeInternalNotes,profile,official_candidates:officialCandidates,dossier_candidates:dossierCandidates,traces,source_snapshots:sourceSnapshots,source_text:sourceText,invoke_body:invokeBody,official_sources_requested:uniqueUrls.length,official_sources_fetched:fetchedCount,corpus_budget_chars:config.corpusChars,corpus_used_chars:extractions.reduce((sum,source)=>sum+source.content.length,0),selection:{requested_ids:rawItems.map(item=>item.id),analyzed_ids:items.map(item=>item.id),omitted_ids:omitted,max_items:config.maxItems,max_urls:config.maxUrls}};
 }
 
-function validatePrepared(value:any):asserts value is PreparedImpact{if(!value||typeof value!=="object"||!value.dossier||!Array.isArray(value.items)||!value.invoke_body||typeof value.source_text!=="string")throw new ImpactError("Préparation de Note invalide.",400);if(value.source_text.length>120000||value.items.length>12||!Array.isArray(value.official_candidates)||value.official_candidates.length>5000)throw new ImpactError("Préparation de Note trop volumineuse ou invalide.",413);}
+function validatePrepared(value:any):asserts value is PreparedImpact{if(!value||typeof value!=="object"||!value.dossier||!Array.isArray(value.items)||!value.invoke_body||typeof value.source_text!=="string")throw new ImpactError("Préparation de Note invalide.",400);if(value.source_text.length>120000||value.items.length>24||!Array.isArray(value.official_candidates)||value.official_candidates.length>5000)throw new ImpactError("Préparation de Note trop volumineuse ou invalide.",413);}
 
 function mapImpactToNote(impact:any,prepared:PreparedImpact){
   const validation=validateImpactPayload(impact);if(!validation.valid)throw new ImpactError(`Réponse IA incomplète : ${validation.errors.join(" ")}`,502);
