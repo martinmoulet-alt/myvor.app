@@ -6,6 +6,7 @@ export const revalidate = 0;
 type Source = { name:string; url:string; defaultNature:string };
 type FeedItem = { title:string; nature:string; source_url:string; source_name:string; published_at?:string; excerpt?:string };
 type SourceResult = { name:string; items:FeedItem[]; error?:string };
+type SourcePolicy = { tier:1|2|3|4; reserve:number };
 
 const SOURCES: Source[] = [
   { name:"Assemblée nationale", url:"http://www2.assemblee-nationale.fr/feeds/detail/documents-parlementaires", defaultNature:"Texte parlementaire" },
@@ -19,6 +20,27 @@ const SOURCES: Source[] = [
   { name:"Conseil d’État — Jurisprudence", url:"https://conseil-etat.fr/outils/flux-rss/analyses-de-jurisprudence-rss", defaultNature:"Décision / jurisprudence" },
   { name:"Cour des comptes — Publications", url:"https://www.ccomptes.fr/rss/publications", defaultNature:"Rapport" },
 ];
+
+const SOURCE_POLICIES:Record<string,SourcePolicy>={
+  "Légifrance — Journal officiel":{tier:1,reserve:110},
+  "Assemblée nationale":{tier:1,reserve:36},
+  "Sénat — Textes":{tier:1,reserve:36},
+  "EUR-Lex":{tier:1,reserve:30},
+  "Conseil d’État — Avis":{tier:2,reserve:18},
+  "Conseil d’État — Jurisprudence":{tier:2,reserve:18},
+  "Conseil constitutionnel":{tier:2,reserve:18},
+  "DGCCRF — Fiches pratiques":{tier:2,reserve:18},
+  "CNIL":{tier:2,reserve:18},
+  "ARCEP":{tier:2,reserve:18},
+  "Sénat — Rapports":{tier:3,reserve:12},
+  "Cour des comptes — Publications":{tier:3,reserve:12},
+  "Vie-publique — Rapports":{tier:3,reserve:12},
+  "Direction générale du Trésor":{tier:3,reserve:12},
+  "Économie — Actualités":{tier:4,reserve:6},
+  "Transition écologique — Actualités":{tier:4,reserve:6},
+  "Transition écologique — Presse":{tier:4,reserve:6},
+};
+const DEFAULT_SOURCE_POLICY:SourcePolicy={tier:4,reserve:6};
 
 const WINDOWS_1252_BYTES:Record<number,number>={
   0x20ac:0x80,0x201a:0x82,0x0192:0x83,0x201e:0x84,0x2026:0x85,0x2020:0x86,0x2021:0x87,
@@ -51,6 +73,16 @@ function dateAround(html:string,index:number){const snippet=decodeHtml(html.slic
 function publishedTime(item:FeedItem){const time=item.published_at?Date.parse(item.published_at):0;return Number.isFinite(time)?time:0;}
 function newestFirst(items:FeedItem[]){return [...items].sort((a,b)=>publishedTime(b)-publishedTime(a));}
 function dedupeItems(items:FeedItem[]){const seen=new Set<string>();return items.filter(item=>{if(!item.source_url||seen.has(item.source_url))return false;seen.add(item.source_url);return true;});}
+function sourcePolicy(name:string){return SOURCE_POLICIES[name]||DEFAULT_SOURCE_POLICY;}
+function prioritizeSources(results:SourceResult[],limit=500){
+  const selected:FeedItem[]=[];const seen=new Set<string>();
+  const add=(item:FeedItem)=>{if(!item.source_url||seen.has(item.source_url)||selected.length>=limit)return;seen.add(item.source_url);selected.push(item);};
+  const ordered=[...results].sort((a,b)=>sourcePolicy(a.name).tier-sourcePolicy(b.name).tier||sourcePolicy(b.name).reserve-sourcePolicy(a.name).reserve);
+  for(const result of ordered){const reserve=sourcePolicy(result.name).reserve;for(const item of newestFirst(result.items).slice(0,reserve))add(item);}
+  const remainder=newestFirst(results.flatMap(result=>result.items).filter(item=>!seen.has(item.source_url)&&!isGenericNavigationTitle(item.title)));
+  for(const item of remainder)add(item);
+  return selected.slice(0,limit);
+}
 function sleep(ms:number){return new Promise(resolve=>setTimeout(resolve,ms));}
 
 async function responseText(response:Response){const bytes=new Uint8Array(await response.arrayBuffer());const contentType=response.headers.get("content-type")||"";const charset=contentType.match(/charset=([^;\s]+)/i)?.[1]?.toLowerCase()||"utf-8";let text="";try{text=new TextDecoder(charset as any).decode(bytes);}catch{text=new TextDecoder("utf-8").decode(bytes);}const latin=new TextDecoder("windows-1252").decode(bytes);const repairedUtf8=repairMojibake(text);const candidates=[text,repairedUtf8,latin];candidates.sort((a,b)=>corruptionScore(a)-corruptionScore(b));return candidates[0];}
@@ -85,7 +117,7 @@ async function fetchFeed(source:Source){const xml=await fetchText(source.url,"ap
 
 async function fetchHtmlListing(input:{name:string;url:string;base:string;pathPattern:RegExp;defaultNature:string;limit?:number}):Promise<FeedItem[]>{const html=await fetchText(input.url,"text/html,*/*");const items:FeedItem[]=[];const regex=/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;for(const match of html.matchAll(regex)){const href=decodeHtml(match[1]);if(!input.pathPattern.test(href))continue;const title=decodeHtml(match[2]);if(title.length<12||isGenericNavigationTitle(title))continue;const source_url=href.startsWith("http")?href:`${input.base}${href.startsWith("/")?"":"/"}${href}`;const excerpt=excerptAround(html,match.index||0,title);if(excerpt.length<60)continue;items.push({title,nature:inferNature(title,input.defaultNature,`${input.name} ${source_url}`),source_url,source_name:input.name,published_at:dateAround(html,match.index||0),excerpt:excerpt||undefined});}return newestFirst(dedupeItems(items)).slice(0,input.limit||12);}
 
-function parseLegifranceIssue(html:string):FeedItem[]{const issueDate=decodeHtml(html.match(/Journal officiel de la République française[^<]*du\s+([^<]+)/i)?.[1]||"");const published_at=normalizePublishedAt(issueDate);const items:FeedItem[]=[];const regex=/<a\b[^>]*href=["']([^"']*\/jorf\/id\/JORFTEXT[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;for(const match of html.matchAll(regex)){const title=decodeHtml(match[2]);if(!title||isGenericNavigationTitle(title))continue;const nature=inferNature(title,"Texte réglementaire");if(!["Loi","Ordonnance","Décret","Arrêté","Décision / jurisprudence","Rapport"].includes(nature))continue;const href=match[1];const source_url=href.startsWith("http")?href:`https://www.legifrance.gouv.fr${href.startsWith("/")?"":"/"}${href}`;items.push({title,nature,source_url,source_name:"Légifrance — Journal officiel",published_at,excerpt:excerptAround(html,match.index||0,title)||undefined});}return dedupeItems(items).slice(0,20);}
+function parseLegifranceIssue(html:string):FeedItem[]{const issueDate=decodeHtml(html.match(/Journal officiel de la République française[^<]*du\s+([^<]+)/i)?.[1]||"");const published_at=normalizePublishedAt(issueDate);const items:FeedItem[]=[];const regex=/<a\b[^>]*href=["']([^"']*\/jorf\/id\/JORFTEXT[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;for(const match of html.matchAll(regex)){const title=decodeHtml(match[2]);if(!title||isGenericNavigationTitle(title))continue;const nature=inferNature(title,"Texte réglementaire");if(!["Loi","Ordonnance","Décret","Arrêté","Décision / jurisprudence","Rapport"].includes(nature))continue;const href=match[1];const source_url=href.startsWith("http")?href:`https://www.legifrance.gouv.fr${href.startsWith("/")?"":"/"}${href}`;items.push({title,nature,source_url,source_name:"Légifrance — Journal officiel",published_at,excerpt:excerptAround(html,match.index||0,title)||undefined});}return dedupeItems(items).slice(0,40);}
 async function fetchLegifranceJorf():Promise<FeedItem[]>{
   const currentHtml=await fetchText("https://www.legifrance.gouv.fr/jorf/jo","text/html,application/xhtml+xml,*/*",7500);
   const current=parseLegifranceIssue(currentHtml);
@@ -125,15 +157,11 @@ export async function GET(){
     collect("EUR-Lex",fetchEurLex),
   ];
   const results=await Promise.all(tasks);
-  const all=dedupeItems(results.flatMap(result=>result.items).filter(item=>!isGenericNavigationTitle(item.title)));
-  const sourceHead=dedupeItems(results.flatMap(result=>newestFirst(result.items).slice(0,8)));
-  const headUrls=new Set(sourceHead.map(item=>item.source_url));
-  const remainder=newestFirst(all.filter(item=>!headUrls.has(item.source_url)));
-  const items=[...newestFirst(sourceHead),...remainder].slice(0,500);
+  const items=prioritizeSources(results,500);
   const active_sources=results.filter(result=>!result.error).map(result=>result.name);
   const unavailable_sources=results.filter(result=>result.error).map(result=>result.name);
   const unavailable_details=results.filter(result=>result.error).map(result=>`${result.name}: ${result.error}`);
   const source_counts=Object.fromEntries(results.map(result=>[result.name,result.items.length]));
-  const source_health=results.map(result=>({name:result.name,count:result.items.length,error:result.error||null,latest_published_at:newestFirst(result.items).find(item=>item.published_at)?.published_at||null}));
+  const source_health=results.map(result=>({name:result.name,count:result.items.length,error:result.error||null,priority_tier:sourcePolicy(result.name).tier,reserved_slots:sourcePolicy(result.name).reserve,latest_published_at:newestFirst(result.items).find(item=>item.published_at)?.published_at||null}));
   return NextResponse.json({synced_at:new Date().toISOString(),active_sources,unavailable_sources,unavailable_details,source_counts,source_health,items},{headers:{"Cache-Control":"no-store, max-age=0"}});
 }
