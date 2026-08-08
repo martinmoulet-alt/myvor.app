@@ -7,6 +7,15 @@ import styles from "./AuthScreen.module.css";
 
 type Mode="login"|"signup";
 
+function passwordIssue(password:string){
+  if(password.length<12)return "Le mot de passe doit contenir au moins 12 caractères.";
+  if(!/[a-z]/.test(password))return "Ajoutez au moins une lettre minuscule.";
+  if(!/[A-Z]/.test(password))return "Ajoutez au moins une lettre majuscule.";
+  if(!/\d/.test(password))return "Ajoutez au moins un chiffre.";
+  if(!/[^A-Za-z0-9]/.test(password))return "Ajoutez au moins un symbole.";
+  return "";
+}
+
 export default function AuthScreen(){
   const[mode,setMode]=useState<Mode>("login");
   const[email,setEmail]=useState("");
@@ -21,6 +30,10 @@ export default function AuthScreen(){
   async function submit(e:React.FormEvent){
     e.preventDefault();
     if(!supabase||busy)return;
+    if(mode==="signup"){
+      const issue=passwordIssue(password);
+      if(issue){setMessageType("error");setMessage(issue);return;}
+    }
     setBusy(true);setMessage("");
     try{
       const result=mode==="login"
@@ -83,7 +96,7 @@ export default function AuthScreen(){
 
         <form onSubmit={submit} className={styles.form}>
           <label><span>Adresse e-mail</span><div className={styles.inputWrap}><Mail size={17}/><input type="email" autoComplete="email" inputMode="email" required placeholder="vous@cabinet.fr" value={email} onChange={e=>setEmail(e.target.value)}/></div></label>
-          <label><span>Mot de passe</span><div className={styles.inputWrap}><LockKeyhole size={17}/><input type={showPassword?"text":"password"} autoComplete={mode==="login"?"current-password":"new-password"} minLength={6} required placeholder="••••••••" value={password} onChange={e=>setPassword(e.target.value)}/><button type="button" className={styles.eye} onClick={()=>setShowPassword(v=>!v)} aria-label={showPassword?"Masquer le mot de passe":"Afficher le mot de passe"}>{showPassword?<EyeOff size={17}/>:<Eye size={17}/>}</button></div></label>
+          <label><span>Mot de passe</span><div className={styles.inputWrap}><LockKeyhole size={17}/><input type={showPassword?"text":"password"} autoComplete={mode==="login"?"current-password":"new-password"} minLength={mode==="signup"?12:1} required placeholder="••••••••••••" value={password} onChange={e=>setPassword(e.target.value)}/><button type="button" className={styles.eye} onClick={()=>setShowPassword(v=>!v)} aria-label={showPassword?"Masquer le mot de passe":"Afficher le mot de passe"}>{showPassword?<EyeOff size={17}/>:<Eye size={17}/>}</button></div>{mode==="signup"&&<small style={{display:"block",marginTop:7,color:"#718096",lineHeight:1.45}}>12 caractères minimum · majuscule · minuscule · chiffre · symbole.</small>}</label>
 
           {mode==="login"&&<div className={styles.formMeta}><label className={styles.remember}><input type="checkbox" defaultChecked/><span>Rester connecté</span></label><button type="button" onClick={resetPassword} disabled={busy}>Mot de passe oublié ?</button></div>}
 
