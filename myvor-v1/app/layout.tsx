@@ -13,6 +13,7 @@ import StartupRecovery from "./StartupRecovery";
 import NetworkStatus from "./NetworkStatus";
 import LegalHelpMenu from "./LegalHelpMenu";
 import MobileDossierTabs from "./MobileDossierTabs";
+import WorkflowGuide from "./WorkflowGuide";
 
 export const metadata: Metadata = {
   title: "Myvor — Anticipez l’impact",
@@ -37,5 +38,5 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="fr"><body><PwaRegister/><StartupRecovery/><NetworkStatus/><LegalHelpMenu/><MobileDossierTabs/>{children}</body></html>;
+  return <html lang="fr"><body><PwaRegister/><StartupRecovery/><NetworkStatus/><LegalHelpMenu/><MobileDossierTabs/><WorkflowGuide/>{children}</body></html>;
 }
