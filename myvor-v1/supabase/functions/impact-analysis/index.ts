@@ -6,7 +6,7 @@ const corsHeaders={
 type ImpactDepth="express"|"standard"|"deep";
 type AttemptResult={ok:boolean;impact?:any;message?:string;status?:number;retryable?:boolean;model:string;execution_ms:number;output_chars?:number};
 
-const PROMPT_VERSION="impact-prompt-v4";
+const PROMPT_VERSION="impact-prompt-v5";
 const ENGINE_VERSION="myvor-impact-authenticated-v4";
 const OUTPUT_TOKEN_BUDGETS:Record<ImpactDepth,number>={express:1800,standard:4000,deep:6000};
 const ATTEMPT_TIMEOUTS:Record<ImpactDepth,[number,number]>={express:[32000,18000],standard:[48000,27000],deep:[68000,37000]};
@@ -40,19 +40,21 @@ function cleanArray(value:any,maxItems:number,maxChars:number){return Array.isAr
 function extractOutputText(payload:any){if(typeof payload?.output_text==="string")return payload.output_text;const chunks=payload?.output?.flatMap((item:any)=>item?.content||[])||[];return chunks.map((chunk:any)=>chunk?.text||"").join("");}
 function extractRefusal(payload:any){const chunks=payload?.output?.flatMap((item:any)=>item?.content||[])||[];return chunks.map((chunk:any)=>chunk?.refusal||"").filter(Boolean).join(" ");}
 function parseJson(raw:unknown){const text=String(raw??"").trim().replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/i,"").trim();if(!text)return null;try{return JSON.parse(text);}catch{}const start=text.indexOf("{");const end=text.lastIndexOf("}");if(start>=0&&end>start){try{return JSON.parse(text.slice(start,end+1));}catch{}}return null;}
-function validateRawImpact(raw:any){if(!raw||typeof raw!=="object")return"Objet d’impact absent.";if(clip(raw.synthese,5000).length<30)return"Synthèse trop courte.";if(!raw.score_detail||!raw.score_justifications)return"Score détaillé ou justifications absents.";for(const key of SCORE_KEYS){if(!Number.isFinite(Number(raw.score_detail?.[key])))return`Sous-score ${key} absent.`;if(clip(raw.score_justifications?.[key],1200).length<12)return`Justification ${key} trop courte.`;}return"";}
+function validateRawImpact(raw:any){if(!raw||typeof raw!=="object")return"Objet d’impact absent.";if(clip(raw.synthese,5000).length<30)return"Synthèse trop courte.";if(!raw.score_detail||!raw.score_justifications)return"Score détaillé ou justifications absents.";for(const key of SCORE_KEYS){if(!Number.isFinite(Number(raw.score_detail?.[key])))return`Sous-score ${key} absent.`;if(clip(raw.score_justifications?.[key],1800).length<12)return`Justification ${key} trop courte.`;}return"";}
 
 function normalizeImpact(raw:any,depth:ImpactDepth){
   const detail={juridique:clampNumber(raw?.score_detail?.juridique,0,20),economique_operationnel:clampNumber(raw?.score_detail?.economique_operationnel,0,20),urgence:clampNumber(raw?.score_detail?.urgence,0,15),probabilite:clampNumber(raw?.score_detail?.probabilite,0,15),politique_reputation:clampNumber(raw?.score_detail?.politique_reputation,0,15),capacite_action:clampNumber(raw?.score_detail?.capacite_action,0,15)};
   const detailTotal=Object.values(detail).reduce((sum,value)=>sum+value,0);const score=detailTotal>0?detailTotal:clampNumber(raw?.score,0,100);
-  const limits=depth==="express"?{disp:3,risks:3,opps:2,deadlines:2,recs:3,confirm:5}:depth==="deep"?{disp:5,risks:5,opps:4,deadlines:4,recs:6,confirm:10}:{disp:6,risks:5,opps:4,deadlines:4,recs:6,confirm:8};
-  const dispositions=Array.isArray(raw?.dispositions_concernees)?raw.dispositions_concernees.slice(0,limits.disp).map((item:any)=>({disposition:clip(item?.disposition,650),impact_client:clip(item?.impact_client,850),niveau:clip(item?.niveau,80)||"moyen"})).filter((item:any)=>item.disposition||item.impact_client):[];
-  const risks=Array.isArray(raw?.risques)?raw.risques.slice(0,limits.risks).map((item:any)=>({titre:clip(item?.titre,220),description:clip(item?.description,700),niveau:clip(item?.niveau,80)||"moyen"})).filter((item:any)=>item.titre||item.description):[];
-  const opportunities=Array.isArray(raw?.opportunites)?raw.opportunites.slice(0,limits.opps).map((item:any)=>({titre:clip(item?.titre,220),description:clip(item?.description,700)})).filter((item:any)=>item.titre||item.description):[];
-  const deadlines=Array.isArray(raw?.echeances)?raw.echeances.slice(0,limits.deadlines).map((item:any)=>({date:clip(item?.date,160),evenement:clip(item?.evenement,420),importance:clip(item?.importance,420)})).filter((item:any)=>item.date||item.evenement):[];
-  const recommendations=Array.isArray(raw?.recommandations)?raw.recommandations.slice(0,limits.recs).map((item:any)=>({action:clip(item?.action,520),raison:clip(item?.raison,650),priorite:clip(item?.priorite,80)})).filter((item:any)=>item.action):[];
-  const justifications={juridique:clip(raw?.score_justifications?.juridique,700),economique_operationnel:clip(raw?.score_justifications?.economique_operationnel,700),urgence:clip(raw?.score_justifications?.urgence,700),probabilite:clip(raw?.score_justifications?.probabilite,700),politique_reputation:clip(raw?.score_justifications?.politique_reputation,700),capacite_action:clip(raw?.score_justifications?.capacite_action,700)};
-  return{synthese:clip(raw?.synthese,depth==="deep"?2400:1700),score,justification_score:clip(raw?.justification_score,1300),score_detail:detail,score_justifications:justifications,dispositions_concernees:dispositions,risques:risks,opportunites:opportunities,echeances:deadlines,recommandations:recommendations,informations_a_confirmer:cleanArray(raw?.informations_a_confirmer,limits.confirm,500).map((item:any)=>clip(item,500))};
+  const limits=depth==="express"?{disp:3,risks:3,opps:2,deadlines:2,recs:3,confirm:5}:depth==="deep"?{disp:5,risks:5,opps:4,deadlines:4,recs:6,confirm:12}:{disp:6,risks:5,opps:4,deadlines:4,recs:6,confirm:8};
+  const deep=depth==="deep";
+  const dispositions=Array.isArray(raw?.dispositions_concernees)?raw.dispositions_concernees.slice(0,limits.disp).map((item:any)=>({disposition:clip(item?.disposition,deep?1000:650),impact_client:clip(item?.impact_client,deep?1700:850),niveau:clip(item?.niveau,100)||"moyen"})).filter((item:any)=>item.disposition||item.impact_client):[];
+  const risks=Array.isArray(raw?.risques)?raw.risques.slice(0,limits.risks).map((item:any)=>({titre:clip(item?.titre,260),description:clip(item?.description,deep?1700:700),niveau:clip(item?.niveau,100)||"moyen"})).filter((item:any)=>item.titre||item.description):[];
+  const opportunities=Array.isArray(raw?.opportunites)?raw.opportunites.slice(0,limits.opps).map((item:any)=>({titre:clip(item?.titre,260),description:clip(item?.description,deep?1500:700)})).filter((item:any)=>item.titre||item.description):[];
+  const deadlines=Array.isArray(raw?.echeances)?raw.echeances.slice(0,limits.deadlines).map((item:any)=>({date:clip(item?.date,180),evenement:clip(item?.evenement,deep?850:420),importance:clip(item?.importance,deep?1300:420)})).filter((item:any)=>item.date||item.evenement):[];
+  const recommendations=Array.isArray(raw?.recommandations)?raw.recommandations.slice(0,limits.recs).map((item:any)=>({action:clip(item?.action,deep?1300:520),raison:clip(item?.raison,deep?1700:650),priorite:clip(item?.priorite,deep?160:80)})).filter((item:any)=>item.action):[];
+  const justificationMax=deep?1600:700;
+  const justifications={juridique:clip(raw?.score_justifications?.juridique,justificationMax),economique_operationnel:clip(raw?.score_justifications?.economique_operationnel,justificationMax),urgence:clip(raw?.score_justifications?.urgence,justificationMax),probabilite:clip(raw?.score_justifications?.probabilite,justificationMax),politique_reputation:clip(raw?.score_justifications?.politique_reputation,justificationMax),capacite_action:clip(raw?.score_justifications?.capacite_action,justificationMax)};
+  return{synthese:clip(raw?.synthese,deep?4000:1700),score,justification_score:clip(raw?.justification_score,deep?2400:1300),score_detail:detail,score_justifications:justifications,dispositions_concernees:dispositions,risques:risks,opportunites:opportunities,echeances:deadlines,recommandations:recommendations,informations_a_confirmer:cleanArray(raw?.informations_a_confirmer,limits.confirm,deep?900:500).map((item:any)=>clip(item,deep?900:500))};
 }
 
 async function requireAuthenticatedQuota(req:Request){
@@ -65,14 +67,18 @@ async function requireAuthenticatedQuota(req:Request){
 }
 
 function buildPrompt(depth:ImpactDepth,client:string,objectif:string,contexte:string,titre:string,lienOfficiel:string,texte:string){
-  const depthRule=depth==="express"?"Analyse express : priorise les signaux décisionnels et les actions immédiates.":depth==="deep"?"Analyse approfondie : croise les sources, justifie chaque critère et explicite les incertitudes. Reste dense et évite les répétitions.":"Analyse standard complète, concise et opérationnelle.";
+  const depthRule=depth==="express"
+    ?"Analyse express : priorise les signaux décisionnels et les actions immédiates."
+    :depth==="deep"
+      ?"ANALYSE APPROFONDIE — FORMAT COCKPIT / WAR ZONE. Produis une analyse de second niveau, beaucoup plus détaillée qu’une note Standard, sans répétition ni remplissage. Croise toutes les sources disponibles. Pour chaque disposition, précise la règle ou évolution, son mécanisme concret, le processus ou l’activité client touché, l’effet attendu et le degré de certitude. Pour chaque risque, structure la description ainsi : CAUSE → MÉCANISME → CONSÉQUENCE CLIENT → SIGNAL DÉCLENCHEUR À SURVEILLER → RÉPONSE À PRÉPARER. Pour chaque opportunité : FENÊTRE → LEVIER → ACTION POSSIBLE → GAIN ATTENDU → CONDITION DE RÉUSSITE. Pour chaque échéance, explique ce qui se passe à cette date, ce qui change avant/après et ce que le client doit avoir préparé en amont. Pour chaque recommandation, le champ action doit préciser ACTION CONCRÈTE → CIBLE/ACTEUR si identifiable dans le corpus ou le dossier, sinon « cible à confirmer » → CANAL/MÉTHODE → LIVRABLE ATTENDU → TIMING. Le champ raison doit préciser POURQUOI MAINTENANT → PREUVE OU SOURCE → RÉSULTAT ATTENDU → CRITÈRE DE SUCCÈS → PLAN B. Le champ priorité doit contenir P1, P2 ou P3 avec un horizon temporel. La synthèse doit exposer la situation, le point de bascule, les conséquences client, les trois décisions prioritaires et les principales incertitudes. Chaque justification de sous-score doit comporter plusieurs phrases et expliquer le lien causal avec l’objectif client. N’invente jamais une cible, une date, une position d’acteur ou une preuve : si elle manque, écris explicitement qu’elle est à confirmer."
+      :"Analyse standard complète, concise et opérationnelle.";
   return[
     "Tu es le moteur de Note d’impact de Myvor, spécialisé en affaires publiques françaises et européennes.",depthRule,
     "Tu analyses UNIQUEMENT le corpus fourni. N’invente aucun fait, calendrier, position, disposition ou chiffre absent des sources.",
     "Si une information utile n’est pas vérifiable, place-la dans informations_a_confirmer.",
     "Le score mesure l’impact sur l’objectif précis du client, pas l’importance générale du texte.",
     "Barème proposé sur 100 : juridique 0-20 ; économique/opérationnel 0-20 ; urgence institutionnelle 0-15 ; probabilité d’évolution/adoption 0-15 ; politique/réputation 0-15 ; capacité d’action du client 0-15.",
-    "Chaque sous-score doit être justifié séparément par au moins une phrase complète. La synthèse doit contenir au moins trois phrases utiles.",
+    depth==="deep"?"Chaque sous-score doit être justifié par 2 à 4 phrases causales, en distinguant les faits sourcés des inférences. La synthèse doit être dense, structurée et directement exploitable pour décider.":"Chaque sous-score doit être justifié séparément par au moins une phrase complète. La synthèse doit contenir au moins trois phrases utiles.",
     "Myvor appliquera ensuite sa grille déterministe et pourra plafonner les scores insuffisamment étayés.",
     "Pour chaque échéance, donne une date calendaire explicite avec année uniquement si elle figure réellement dans le corpus.",
     "Respecte exactement le schéma JSON imposé par l’API.",
