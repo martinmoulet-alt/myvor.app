@@ -1,16 +1,32 @@
-[functions.veille-sync]
-# Le gateway JWT est désactivé uniquement pour permettre l'appel pg_cron/pg_net.
-# La fonction refuse tout appel qui ne présente pas le secret MYVOR_CRON_SECRET.
+project_id = "mxextphrsggoatcboiqy"
+
+[functions.rapid-task]
+verify_jwt = true
+
+[functions.impact-analysis]
+verify_jwt = true
+
+[functions.incluence-radar]
+# Fonction historique conservée pour traçabilité ; le produit utilise désormais /api/radar/fast + radar-enrich.
+verify_jwt = true
+
+[functions.note-builder]
+verify_jwt = true
+
+[functions.sync-watch]
+# Le moteur de fond reste protégé par JWT + MYVOR_CRON_SECRET.
+verify_jwt = true
+
+[functions.sync-watch-cron]
+# Seul relais sans JWT : authentification dédiée par MYVOR_CRON_SECRET avant tout proxy.
 verify_jwt = false
 
 [functions.dossier-profile]
-# Authentification vérifiée dans le code via Supabase Auth + quota par utilisateur.
+verify_jwt = true
+
+[functions.radar-enrich]
+# Cette fonction vérifie elle-même le JWT via Auth et applique le quota utilisateur.
 verify_jwt = false
 
-[functions.note-builder]
-# Authentification vérifiée dans le code via Supabase Auth + quota par utilisateur.
-verify_jwt = false
-
-[functions.impact-analysis]
-# Authentification vérifiée dans le code via Supabase Auth + quota par utilisateur.
-verify_jwt = false
+[functions.warzone-strategy]
+verify_jwt = true
