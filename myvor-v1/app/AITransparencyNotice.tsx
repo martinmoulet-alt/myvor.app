@@ -8,11 +8,13 @@ export default function AITransparencyNotice(){
   useEffect(()=>{
     const marker="myvor-ai-transparency-notice";
     const sync=()=>{
-      document.querySelectorAll(`.${marker}`).forEach(node=>node.remove());
       const heading=Array.from(document.querySelectorAll<HTMLHeadingElement>("h1")).find(node=>AI_HEADINGS.has((node.textContent||"").trim()));
-      if(!heading)return;
-      const host=heading.parentElement;
-      if(!host)return;
+      const host=heading?.parentElement||null;
+      const badges=Array.from(document.querySelectorAll<HTMLElement>(`.${marker}`));
+      if(!host){for(const node of badges)node.remove();return;}
+      const current=badges.find(node=>node.parentElement===host);
+      for(const node of badges)if(node!==current)node.remove();
+      if(current)return;
       const badge=document.createElement("span");
       badge.className=marker;
       badge.textContent="Analyse assistée par IA · vérification humaine requise avant usage externe";
@@ -21,7 +23,7 @@ export default function AITransparencyNotice(){
       host.appendChild(badge);
     };
     sync();
-    const observer=new MutationObserver(()=>sync());
+    const observer=new MutationObserver(sync);
     observer.observe(document.body,{childList:true,subtree:true});
     return()=>{observer.disconnect();document.querySelectorAll(`.${marker}`).forEach(node=>node.remove());};
   },[]);
