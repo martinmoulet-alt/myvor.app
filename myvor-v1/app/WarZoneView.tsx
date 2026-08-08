@@ -1,7 +1,8 @@
 "use client";
 
-import {useMemo,useState,type ReactNode} from "react";
+import {useEffect,useMemo,useState,type ReactNode} from "react";
 import {AlertTriangle,ArrowRight,CheckCircle2,CircleDot,ExternalLink,FileText,Plus,RefreshCw,ShieldCheck,Sparkles,Target,Users} from "lucide-react";
+import {listProductions,saveProduction,updateProductionContent,type Production} from "@/lib/productions";
 import {supabase} from "@/lib/supabase";
 import styles from "./WarZoneView.module.css";
 
@@ -15,12 +16,17 @@ type StrategyStep={order:number;title:string;target_actor_id:string;target_name:
 type DetailedStrategy={diagnosis:{objective:string;decision_point:string;current_constraint:string;opportunity_window:string;recommended_path:string};targets:StrategyTarget[];sequence:StrategyStep[];evidence_gaps:string[];stop_rules:string[];review_trigger:string};
 type StrategyPayload={strategy?:DetailedStrategy;engine?:string;model?:string;watch_items_used?:number;actors_used?:number};
 type StrategyRequest={dossier:WarZoneDossier;actors:WarZoneActor[];watch:WarZoneWatch[]};
-type Props={dossier:WarZoneDossier|null;actors:WarZoneActor[];watch:WarZoneWatch[];onOpenActor:(actor:WarZoneActor)=>void;onActions?:(drafts:WarZoneActionDraft[])=>Promise<void>|void};
+type Props={dossier:WarZoneDossier|null;actors:WarZoneActor[];watch:WarZoneWatch[];onOpenActor:(actor:WarZoneActor)=>void;onActions?:(drafts:WarZoneActionDraft[])=>Promise<void>|void;onOpenBuilder?:(dossierId:string)=>void;onOpenActions?:()=>void};
+
+type WarZoneProductionContent={strategy?:DetailedStrategy;watch_ids?:string[];actor_ids?:string[];status?:"draft"|"plan_added";engine?:string|null;model?:string|null;generated_at?:string;plan_added_at?:string};
 
 function score(actor:WarZoneActor){const raw=Number(actor.influence_score);return Number.isFinite(raw)?Math.max(0,Math.min(100,Math.round(raw))):Math.max(20,Math.min(100,Math.round((actor.influence||1)*20)));}
 function strategicIndex(actors:WarZoneActor[],watch:WarZoneWatch[]){if(!actors.length)return 20;const actorBase=actors.reduce((sum,actor)=>sum+score(actor),0)/actors.length;const evidence=Math.min(16,watch.length*1.5);return Math.max(18,Math.min(92,Math.round(actorBase*.76+evidence)));}
 function evidenceFor(index:number,watch:WarZoneWatch[]){return index>=1&&index<=watch.length?watch[index-1]:null;}
 function evidenceLabel(index:number,watch:WarZoneWatch[]){const item=evidenceFor(index,watch);return item?`${item.nature} — ${item.title}`:`Source ${index}`;}
+function contentOf(production:Production|null){return (production?.content||{}) as WarZoneProductionContent;}
+function sameIds(a:string[],b:string[]){if(a.length!==b.length)return false;const set=new Set(a);return b.every(id=>set.has(id));}
+function versionLabel(item:Production,index:number,total:number){const date=new Date(item.created_at);const when=Number.isNaN(date.getTime())?"":date.toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});return `V${total-index}${when?` · ${when}`:""}`;}
 
 async function postStrategy<T>(body:StrategyRequest):Promise<T>{
   if(!supabase)throw new Error("La connexion Supabase de Myvor n’est pas configurée.");
@@ -32,14 +38,41 @@ async function postStrategy<T>(body:StrategyRequest):Promise<T>{
   return data as T;
 }
 
-export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions}:Props){
+export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions,onOpenBuilder,onOpenActions}:Props){
   const [strategy,setStrategy]=useState<DetailedStrategy|null>(null);
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState("");
   const [saving,setSaving]=useState(false);
   const [saved,setSaved]=useState(false);
+  const [versions,setVersions]=useState<Production[]>([]);
+  const [productionId,setProductionId]=useState<string|null>(null);
   const index=useMemo(()=>strategicIndex(actors,watch),[actors,watch]);
   const actorMap=useMemo(()=>new Map(actors.map(actor=>[actor.id,actor])),[actors]);
+  const currentProduction=useMemo(()=>versions.find(item=>item.id===productionId)||null,[versions,productionId]);
+  const currentContent=contentOf(currentProduction);
+  const currentWatchIds=useMemo(()=>watch.map(item=>item.id),[watch]);
+  const hasNewSignals=Boolean(strategy&&currentContent.watch_ids&&!sameIds(currentContent.watch_ids,currentWatchIds));
+  const executionStatus=currentContent.status==="plan_added"?"Plan ajouté aux actions":"Stratégie prête";
+
+  useEffect(()=>{
+    let active=true;
+    setStrategy(null);setVersions([]);setProductionId(null);setSaved(false);setError("");
+    if(!dossier?.id)return()=>{active=false;};
+    listProductions(dossier.id).then(({data})=>{
+      if(!active)return;
+      const history=data.filter(item=>item.type==="warzone");
+      setVersions(history);
+      const latest=history[0]||null;
+      if(latest){const content=contentOf(latest);if(content.strategy)setStrategy(content.strategy);setProductionId(latest.id);setSaved(content.status==="plan_added");}
+    }).catch(()=>undefined);
+    return()=>{active=false;};
+  },[dossier?.id]);
+
+  function selectVersion(id:string){
+    const selected=versions.find(item=>item.id===id)||null;
+    const content=contentOf(selected);
+    setProductionId(id);setStrategy(content.strategy||null);setSaved(content.status==="plan_added");setError("");
+  }
 
   async function generate(){
     if(!dossier||!actors.length)return;
@@ -47,7 +80,12 @@ export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions}
     try{
       const payload=await postStrategy<StrategyPayload>({dossier,actors,watch});
       if(!payload.strategy)throw new Error("La War Zone n’a pas retourné de stratégie exploitable.");
+      const generatedAt=new Date().toISOString();
+      const content:WarZoneProductionContent={strategy:payload.strategy,watch_ids:currentWatchIds,actor_ids:actors.map(actor=>actor.id),status:"draft",engine:payload.engine||null,model:payload.model||null,generated_at:generatedAt};
+      const result=await saveProduction({dossier_id:dossier.id,type:"warzone",title:`War Zone — ${dossier.title}`,content:content as unknown as Record<string,unknown>});
+      if(result.error)throw result.error;
       setStrategy(payload.strategy);
+      if(result.data){setVersions(current=>[result.data!,...current.filter(item=>item.id!==result.data!.id)]);setProductionId(result.data.id);}
     }catch(err:any){setError(err?.message||"Impossible de générer la stratégie détaillée.");}
     finally{setLoading(false);}
   }
@@ -66,7 +104,13 @@ export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions}
         description:[`Objectif : ${step.objective}`,`Pourquoi maintenant : ${step.why_now}`,`Moyens : ${step.means.join(" ; ")}`,`Livrable : ${step.deliverable}`,`Cadre factuel : ${step.message_frame}`,`Dépendance : ${step.dependency}`,`Signal de réussite : ${step.success_signal}`,`Fallback : ${step.fallback}`,`Risque : ${step.risk}`].join("\n"),
       }));
       await onActions(drafts);setSaved(true);
-    }finally{setSaving(false);}
+      if(productionId&&currentProduction){
+        const nextContent={...currentContent,status:"plan_added" as const,plan_added_at:new Date().toISOString()};
+        const updated=await updateProductionContent(productionId,nextContent as unknown as Record<string,unknown>);
+        if(!updated.error&&updated.data)setVersions(current=>current.map(item=>item.id===productionId?updated.data!:item));
+      }
+    }catch(err:any){setError(err?.message||"Impossible d’ajouter le plan aux actions.");}
+    finally{setSaving(false);}
   }
 
   if(!dossier)return <Empty icon={<Target size={38}/>} title="Sélectionnez un dossier" text="La War Zone construit sa stratégie à partir de l’objectif, du Radar et de la veille."/>;
@@ -78,13 +122,25 @@ export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions}
       <div className={styles.indexBox}><span>Préparation du dossier</span><div><strong>{index}</strong><em>/100</em></div><small>{actors.length} acteur(s) Radar · {watch.length} évolution(s) liée(s)</small></div>
     </section>
 
+    {versions.length>0&&<section style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",padding:"12px 14px",border:"1px solid #28425f",borderRadius:14,background:"#081b31",color:"#dce8f5"}}>
+      <b style={{fontSize:12}}>Versions War Zone · {versions.length}</b>
+      <select aria-label="Version de la War Zone" value={productionId||""} onChange={event=>selectVersion(event.target.value)} style={{minHeight:36,borderRadius:10,border:"1px solid #34506f",background:"#0b2541",color:"#fff",padding:"0 10px"}}>{versions.map((item,versionIndex)=><option key={item.id} value={item.id}>{versionLabel(item,versionIndex,versions.length)}</option>)}</select>
+      <span style={{fontSize:11,fontWeight:800,color:currentContent.status==="plan_added"?"#6fd6a0":"#a9bdd3"}}>{executionStatus}</span>
+      {hasNewSignals&&<span style={{marginLeft:"auto",fontSize:11,fontWeight:900,color:"#f3bd3e"}}>Nouveaux signaux de veille · recalcul recommandé</span>}
+    </section>}
+
     {!strategy?<section className={styles.launchCard}>
       <Sparkles size={31}/><h3>Construire le plan de ciblage opérationnel</h3>
       <p>Myvor va déterminer précisément les cibles institutionnelles, le sujet à traiter avec chacune, la raison du ciblage, le canal recommandé, les moyens documentaires, le timing, les preuves à mobiliser et le signal de réussite.</p>
       {error&&<div className={styles.error}>{error}</div>}
       <button onClick={()=>void generate()} disabled={loading}>{loading?<RefreshCw size={16} className={styles.spin}/>:<Sparkles size={16}/>} {loading?"Analyse stratégique…":"Générer la stratégie détaillée"}</button>
     </section>:<>
-      <div className={styles.topActions}><button className={styles.secondary} onClick={()=>void generate()} disabled={loading}><RefreshCw size={14} className={loading?styles.spin:""}/>Recalculer</button><button className={styles.primary} onClick={()=>void addPlan()} disabled={!onActions||saving}>{saved?<CheckCircle2 size={14}/>:<Plus size={14}/>} {saving?"Ajout…":saved?"Plan ajouté":"Ajouter le plan aux actions"}</button></div>
+      <div className={styles.topActions}>
+        <button className={styles.secondary} onClick={()=>void generate()} disabled={loading}><RefreshCw size={14} className={loading?styles.spin:""}/>{hasNewSignals?"Recalculer avec la nouvelle veille":"Recalculer"}</button>
+        {onOpenBuilder&&<button className={styles.secondary} onClick={()=>onOpenBuilder(dossier.id)}><FileText size={14}/>Créer un livrable</button>}
+        {onOpenActions&&<button className={styles.secondary} onClick={onOpenActions}><ArrowRight size={14}/>Voir les actions</button>}
+        <button className={styles.primary} onClick={()=>void addPlan()} disabled={!onActions||saving}>{saved?<CheckCircle2 size={14}/>:<Plus size={14}/>} {saving?"Ajout…":saved?"Plan ajouté":"Ajouter le plan aux actions"}</button>
+      </div>
       {error&&<div className={styles.error}>{error}</div>}
 
       <section className={styles.section}>
@@ -112,10 +168,10 @@ export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions}
             </div>
             <div className={styles.twoCols}>
               <div className={styles.subCard}><span>Angles factuels à porter</span><ul>{target.factual_angles.map((angle,i)=><li key={i}>{angle}</li>)}</ul></div>
-              <div className={styles.subCard}><span>Preuves à mobiliser</span>{target.evidence_indexes.length?<ul>{target.evidence_indexes.map(index=><li key={index}>{evidenceLabel(index,watch)}</li>)}</ul>:<p>Aucune source directe suffisante : commencer par consolider la preuve.</p>}</div>
+              <div className={styles.subCard}><span>Preuves à mobiliser</span>{target.evidence_indexes.length?<ul>{target.evidence_indexes.map(sourceIndex=><li key={sourceIndex}>{evidenceLabel(sourceIndex,watch)}</li>)}</ul>:<p>Aucune source directe suffisante : commencer par consolider la preuve.</p>}</div>
             </div>
             <div className={styles.outcomes}><div><CheckCircle2 size={14}/><span><b>Signal de réussite</b>{target.success_signal}</span></div><div><ArrowRight size={14}/><span><b>Fallback</b>{target.fallback}</span></div><div><AlertTriangle size={14}/><span><b>Ne pas supposer</b>{target.do_not_assume}</span></div></div>
-          </article>})}</div>
+          </article>;})}</div>
       </section>
 
       <section className={styles.section}>
@@ -126,11 +182,11 @@ export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions}
               <div className={styles.stepHead}><div><span>Mouvement {step.order}</span><h4>{step.title}</h4>{step.target_name&&<p>Cible : {step.target_name}</p>}</div><em>{step.timing}</em></div>
               <div className={styles.stepGrid}><TargetField label="Objectif" value={step.objective}/><TargetField label="Pourquoi maintenant" value={step.why_now}/><TargetField label="Livrable" value={step.deliverable}/><TargetField label="Dépendance" value={step.dependency}/></div>
               <div className={styles.twoCols}><div className={styles.subCard}><span>Moyens</span><ul>{step.means.map((mean,i)=><li key={i}>{mean}</li>)}</ul></div><div className={styles.subCard}><span>Cadre du message</span><p>{step.message_frame}</p></div></div>
-              {step.evidence_indexes.length>0&&<div className={styles.evidenceLine}><FileText size={14}/><span>{step.evidence_indexes.map(index=>evidenceLabel(index,watch)).join(" · ")}</span></div>}
+              {step.evidence_indexes.length>0&&<div className={styles.evidenceLine}><FileText size={14}/><span>{step.evidence_indexes.map(sourceIndex=>evidenceLabel(sourceIndex,watch)).join(" · ")}</span></div>}
               <div className={styles.outcomes}><div><CheckCircle2 size={14}/><span><b>Réussite</b>{step.success_signal}</span></div><div><ArrowRight size={14}/><span><b>Si ça ne marche pas</b>{step.fallback}</span></div><div><AlertTriangle size={14}/><span><b>Risque</b>{step.risk}</span></div></div>
               {actor&&<button className={styles.actorLink} onClick={()=>onOpenActor(actor)}>Ouvrir la fiche de {actor.name} <ExternalLink size={12}/></button>}
             </div>
-          </article>})}</div>
+          </article>;})}</div>
       </section>
 
       <section className={styles.section}>
@@ -144,7 +200,7 @@ export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions}
   </div>;
 }
 
-function Empty({icon,title,text}:{icon:ReactNode;title:string;text:string}){return <div className={styles.empty}>{icon}<h3>{title}</h3><p>{text}</p></div>}
-function SectionTitle({number,title,subtitle}:{number:string;title:string;subtitle:string}){return <div className={styles.sectionTitle}><span>{number}</span><div><h3>{title}</h3><p>{subtitle}</p></div></div>}
-function Diagnostic({label,value}:{label:string;value:string}){return <div className={styles.diagnostic}><span>{label}</span><p>{value}</p></div>}
-function TargetField({label,value}:{label:string;value:string}){return <div className={styles.targetField}><span>{label}</span><p>{value||"À préciser"}</p></div>}
+function Empty({icon,title,text}:{icon:ReactNode;title:string;text:string}){return <div className={styles.empty}>{icon}<h3>{title}</h3><p>{text}</p></div>;}
+function SectionTitle({number,title,subtitle}:{number:string;title:string;subtitle:string}){return <div className={styles.sectionTitle}><span>{number}</span><div><h3>{title}</h3><p>{subtitle}</p></div></div>;}
+function Diagnostic({label,value}:{label:string;value:string}){return <div className={styles.diagnostic}><span>{label}</span><p>{value}</p></div>;}
+function TargetField({label,value}:{label:string;value:string}){return <div className={styles.targetField}><span>{label}</span><p>{value||"À préciser"}</p></div>;}
