@@ -85,7 +85,26 @@ async function fetchFeed(source:Source){const xml=await fetchText(source.url,"ap
 
 async function fetchHtmlListing(input:{name:string;url:string;base:string;pathPattern:RegExp;defaultNature:string;limit?:number}):Promise<FeedItem[]>{const html=await fetchText(input.url,"text/html,*/*");const items:FeedItem[]=[];const regex=/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;for(const match of html.matchAll(regex)){const href=decodeHtml(match[1]);if(!input.pathPattern.test(href))continue;const title=decodeHtml(match[2]);if(title.length<12||isGenericNavigationTitle(title))continue;const source_url=href.startsWith("http")?href:`${input.base}${href.startsWith("/")?"":"/"}${href}`;const excerpt=excerptAround(html,match.index||0,title);if(excerpt.length<60)continue;items.push({title,nature:inferNature(title,input.defaultNature,`${input.name} ${source_url}`),source_url,source_name:input.name,published_at:dateAround(html,match.index||0),excerpt:excerpt||undefined});}return newestFirst(dedupeItems(items)).slice(0,input.limit||12);}
 
-async function fetchLegifranceJorf():Promise<FeedItem[]>{const html=await fetchText("https://www.legifrance.gouv.fr/jorf/jo","text/html,application/xhtml+xml,*/*",7500);const issueDate=decodeHtml(html.match(/Journal officiel de la République française[^<]*du\s+([^<]+)/i)?.[1]||"");const published_at=normalizePublishedAt(issueDate);const items:FeedItem[]=[];const regex=/<a\b[^>]*href=["']([^"']*\/jorf\/id\/JORFTEXT[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;for(const match of html.matchAll(regex)){const title=decodeHtml(match[2]);if(!title||isGenericNavigationTitle(title))continue;const nature=inferNature(title,"Texte réglementaire");if(!["Loi","Ordonnance","Décret","Arrêté","Décision / jurisprudence","Rapport"].includes(nature))continue;const href=match[1];const source_url=href.startsWith("http")?href:`https://www.legifrance.gouv.fr${href.startsWith("/")?"":"/"}${href}`;items.push({title,nature,source_url,source_name:"Légifrance — Journal officiel",published_at,excerpt:excerptAround(html,match.index||0,title)||undefined});}return dedupeItems(items).slice(0,80);}
+function parseLegifranceIssue(html:string):FeedItem[]{const issueDate=decodeHtml(html.match(/Journal officiel de la République française[^<]*du\s+([^<]+)/i)?.[1]||"");const published_at=normalizePublishedAt(issueDate);const items:FeedItem[]=[];const regex=/<a\b[^>]*href=["']([^"']*\/jorf\/id\/JORFTEXT[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;for(const match of html.matchAll(regex)){const title=decodeHtml(match[2]);if(!title||isGenericNavigationTitle(title))continue;const nature=inferNature(title,"Texte réglementaire");if(!["Loi","Ordonnance","Décret","Arrêté","Décision / jurisprudence","Rapport"].includes(nature))continue;const href=match[1];const source_url=href.startsWith("http")?href:`https://www.legifrance.gouv.fr${href.startsWith("/")?"":"/"}${href}`;items.push({title,nature,source_url,source_name:"Légifrance — Journal officiel",published_at,excerpt:excerptAround(html,match.index||0,title)||undefined});}return dedupeItems(items).slice(0,45);}
+async function fetchLegifranceJorf():Promise<FeedItem[]>{
+  const currentHtml=await fetchText("https://www.legifrance.gouv.fr/jorf/jo","text/html,application/xhtml+xml,*/*",7500);
+  const current=parseLegifranceIssue(currentHtml);
+  const archiveHtml=await fetchText("https://www.legifrance.gouv.fr/jorf/jo/period/?datePubli=02%2F06%2F2004+%3E+31%2F12%2F2999","text/html,application/xhtml+xml,*/*",7500);
+  const issueUrls:string[]=[];
+  for(const match of archiveHtml.matchAll(/href=["']([^"']*\/jorf\/jo\/20\d{2}\/\d{2}\/\d{2}\/\d{4})["']/gi)){
+    const href=decodeHtml(match[1]);const url=href.startsWith("http")?href:`https://www.legifrance.gouv.fr${href.startsWith("/")?"":"/"}${href}`;
+    if(!issueUrls.includes(url))issueUrls.push(url);
+    if(issueUrls.length>=16)break;
+  }
+  const historical:FeedItem[]=[];
+  for(let start=0;start<issueUrls.length;start+=4){
+    const batch=issueUrls.slice(start,start+4);
+    const pages=await Promise.all(batch.map(url=>fetchText(url,"text/html,application/xhtml+xml,*/*",5000).then(parseLegifranceIssue).catch(()=>[] as FeedItem[])));
+    historical.push(...pages.flat());
+  }
+  return newestFirst(dedupeItems([...current,...historical])).slice(0,520);
+}
+async function fetchDgccrf(){return fetchHtmlListing({name:"DGCCRF — Fiches pratiques",url:"https://www.economie.gouv.fr/dgccrf/les-fiches-pratiques",base:"https://www.economie.gouv.fr",pathPattern:/\/dgccrf\/les-fiches-pratiques\/(?!?$)[a-z0-9-]+/i,defaultNature:"Fiche pratique / doctrine",limit:40});}
 async function fetchViePubliqueReports(){return fetchHtmlListing({name:"Vie-publique — Rapports",url:"https://www.vie-publique.fr/bibliotheque-rapports-publics",base:"https://www.vie-publique.fr",pathPattern:/\/rapport\//i,defaultNature:"Rapport",limit:30});}
 async function fetchConseilConstitutionnel(){return fetchHtmlListing({name:"Conseil constitutionnel",url:"https://qpc360.conseil-constitutionnel.fr/",base:"https://qpc360.conseil-constitutionnel.fr",pathPattern:/(decision|decisions|qpc)/i,defaultNature:"Décision / jurisprudence",limit:30});}
 async function fetchCnil(){return fetchHtmlListing({name:"CNIL",url:"https://www.cnil.fr/fr/actualite",base:"https://www.cnil.fr",pathPattern:/\/fr\/(?!actualite\/?$)(?:[a-z0-9-]+)(?:\/|$)/i,defaultNature:"Communiqué institutionnel",limit:30});}
@@ -98,6 +117,7 @@ export async function GET(){
   const tasks:Promise<SourceResult>[]=[
     ...SOURCES.map(source=>collect(source.name,()=>fetchFeed(source))),
     collect("Légifrance — Journal officiel",fetchLegifranceJorf),
+    collect("DGCCRF — Fiches pratiques",fetchDgccrf),
     collect("Vie-publique — Rapports",fetchViePubliqueReports),
     collect("Conseil constitutionnel",fetchConseilConstitutionnel),
     collect("CNIL",fetchCnil),
