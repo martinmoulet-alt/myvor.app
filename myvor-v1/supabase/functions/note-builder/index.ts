@@ -70,6 +70,8 @@ Deno.serve(async(req)=>{
     const prompt=[
       "Tu es l’assistant d’édition du Note Builder Myvor, spécialisé en affaires publiques.",
       actionRules[action]||actionRules.reformulate,
+      "Rédige uniquement des phrases complètes et concrètes. Chaque phrase doit identifier clairement le sujet concerné et expliquer l’action, l’effet, le risque ou la décision ; évite les fragments nominaux comme 'risque juridique', 'enjeu fort', 'à surveiller' ou 'action rapide' sans explication.",
+      "Quand une action est proposée, précise qui doit agir, sur quoi et dans quel but dès que le contexte le permet.",
       "Ne crée aucun fait, chiffre, date, acteur ou source qui n’existe pas dans le passage.",
       "Conserve le sens, les noms propres et les réserves de fiabilité.",
       "Réponds uniquement avec le passage réécrit, sans commentaire ni guillemets.",
@@ -81,7 +83,7 @@ Deno.serve(async(req)=>{
       const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:"gpt-4.1-mini",input:prompt,max_output_tokens:900,store:false}),signal:controller.signal});
       if(!response.ok){const raw=await response.text();return json({error:`OpenAI a refusé la requête (${response.status}) : ${raw.slice(0,220)}`},502);}
       const text=extractOutputText(await response.json()).trim();if(!text)return json({error:"La réécriture n’a renvoyé aucun texte."},502);
-      return json({text,engine:"supabase-note-builder-edit"});
+      return json({text,engine:"supabase-note-builder-edit-v2"});
     }catch(error:any){if(error?.name==="AbortError")return json({error:"La réécriture a dépassé 30 secondes."},504);return json({error:`Erreur d’édition : ${error?.message||"inconnue"}`},500);}finally{clearTimeout(timer);}
   }
 
@@ -113,6 +115,10 @@ Deno.serve(async(req)=>{
   const prompt=[
     "Tu es le Note Builder de Myvor, outil professionnel d’affaires publiques.",
     "Transforme les analyses existantes en un document directement exploitable par un consultant. Le résultat doit ressembler à un livrable métier, jamais à une réponse générique d’assistant IA.",
+    "RÈGLE DE RÉDACTION OBLIGATOIRE : rédige des phrases complètes, concrètes et autonomes. Une phrase utile doit indiquer clairement qui ou quoi est concerné, ce qui change ou doit être fait, et pourquoi cela compte pour le client.",
+    "Interdis les formulations télégraphiques ou nominales isolées telles que 'risque juridique', 'pression réglementaire', 'enjeu réputationnel', 'à surveiller', 'mobiliser les acteurs' ou 'agir rapidement'. Remplace-les par une explication opérationnelle complète.",
+    "Pour chaque recommandation ou prochaine étape, précise le responsable ou l’équipe concernée lorsque le contexte le permet, l’action à réaliser, l’objet de cette action et le résultat attendu. Si un élément manque, dis précisément lequel doit être confirmé au lieu de rester vague.",
+    "Les key_points doivent eux aussi être rédigés comme des phrases complètes et décisionnelles, pas comme des intitulés.",
     `DATE DE GÉNÉRATION : ${currentDateFr} (${currentDateIso}).`,
     `Tu dois traiter transversalement l’ensemble des ${cleanedItems.length} évolutions de veille fournies. Ne réduis pas l’analyse à la première source et fais ressortir convergences, divergences et signaux cumulés lorsqu’ils existent.`,
     "IMPORTANT : les données temporelles antérieures à aujourd’hui ont été retirées du contexte. N’essaie pas de reconstruire ou de deviner un ancien calendrier. Si aucun calendrier actuel fiable n’est fourni, indique seulement qu’une vérification du calendrier institutionnel actuel est requise.",
@@ -147,7 +153,7 @@ Deno.serve(async(req)=>{
     const cleanedContent=sanitizeGeneratedContent(document?.content,now);
     if(!cleanedContent)return json({error:"La réponse IA est incomplète. Réessaie."},502);
     const cleanedKeyPoints=Array.isArray(document.key_points)?document.key_points.map((item:any)=>removePastTemporalSentences(String(item),now)).filter(Boolean).slice(0,6):[];
-    return json({document:{title:String(document.title||`Document — ${dossier.title}`),subject:String(document.subject||""),content:cleanedContent,key_points:cleanedKeyPoints,sources:cleanedItems.map(item=>({title:item.title,url:item.source_url||""}))},engine:"supabase-note-builder-authenticated-v2",context_used:{impact:!!impact,radar:!!radar,watch_items:items.length,generation_date:currentDateIso,past_dates_filtered:true}});
+    return json({document:{title:String(document.title||`Document — ${dossier.title}`),subject:String(document.subject||""),content:cleanedContent,key_points:cleanedKeyPoints,sources:cleanedItems.map(item=>({title:item.title,url:item.source_url||""}))},engine:"supabase-note-builder-authenticated-v3",context_used:{impact:!!impact,radar:!!radar,watch_items:items.length,generation_date:currentDateIso,past_dates_filtered:true,complete_sentence_style:true}});
   }catch(error:any){if(error?.name==="AbortError")return json({error:"La génération IA a dépassé 90 secondes. Réessaie."},504);return json({error:`Erreur du Note Builder : ${error?.message||"inconnue"}`},500);}
   finally{clearTimeout(timer);}
 });
