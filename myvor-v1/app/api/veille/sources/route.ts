@@ -143,7 +143,15 @@ async function fetchCnil(){return fetchHtmlListing({name:"CNIL",url:"https://www
 async function fetchArcep(){return fetchHtmlListing({name:"ARCEP",url:"https://www.arcep.fr/actualites.html",base:"https://www.arcep.fr",pathPattern:/(communiques-de-presse|actualites\/actualites-et-communiques|uploads\/tx_gspublication|consultations-publiques)/i,defaultNature:"Communiqué institutionnel",limit:30});}
 async function fetchEurLex():Promise<FeedItem[]>{const html=await fetchText("https://eur-lex.europa.eu/oj/direct-access.html?locale=fr","text/html,*/*");const items:FeedItem[]=[];const regex=/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;for(const match of html.matchAll(regex)){const href=decodeHtml(match[1]);const title=decodeHtml(match[2]);if(title.length<8||isGenericNavigationTitle(title))continue;if(!/(legal-content|oj\/daily-view|oj\/direct-access)/i.test(href))continue;if(!/(règlement|reglement|directive|décision|decision|journal officiel|législation|legislation)/i.test(title))continue;const source_url=href.startsWith("http")?href:`https://eur-lex.europa.eu${href.startsWith("/")?"":"/"}${href}`;items.push({title,nature:inferNature(title,"Acte de l’Union européenne",source_url),source_url,source_name:"EUR-Lex",published_at:dateAround(html,match.index||0),excerpt:excerptAround(html,match.index||0,title)||undefined});}return newestFirst(dedupeItems(items)).slice(0,40);}
 
-async function collect(name:string,task:()=>Promise<FeedItem[]>):Promise<SourceResult>{try{return{name,items:await task()};}catch(error:any){return{name,items:[],error:String(error?.message||error||"erreur inconnue")};}}
+async function collect(name:string,task:()=>Promise<FeedItem[]>):Promise<SourceResult>{
+  let timer:ReturnType<typeof setTimeout>|null=null;
+  try{
+    const deadline=new Promise<FeedItem[]>((_,reject)=>{timer=setTimeout(()=>reject(new Error("Délai source dépassé (12 s)")),12000);});
+    const items=await Promise.race([task(),deadline]);
+    return{name,items};
+  }catch(error:any){return{name,items:[],error:String(error?.message||error||"erreur inconnue")};}
+  finally{if(timer)clearTimeout(timer);}
+}
 
 export async function GET(){
   const tasks:Promise<SourceResult>[]=[
