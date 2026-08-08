@@ -3,6 +3,7 @@
 import {useEffect} from "react";
 
 const FLOW_LENGTH=6;
+const RADAR_INDEX=4;
 
 function navGroups(){
   return [
@@ -10,6 +11,13 @@ function navGroups(){
     Array.from(document.querySelectorAll<HTMLButtonElement>(".mobile-menu-nav button")),
     Array.from(document.querySelectorAll<HTMLButtonElement>(".mobile-nav button"))
   ];
+}
+
+function exposeWarZone(button:HTMLButtonElement,index:number){
+  if(index!==RADAR_INDEX)return;
+  const node=Array.from(button.childNodes).find(child=>child.nodeType===Node.TEXT_NODE&&String(child.textContent||"").trim().length>0);
+  if(node&&node.textContent?.trim()!=="Radar & War Zone")node.textContent="Radar & War Zone";
+  button.setAttribute("aria-label","Radar d’influence et War Zone");
 }
 
 export default function WorkflowGuide(){
@@ -28,6 +36,7 @@ export default function WorkflowGuide(){
 
       for(const group of groups){
         group.forEach((button,index)=>{
+          exposeWarZone(button,index);
           const recommended=index===next;
           button.classList.toggle("myvor-flow-next",recommended);
           if(recommended){
