@@ -1,7 +1,7 @@
 import type {ParsedImpactDeadline} from "./impactDeadline";
 import type {ImpactQualityStatus,ScoreDetail,ScoreKey} from "./impactAudit";
 export type DossierForImpact={id:string;client:string;title:string;objective:string;context:string;status?:string;created_at?:string;sector?:string|null;activity?:string|null;strategic_issues?:string[];risks_to_avoid?:string[];opportunities?:string[];client_position?:string|null;key_actors?:string[];watch_topics?:string[];watch_subtopics?:string[];reference_texts?:string[];key_deadlines?:string[];internal_notes?:string|null};
-export type WatchForImpact={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at?:string};
+export type WatchForImpact={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at?:string;source_name?:string|null;published_at?:string|null;suggested_dossier_id?:string|null;qualification_confidence?:number|null;qualification_reason?:string|null};
 export type ImpactEvidence={kind:"official"|"dossier";source_index?:number;source_title:string;source_url:string;excerpt:string;confidence:number;page?:number;section?:string;article?:string;fetched_at?:string};
 export type ImpactDisposition={disposition:string;impact_client:string;niveau:string;evidence?:ImpactEvidence|null};
 export type ScoreJustifications=Partial<Record<ScoreKey,string>>;export type ScoreEvidence=Partial<Record<ScoreKey,ImpactEvidence|null>>;
