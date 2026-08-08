@@ -34,7 +34,10 @@ function positionKey(value?:string):keyof typeof POSITION_COLORS{return value===
 function positionColor(actor:Actor){return POSITION_COLORS[positionKey(actor.position)];}
 function certaintyLabel(value?:string){if(value==="confirme")return "Confirmé";if(value==="probable")return "Probable";return "À valider";}
 function positionLabel(value?:string){if(value==="favorable")return "Favorable";if(value==="reserve")return "Réservée";if(value==="opposition")return "Opposition";return "Inconnue";}
-function actorsFromProduction(content:Record<string,unknown>){const raw=(content as any)?.actors;return Array.isArray(raw)?raw as Actor[]:[];}
+function actorHasVerifiedPositionEvidence(actor:Actor){return actor.evidence?.verified===true&&Boolean(presentableText(actor.evidence?.source_title))&&Boolean(presentableText(actor.evidence?.source_url));}
+function sanitizeActorPosition(actor:Actor):Actor{if(positionKey(actor.position)==="inconnue"||actorHasVerifiedPositionEvidence(actor))return actor;return{...actor,position:"inconnue",position_reason:"Position non attribuée : aucune source publique vérifiée ne l’établit.",certainty:"a_confirmer"};}
+function sanitizeActors(actors:Actor[]){return actors.map(sanitizeActorPosition);}
+function actorsFromProduction(content:Record<string,unknown>){const raw=(content as any)?.actors;return Array.isArray(raw)?sanitizeActors(raw as Actor[]):[];}
 function actorSize(actor:Actor){return 62+Math.max(0,Math.min(5,Math.ceil(actorScore(actor)/20)))*5;}
 function orbitMotion(actor:Actor,actors:Actor[]){const same=actors.filter(item=>item.orbit===actor.orbit);const rank=Math.max(0,same.findIndex(item=>item.id===actor.id));const duration=ORBIT_DURATIONS[actor.orbit];const delay=-(duration*(rank/Math.max(1,same.length)))-(actor.orbit*.6);return{radius:ORBIT_RADII[actor.orbit],duration,delay,direction:(actor.orbit===2?"reverse":"normal") as "normal"|"reverse"};}
 function formatSignalDate(value:string){if(!value)return "Date non disponible";const date=new Date(value);if(Number.isNaN(date.getTime()))return value;return new Intl.DateTimeFormat("fr-FR",{day:"2-digit",month:"short",year:"numeric"}).format(date);}
@@ -73,7 +76,7 @@ export default function RadarModule({dossiers,watch,onActions,onOpenBuilder,onOp
     setLoading(true);setError("");setDetailError("");setSelected(null);
     try{
       const payload=await postRadar<RadarPayload>({dossier,items:related});
-      const visible=(payload.actors||[]).slice(0,6);
+      const visible=sanitizeActors((payload.actors||[]).slice(0,6));
       setActors(visible);setQuality(payload.quality||null);setGenerated(true);
       await saveProduction({dossier_id:dossier.id,type:"radar",title:`Radar d’influence — ${dossier.title}`,content:{actors:visible,item_ids:related.map(i=>i.id),quality:payload.quality||null,grounding:payload.grounding||null,engine:payload.engine||null,model:payload.model||null}});
     }catch(err:any){setError(err?.message||"Génération impossible");}
@@ -86,7 +89,7 @@ export default function RadarModule({dossiers,watch,onActions,onOpenBuilder,onOp
     setEnrichingId(actor.id);
     try{
       const payload=await postRadarEnrich<ActorDetailPayload>({dossier,items:related,actors:[actor]});
-      const detailed=payload.actor;
+      const detailed=payload.actor?sanitizeActorPosition(payload.actor):null;
       if(!detailed)throw new Error("La fiche détaillée de cet acteur n’a pas été retournée.");
       const nextActors=actors.map(item=>item.id===actor.id?detailed:item);
       setActors(nextActors);
@@ -127,7 +130,7 @@ export default function RadarModule({dossiers,watch,onActions,onOpenBuilder,onOp
           {[3,2,1].map(orbit=><div key={orbit} className={styles.orbit} style={{width:ORBIT_RADII[orbit as 1|2|3]*2,height:ORBIT_RADII[orbit as 1|2|3]*2}}><span>{orbit===1?"Décision":orbit===2?"Influence":"Écosystème"}</span></div>)}
           <div className={styles.center}><Orbit size={24}/><b>Myvor</b><small>{dossier?.title||"Dossier"}</small></div>
           {actors.map(actor=>{const size=actorSize(actor);const motion=orbitMotion(actor,actors);const animationStyle:CSSProperties={animationDuration:`${motion.duration}s`,animationDelay:`${motion.delay}s`,animationDirection:motion.direction};const actorStyle={width:size,height:size,"--position-color":positionColor(actor),"--priority-color":priorityColor(actor)} as CSSProperties;return <div key={actor.id} className={`${styles.actorOrbit} ${selected?.id===actor.id?styles.actorOrbitPaused:""}`} style={animationStyle}><div className={styles.actorTravel} style={{transform:`translateX(${motion.radius}px)`}}><div className={styles.actorCounter} style={animationStyle}><button type="button" className={`${styles.actor} ${selected?.id===actor.id?styles.actorSelected:""}`} onClick={()=>void openActor(actor)} style={actorStyle} title={`${actor.name} — ${actorScore(actor)}/100`}><Users size={17}/><span>{actor.name}</span><small>{actorScore(actor)}</small></button></div></div></div>;})}
-        </div>:<EmptyRadar generated={generated} quality={quality}/>}<div className={styles.radarHint}><span>Couleur = position</span><span>Halo / taille = priorité</span><span>Rotation : 24–44 s selon l’orbite</span></div>
+        </div>:<EmptyRadar generated={generated} quality={quality}/>}<div className={styles.radarHint}><span>Couleur = position sourcée</span><span>Halo / taille = priorité</span><span>Rotation : 24–44 s selon l’orbite</span></div>
       </main>
 
       <aside className={styles.actorPanel}>{selected?<ActorDetail actor={selected} loading={enrichingId===selected.id} error={detailError}/>:<div className={styles.actorEmpty}><Building2 size={34}/><h3>Sélectionnez un acteur</h3><p>Cliquez sur un acteur du Radar pour afficher sa fiche détaillée.</p></div>}</aside>
