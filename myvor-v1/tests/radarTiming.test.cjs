@@ -17,5 +17,7 @@ test('radar adapts actor count to small dossiers',()=>{
 
 test('radar route is bounded for serverless execution',()=>{
   assert.match(route,/export const maxDuration=30/);
-  assert.match(route,/setTimeout\(\(\)=>controller\.abort\(\),2500\)/);
+  const verifySession=route.match(/async function verifySession[\s\S]*?finally\{clearTimeout\(timer\);\}\}/)?.[0]||'';
+  const authTimeout=Number(verifySession.match(/setTimeout\(\(\)=>controller\.abort\(\),(\d+)\)/)?.[1]||0);
+  assert.ok(authTimeout>0&&authTimeout<=4000,`auth verification timeout must stay <= 4000 ms, got ${authTimeout}`);
 });
