@@ -20,7 +20,7 @@ type Dossier={id:string;client:string;title:string;objective:string;context:stri
 type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string;source_name?:string|null;published_at?:string|null};
 type ActionDraft={dossier_id:string;type:string;title:string;description?:string;actor_name?:string;priority:string;due_date?:string|null};
 type ModuleContext={dossierId:string;watchIds:string[]};
-const nav=[["dashboard","Tableau de bord",BarChart3],["dossiers","Dossiers clients",BriefcaseBusiness],["veille","Veille",Search],["alerts","Alertes",Bell],["impact","Note d’impact",AlertTriangle],["radar","Radar d’influence",Radar],["builder","Note Builder",Sparkles],["team","Équipe & accès",Users]] as const;
+const nav=[["dashboard","Tableau de bord",BarChart3],["dossiers","Dossiers clients",BriefcaseBusiness],["veille","Veille",Search],["impact","Note d’impact",AlertTriangle],["radar","Radar & War Zone",Radar],["builder","Note Builder",Sparkles],["team","Équipe & accès",Users],["alerts","Alertes",Bell]] as const;
 const AUTO_LINK_THRESHOLD=.95;
 
 function parseWatchList(value:string){return [...new Set(value.split(/[\n,;]+/).map(item=>item.trim()).filter(Boolean))].slice(0,60);}
