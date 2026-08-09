@@ -13,10 +13,11 @@ function urgencyRank(value:string){const key=value.toLowerCase();return key==="a
 function time(value:string|null|undefined){const n=value?Date.parse(value):0;return Number.isFinite(n)?n:0;}
 function recency(value:string|null|undefined){const ageDays=Math.max(0,(Date.now()-time(value))/86400000);return Math.exp(-ageDays/18);}
 function activeStatus(value:string){const key=value.toLowerCase();return !["clos","clôtur","archive","termin","inactif"].some(token=>key.includes(token));}
+function vector(value:unknown):number[]{if(Array.isArray(value))return value.map(Number).filter(Number.isFinite);if(value&&ArrayBuffer.isView(value))return Array.from(value as Float32Array).map(Number).filter(Number.isFinite);return[];}
 function dot(a:number[],b:number[]){let sum=0;const size=Math.min(a.length,b.length);for(let i=0;i<size;i++)sum+=a[i]*b[i];return Math.max(0,Math.min(1,sum));}
 function semanticWatchText(item:Watch){return [item.title,item.nature,item.source_name,item.qualification_reason].filter(Boolean).map(value=>clip(value,700)).join(". ").slice(0,1800);}
 function dossierText(dossier:Dossier){return [dossier.title,dossier.objective,dossier.context,dossier.sector,dossier.activity,...list(dossier.strategic_issues,6),...list(dossier.watch_topics,8),...list(dossier.watch_subtopics,8),...list(dossier.key_actors,6)].filter(Boolean).join(". ").slice(0,2600);}
-async function embedMany(model:any,texts:string[]){const output:number[][]=[];for(let start=0;start<texts.length;start+=6){const batch=texts.slice(start,start+6);const settled=await Promise.allSettled(batch.map(text=>model.run(text,{mean_pool:true,normalize:true})));for(let i=0;i<settled.length;i++){const result=settled[i];output.push(result.status==="fulfilled"&&Array.isArray(result.value)?Array.from(result.value as number[]):[]);}}return output;}
+async function embedMany(model:any,texts:string[]){const output:number[][]=[];for(let start=0;start<texts.length;start+=6){const batch=texts.slice(start,start+6);const settled=await Promise.allSettled(batch.map(text=>model.run(text,{mean_pool:true,normalize:true})));for(const result of settled)output.push(result.status==="fulfilled"?vector(result.value):[]);}return output;}
 
 Deno.serve(async(req:Request)=>{
   if(req.method==="OPTIONS")return new Response("ok",{headers:CORS});
@@ -62,10 +63,11 @@ Deno.serve(async(req:Request)=>{
   }).slice(0,30);
   try{
     const model=new Supabase.ai.Session("gte-small");
-    const profileEmbedding=await model.run(profileText||"veille institutionnelle affaires publiques",{mean_pool:true,normalize:true});
+    const profileEmbedding=vector(await model.run(profileText||"veille institutionnelle affaires publiques",{mean_pool:true,normalize:true}));
+    if(!profileEmbedding.length)throw new Error("embedding profil vide");
     const embeddings=await embedMany(model,candidatePool.map(semanticWatchText));
     const scored=candidatePool.map((item,index)=>{
-      const similarity=embeddings[index]?.length?dot(Array.from(profileEmbedding as number[]),embeddings[index]):0;
+      const similarity=embeddings[index]?.length?dot(profileEmbedding,embeddings[index]):0;
       const urgency=urgencyRank(item.urgency)/4;const recent=recency(item.published_at||item.created_at);const dossierBoost=pinnedId&&item.dossier_id===pinnedId?1:item.dossier_id?0.35:0;
       const score=Math.max(0,Math.min(1,similarity*.72+urgency*.16+recent*.08+dossierBoost*.04));
       const reasons:string[]=[];if(pinnedId&&item.dossier_id===pinnedId)reasons.push("lié au dossier prioritaire");if(similarity>=.78)reasons.push("forte proximité avec vos enjeux");else if(similarity>=.64)reasons.push("proche de vos sujets suivis");if(urgency>=.75)reasons.push("urgence élevée");if(recent>.8)reasons.push("évolution récente");
