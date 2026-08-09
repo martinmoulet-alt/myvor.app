@@ -11,7 +11,7 @@ export default defineConfig({
   retries:process.env.CI?1:0,
   reporter:process.env.CI?[["line"],["html",{outputFolder:"playwright-report",open:"never"}]]:"list",
   webServer:externalBaseURL?undefined:{
-    command:"npm run dev -- -H 127.0.0.1",
+    command:process.env.CI?"npm start -- -H 127.0.0.1":"npm run dev -- -H 127.0.0.1",
     url:baseURL,
     reuseExistingServer:!process.env.CI,
     timeout:120_000,
