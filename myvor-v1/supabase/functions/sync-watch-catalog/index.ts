@@ -32,13 +32,16 @@ Deno.serve(async req=>{
   if(settingsError)return json({ok:false,error:"Impossible de charger les réglages de veille"},500);
   const userIds=[...new Set((settings||[]).map((row:any)=>String(row.user_id)).filter(Boolean))];
   if(!userIds.length)return json({ok:true,sources:sources.length,organizations:0,inserted:0});
-  const[{data:profiles},{data:memberships}]=await Promise.all([
-    supabase.from("user_profiles").select("user_id,active_organization_id").in("user_id",userIds),
-    supabase.from("organization_members").select("user_id,organization_id,joined_at").in("user_id",userIds).order("joined_at",{ascending:true}),
-  ]);
-  const profileByUser=new Map((profiles||[]).map((row:any)=>[String(row.user_id),String(row.active_organization_id||"")]));
-  const memberByUser=new Map<string,string>();for(const row of memberships||[]){const uid=String((row as any).user_id||""),org=String((row as any).organization_id||"");if(uid&&org&&!memberByUser.has(uid))memberByUser.set(uid,org);}
-  const orgOwners=new Map<string,string>();for(const uid of userIds){const org=profileByUser.get(uid)||memberByUser.get(uid)||"";if(org&&!orgOwners.has(org))orgOwners.set(org,uid);}
+  const orgOwners=new Map<string,string>();
+  for(const userId of userIds){
+    let organizationId="";
+    const{data:watchOrg}=await supabase.from("watch_items").select("organization_id").eq("user_id",userId).not("organization_id","is",null).limit(1).maybeSingle();
+    organizationId=String(watchOrg?.organization_id||"");
+    if(!organizationId){const{data:dossierOrg}=await supabase.from("dossiers").select("organization_id").eq("user_id",userId).not("organization_id","is",null).limit(1).maybeSingle();organizationId=String(dossierOrg?.organization_id||"");}
+    if(!organizationId){const{data:profile}=await supabase.from("user_profiles").select("active_organization_id").eq("user_id",userId).maybeSingle();organizationId=String(profile?.active_organization_id||"");}
+    if(!organizationId){const{data:member}=await supabase.from("organization_members").select("organization_id").eq("user_id",userId).order("joined_at",{ascending:true}).limit(1).maybeSingle();organizationId=String(member?.organization_id||"");}
+    if(organizationId&&!orgOwners.has(organizationId))orgOwners.set(organizationId,userId);
+  }
   const summaries:any[]=[];let totalInserted=0;
   for(const [organizationId,userId] of orgOwners){
     const existingUrls=new Set<string>();let start=0;
