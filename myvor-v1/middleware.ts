@@ -1,18 +1,18 @@
 import {NextRequest,NextResponse} from "next/server";
 
-type ProtectedRoute={feature:string|null;methods:string[]};
+type ProtectedRoute={feature:string|null;methods:string[];maxBodyBytes?:number};
 
 const protectedRoutes:Record<string,ProtectedRoute>={
-  "/api/radar":{feature:"radar",methods:["POST"]},
-  "/api/radar/fast":{feature:"radar",methods:["POST"]},
-  "/api/impact":{feature:null,methods:["POST"]},
-  "/api/builder":{feature:"note-builder",methods:["POST"]},
-  "/api/veille/assign":{feature:"veille-assign",methods:["POST"]},
+  "/api/radar":{feature:"radar",methods:["POST"],maxBodyBytes:350_000},
+  "/api/radar/fast":{feature:"radar",methods:["POST"],maxBodyBytes:350_000},
+  "/api/impact":{feature:null,methods:["POST"],maxBodyBytes:1_500_000},
+  "/api/builder":{feature:"note-builder",methods:["POST"],maxBodyBytes:750_000},
+  "/api/veille/assign":{feature:"veille-assign",methods:["POST"],maxBodyBytes:300_000},
 };
 const CRON_SECRET_SHA256="91370f1f47c9a4a1e099fe367b4c0988420faf23eb49067f797801bfb69932c8";
 
 function json(error:string,status:number){
-  return NextResponse.json({error},{status});
+  return NextResponse.json({error},{status,headers:{"Cache-Control":"no-store"}});
 }
 function safeEqual(a:string,b:string){
   if(a.length!==b.length)return false;
@@ -30,6 +30,13 @@ async function authorizeInternalSourceCollection(request:NextRequest){
   const suppliedHash=await sha256(supplied);
   return safeEqual(CRON_SECRET_SHA256,suppliedHash);
 }
+function bodyTooLarge(request:NextRequest,maxBodyBytes?:number){
+  if(!maxBodyBytes)return false;
+  const raw=request.headers.get("content-length");
+  if(!raw)return false;
+  const size=Number(raw);
+  return Number.isFinite(size)&&size>maxBodyBytes;
+}
 
 export async function middleware(request:NextRequest){
   if(request.nextUrl.pathname==="/api/veille/sources"){
@@ -44,6 +51,7 @@ export async function middleware(request:NextRequest){
 
   const route=protectedRoutes[request.nextUrl.pathname];
   if(!route||!route.methods.includes(request.method))return NextResponse.next();
+  if(bodyTooLarge(request,route.maxBodyBytes))return json("Requête trop volumineuse.",413);
 
   const supabaseUrl=(process.env.NEXT_PUBLIC_SUPABASE_URL||"").replace(/\/$/,"");
   const anonKey=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY||"";
@@ -70,19 +78,12 @@ export async function middleware(request:NextRequest){
           body:JSON.stringify({p_feature:route.feature}),
           cache:"no-store",
         });
-
-        if(quotaResponse.ok){
-          const payload=await quotaResponse.json().catch(()=>true);
-          const allowed=payload===true||payload?.allowed===true||payload?.consume_ai_quota===true;
-          const explicitlyDenied=payload===false||payload?.allowed===false||payload?.consume_ai_quota===false;
-          if(explicitlyDenied&&!allowed)return json("Trop de traitements en peu de temps. Réessaie dans quelques minutes.",429);
-        }else if(quotaResponse.status===429){
-          return json("Trop de traitements en peu de temps. Réessaie dans quelques minutes.",429);
-        }
-        // The quota guard must never make a valid authenticated workspace unusable
-        // because the optional quota RPC is unavailable or temporarily misconfigured.
+        if(!quotaResponse.ok)return json("Impossible de vérifier le quota de sécurité Myvor.",503);
+        const payload=await quotaResponse.json().catch(()=>false);
+        const allowed=payload===true||payload?.allowed===true||payload?.consume_ai_quota===true;
+        if(!allowed)return json("Trop de traitements en peu de temps. Réessaie dans quelques minutes.",429);
       }catch{
-        // Authentication above remains fail-closed; quota verification is best-effort.
+        return json("Impossible de vérifier le quota de sécurité Myvor.",503);
       }
     }
 
