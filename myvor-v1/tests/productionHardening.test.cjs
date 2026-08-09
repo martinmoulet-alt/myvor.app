@@ -14,6 +14,8 @@ test('production headers prevent framing and MIME sniffing',()=>{
   assert.match(config,/X-Frame-Options/);
   assert.match(config,/Strict-Transport-Security/);
   assert.match(config,/Permissions-Policy/);
+  assert.match(config,/Cross-Origin-Resource-Policy/);
+  assert.match(config,/poweredByHeader:false/);
 });
 
 test('Radar fast fallback is authenticated and quota protected',()=>{
@@ -22,11 +24,15 @@ test('Radar fast fallback is authenticated and quota protected',()=>{
   assert.match(middleware,/matcher:\["\/api\/radar","\/api\/radar\/fast"/);
 });
 
-test('manual Veille synchronization preserves institutional publication metadata',()=>{
-  const page=read('app/page.tsx');
-  assert.match(page,/source_name:item\.source_name\|\|null/);
-  assert.match(page,/published_at:item\.published_at\|\|null/);
-  assert.match(page,/Mise à jour partielle : les dernières données disponibles restent affichées/);
+test('server Veille catalog preserves publication metadata and stays internal',()=>{
+  const catalog=read('supabase/functions/sync-watch-catalog/index.ts');
+  const middleware=read('middleware.ts');
+  assert.match(catalog,/source_name:clip\(item\?\.source_name,180\)\|\|undefined/);
+  assert.match(catalog,/published_at:clip\(item\?\.published_at,100\)\|\|undefined/);
+  assert.match(catalog,/source_name:item\.source_name\|\|null/);
+  assert.match(catalog,/published_at:safeTimestamp\(item\.published_at\)/);
+  assert.match(middleware,/pathname==="\/api\/veille\/sources"/);
+  assert.match(middleware,/x-myvor-cron-secret/);
 });
 
 test('Veille cards prefer publication date over import date',()=>{
