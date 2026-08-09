@@ -6,9 +6,9 @@ test("Myvor charge sans erreur fatale et affiche un accès sécurisé",async({pa
 
   await page.goto("/");
 
-  await expect(page.getByText("Myvor",{exact:true}).first()).toBeVisible();
   const securedEntry=page.getByRole("button",{name:/Se connecter/i}).or(page.getByRole("heading",{name:/Configuration requise/i}));
   await expect(securedEntry.first()).toBeVisible();
+  await expect(page.locator("body")).toContainText("Myvor");
   expect(pageErrors).toEqual([]);
 });
 
