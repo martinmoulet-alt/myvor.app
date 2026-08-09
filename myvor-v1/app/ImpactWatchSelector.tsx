@@ -14,6 +14,7 @@ const WORKFLOW_CONTEXT_KEY="myvor:workflow-context";
 
 function watchTime(item:WatchForImpact){const published=item.published_at?Date.parse(item.published_at):NaN;if(Number.isFinite(published))return published;const created=item.created_at?Date.parse(item.created_at):NaN;return Number.isFinite(created)?created:0;}
 function urgencyRank(value:string){return value==="absolument urgent"?4:value==="fort"?3:value==="moyen"?2:1;}
+function publishWorkflowContext(dossierId:string,watchIds:string[]){if(typeof window==="undefined"||!dossierId)return;const detail={dossierId,watchIds:[...new Set(watchIds)]};try{sessionStorage.setItem(WORKFLOW_CONTEXT_KEY,JSON.stringify(detail));}catch{}window.dispatchEvent(new CustomEvent("myvor:workflow-context",{detail}));}
 
 export function buildImpactCandidates(allWatch:WatchForImpact[],dossierId:string,assignments:ImpactAssignment[]){
   const live=new Map(assignments.filter(result=>result.dossier_id===dossierId&&Number(result.confidence)>=RELEVANCE_THRESHOLD).map(result=>[result.watch_id,result]));
@@ -41,6 +42,7 @@ export function useImpactRelevance({dossier,allWatch,onResults,onLoading,onMessa
   const key=useMemo(()=>dossier?`${dossier.id}|${allWatch.length}|${revision}`:"",[dossier?.id,allWatch.length,revision]);
   useEffect(()=>{
     if(!dossier){onResults([]);onMessage("");onLoading(false);return;}
+    publishWorkflowContext(dossier.id,[]);
     let cancelled=false;
     const timer=setTimeout(async()=>{
       const candidates=[...allWatch].filter(item=>!item.dossier_id||item.dossier_id===dossier.id).sort((a,b)=>watchTime(b)-watchTime(a)).slice(0,40);
@@ -69,12 +71,7 @@ export function useImpactRelevance({dossier,allWatch,onResults,onLoading,onMessa
 export default function ImpactWatchSelector({candidates,effectiveIds,loading,message,toggle,recalculate}:{candidates:ImpactCandidate[];effectiveIds:string[];loading:boolean;message:string;toggle:(id:string)=>void;recalculate:()=>void}){
   const dossierId=candidates[0]?.dossierId||"";
   const contextKey=`${dossierId}|${effectiveIds.join("|")}`;
-  useEffect(()=>{
-    if(!dossierId)return;
-    const detail={dossierId,watchIds:[...new Set(effectiveIds)]};
-    sessionStorage.setItem(WORKFLOW_CONTEXT_KEY,JSON.stringify(detail));
-    window.dispatchEvent(new CustomEvent("myvor:workflow-context",{detail}));
-  },[contextKey]);
+  useEffect(()=>{if(dossierId)publishWorkflowContext(dossierId,effectiveIds);},[contextKey]);
 
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"center",marginBottom:10}}><div style={{fontSize:12,color:"#526278",lineHeight:1.45}}>{message}</div><button type="button" onClick={recalculate} disabled={loading} style={{display:"inline-flex",alignItems:"center",gap:6,border:"1px solid #d9e2ee",background:"white",color:"#17324f",borderRadius:9,padding:"7px 9px",fontWeight:800,fontSize:11,cursor:loading?"wait":"pointer"}}><RefreshCw size={13} className={loading?"impact-relevance-spin":""}/>{loading?"Analyse…":"Recalculer"}</button></div>
