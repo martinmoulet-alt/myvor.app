@@ -31,6 +31,8 @@ export default function DashboardCorporate({dossiers,watch,actions,actionsLoadin
   const[searchQuery,setSearchQuery]=useState("");
   const[displayName,setDisplayName]=useState("");
   const[profile,setProfile]=useState<UserProfile>({job_type:null,topics:[],institutions:[],alert_level:"reactive"});
+  const[currentUserId,setCurrentUserId]=useState("");
+  const[activeOrganizationId,setActiveOrganizationId]=useState("");
   const[pinnedDossierId,setPinnedDossierId]=useState("");
   const[prioritySaving,setPrioritySaving]=useState(false);
   const[priorityError,setPriorityError]=useState("");
@@ -45,17 +47,22 @@ export default function DashboardCorporate({dossiers,watch,actions,actionsLoadin
       setDisplayName(firstNameFromSession(session));
       const userId=session?.user?.id;
       if(!userId)return;
+      setCurrentUserId(userId);
       const[profileRes,membershipRes]=await Promise.all([
         supabase!.from("user_profiles").select("job_type,topics,institutions,alert_level,active_organization_id").eq("user_id",userId).maybeSingle(),
-        supabase!.from("organization_members").select("organization_id,priority_dossier_id").eq("user_id",userId),
+        supabase!.from("organization_members").select("organization_id").eq("user_id",userId),
       ]);
       if(!active)return;
       const data=profileRes.data;
       if(data)setProfile({job_type:data.job_type||null,topics:Array.isArray(data.topics)?data.topics:[],institutions:Array.isArray(data.institutions)?data.institutions:[],alert_level:data.alert_level||"reactive"});
       const memberships=Array.isArray(membershipRes.data)?membershipRes.data:[];
-      const activeOrganizationId=String(data?.active_organization_id||"");
-      const membership=memberships.find(item=>item.organization_id===activeOrganizationId)||memberships[0];
-      setPinnedDossierId(String(membership?.priority_dossier_id||""));
+      const preferredOrganizationId=String(data?.active_organization_id||"");
+      const organizationId=String(memberships.some(item=>item.organization_id===preferredOrganizationId)?preferredOrganizationId:memberships[0]?.organization_id||"");
+      setActiveOrganizationId(organizationId);
+      if(!organizationId){setPinnedDossierId("");return;}
+      const{data:preference}=await supabase!.from("workspace_preferences").select("priority_dossier_id").eq("user_id",userId).eq("organization_id",organizationId).maybeSingle();
+      if(!active)return;
+      setPinnedDossierId(String(preference?.priority_dossier_id||""));
     }
     void loadPersonalization();
     return()=>{active=false;};
@@ -118,9 +125,9 @@ export default function DashboardCorporate({dossiers,watch,actions,actionsLoadin
   const openExactAction=(action:Action)=>{if(action.dossier_id){sessionStorage.setItem("myvor:open-dossier",action.dossier_id);sessionStorage.setItem("myvor:focus-action",JSON.stringify({id:action.id,type:action.type,title:action.title,actor_name:action.actor_name||""}));go("dossiers");return;}go(actionDestination(action.type));};
 
   async function changePriority(value:string){
-    if(!supabase||prioritySaving)return;
+    if(!supabase||prioritySaving||!currentUserId||!activeOrganizationId)return;
     setPrioritySaving(true);setPriorityError("");
-    const{error}=await supabase.rpc("set_priority_dossier",{p_dossier_id:value||null});
+    const{error}=await supabase.from("workspace_preferences").upsert({user_id:currentUserId,organization_id:activeOrganizationId,priority_dossier_id:value||null,updated_at:new Date().toISOString()},{onConflict:"user_id,organization_id"});
     setPrioritySaving(false);
     if(error){setPriorityError("Impossible d’enregistrer la priorité.");return;}
     setPinnedDossierId(value);
