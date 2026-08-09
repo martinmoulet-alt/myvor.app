@@ -12,7 +12,7 @@ function safeTimestamp(value?:string){if(!value)return null;const time=Date.pars
 function safeEqual(a:string,b:string){const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]^bb[i];return diff===0;}
 async function sha256(value:string){const bytes=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value));return Array.from(new Uint8Array(bytes)).map(byte=>byte.toString(16).padStart(2,"0")).join("");}
 function getAdminKey(){const modern=Deno.env.get("SUPABASE_SECRET_KEYS");if(modern){try{const keys=JSON.parse(modern);const value=keys?.default||Object.values(keys||{})[0];if(typeof value==="string"&&value)return value;}catch{}}return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")||"";}
-async function fetchJson(url:string,timeoutMs=30000){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);try{const response=await fetch(url,{headers:{Accept:"application/json","User-Agent":"Myvor-Supabase-Catalog/1.0"},signal:controller.signal});const raw=await response.text();let payload:any={};try{payload=raw?JSON.parse(raw):{};}catch{payload={};}if(!response.ok)throw new Error(`HTTP ${response.status}`);return payload;}finally{clearTimeout(timer);}}
+async function fetchJson(url:string,cronSecret:string,timeoutMs=30000){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);try{const response=await fetch(url,{headers:{Accept:"application/json","User-Agent":"Myvor-Supabase-Catalog/1.0","x-myvor-cron-secret":cronSecret},signal:controller.signal});const raw=await response.text();let payload:any={};try{payload=raw?JSON.parse(raw):{};}catch{payload={};}if(!response.ok)throw new Error(`HTTP ${response.status}`);return payload;}finally{clearTimeout(timer);}}
 
 Deno.serve(async req=>{
   if(req.method!=="POST")return json({error:"Méthode non autorisée"},405);
@@ -21,7 +21,7 @@ Deno.serve(async req=>{
   const supabaseUrl=Deno.env.get("SUPABASE_URL")||"",adminKey=getAdminKey();
   if(!supabaseUrl||!adminKey)return json({error:"Configuration Supabase serveur incomplète"},500);
   const sourceEndpoint=Deno.env.get("MYVOR_SOURCES_URL")||"https://myvor.app/api/veille/sources";
-  let payload:any;try{payload=await fetchJson(sourceEndpoint);}catch(error:any){return json({ok:false,error:`Collecte impossible: ${clip(error?.message,220)}`},502);}
+  let payload:any;try{payload=await fetchJson(sourceEndpoint,supplied);}catch(error:any){return json({ok:false,error:`Collecte impossible: ${clip(error?.message,220)}`},502);}
   const sources:SourceItem[]=(Array.isArray(payload?.items)?payload.items:[])
     .map((item:any)=>({title:clip(item?.title,800),nature:clip(item?.nature||"Publication institutionnelle",140),source_url:canonicalUrl(clip(item?.source_url,1200)),source_name:clip(item?.source_name,180)||undefined,published_at:clip(item?.published_at,100)||undefined}))
     .filter(item=>item.title&&item.source_url.startsWith("http"))
