@@ -25,7 +25,7 @@ const AUTO_LINK_THRESHOLD=.95;
 const WORKFLOW_CONTEXT_KEY="myvor:workflow-context";
 
 function parseWatchList(value:string){return [...new Set(value.split(/[\n,;]+/).map(item=>item.trim()).filter(Boolean))].slice(0,60);}
-function normalizeModuleContext(value:any):ModuleContext|null{const dossierId=String(value?.dossierId||"");if(!dossierId)return null;const watchIds=Array.isArray(value?.watchIds)?[...new Set(value.watchIds.map((id:unknown)=>String(id||"")).filter(Boolean))]:[];return{dossierId,watchIds};}
+function normalizeModuleContext(value:any):ModuleContext|null{const dossierId=String(value?.dossierId||"");if(!dossierId)return null;const rawIds:Array<unknown>=Array.isArray(value?.watchIds)?value.watchIds:[];const watchIds=Array.from(new Set<string>(rawIds.map(id=>String(id||"")).filter(Boolean)));return{dossierId,watchIds};}
 
 export default function Home(){
   const[session,setSession]=useState<any>(null),[loading,setLoading]=useState(true),[tab,setTab]=useState<Tab>("dashboard"),[dossiers,setDossiers]=useState<Dossier[]>([]),[watch,setWatch]=useState<Watch[]>([]),[actions,setActions]=useState<Action[]>([]),[actionsLoading,setActionsLoading]=useState(false),[actionsError,setActionsError]=useState(""),[selectedDossier,setSelectedDossier]=useState<Dossier|null>(null),[moduleContext,setModuleContext]=useState<ModuleContext|null>(null),[modal,setModal]=useState<"dossier"|"watch"|null>(null),[syncing,setSyncing]=useState(false),[syncMessage,setSyncMessage]=useState(""),[searchingDossier,setSearchingDossier]=useState<string|null>(null),[dossierMessages,setDossierMessages]=useState<Record<string,string>>({}),[mobileMenuOpen,setMobileMenuOpen]=useState(false);
