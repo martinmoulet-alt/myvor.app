@@ -56,7 +56,7 @@ export default function AuthScreen(){
     if(!email.trim()){setMessageType("error");setMessage("Saisissez d’abord votre adresse e-mail.");return;}
     setBusy(true);setMessage("");
     try{
-      const redirectTo=typeof window!=="undefined"?`${window.location.origin}/`:undefined;
+      const redirectTo=typeof window!=="undefined"?new URL("/reset-password",window.location.origin).toString():undefined;
       const{error}=await supabase.auth.resetPasswordForEmail(email.trim(),{redirectTo});
       if(error)throw error;
       setMessageType("success");setMessage("Un lien de réinitialisation vient de vous être envoyé.");
@@ -98,7 +98,7 @@ export default function AuthScreen(){
           <label><span>Adresse e-mail</span><div className={styles.inputWrap}><Mail size={17}/><input type="email" autoComplete="email" inputMode="email" required placeholder="vous@cabinet.fr" value={email} onChange={e=>setEmail(e.target.value)}/></div></label>
           <label><span>Mot de passe</span><div className={styles.inputWrap}><LockKeyhole size={17}/><input type={showPassword?"text":"password"} autoComplete={mode==="login"?"current-password":"new-password"} minLength={mode==="signup"?12:1} required placeholder="••••••••••••" value={password} onChange={e=>setPassword(e.target.value)}/><button type="button" className={styles.eye} onClick={()=>setShowPassword(v=>!v)} aria-label={showPassword?"Masquer le mot de passe":"Afficher le mot de passe"}>{showPassword?<EyeOff size={17}/>:<Eye size={17}/>}</button></div>{mode==="signup"&&<small style={{display:"block",marginTop:7,color:"#718096",lineHeight:1.45}}>12 caractères minimum · majuscule · minuscule · chiffre · symbole.</small>}</label>
 
-          {mode==="login"&&<div className={styles.formMeta}><label className={styles.remember}><input type="checkbox" defaultChecked/><span>Rester connecté</span></label><button type="button" onClick={resetPassword} disabled={busy}>Mot de passe oublié ?</button></div>}
+          {mode==="login"&&<div className={styles.formMeta}><span/><button type="button" onClick={resetPassword} disabled={busy}>Mot de passe oublié ?</button></div>}
 
           {message&&<div className={`${styles.message} ${messageType==="success"?styles.success:styles.error}`}>{message}</div>}
 
