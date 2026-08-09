@@ -3,19 +3,21 @@ import {createClient} from "npm:@supabase/supabase-js@2";
 
 type SourceItem={title:string;nature:string;source_url:string;source_name?:string;published_at?:string};
 const JSON_HEADERS={"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"};
+const CRON_SECRET_SHA256="91370f1f47c9a4a1e099fe367b4c0988420faf23eb49067f797801bfb69932c8";
 
 function json(body:unknown,status=200){return new Response(JSON.stringify(body),{status,headers:JSON_HEADERS});}
 function clip(value:unknown,max:number){return String(value??"").normalize("NFKC").replace(/[\u0000-\u001f\u007f]/g,"").slice(0,max).trim();}
 function canonicalUrl(value:string){try{const url=new URL(value);url.hash="";for(const key of [...url.searchParams.keys()])if(/^utm_/i.test(key)||["fbclid","gclid"].includes(key))url.searchParams.delete(key);return url.toString();}catch{return value.trim();}}
 function safeTimestamp(value?:string){if(!value)return null;const time=Date.parse(value);return Number.isFinite(time)?new Date(time).toISOString():null;}
 function safeEqual(a:string,b:string){const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]^bb[i];return diff===0;}
+async function sha256(value:string){const bytes=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value));return Array.from(new Uint8Array(bytes)).map(byte=>byte.toString(16).padStart(2,"0")).join("");}
 function getAdminKey(){const modern=Deno.env.get("SUPABASE_SECRET_KEYS");if(modern){try{const keys=JSON.parse(modern);const value=keys?.default||Object.values(keys||{})[0];if(typeof value==="string"&&value)return value;}catch{}}return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")||"";}
 async function fetchJson(url:string,timeoutMs=30000){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);try{const response=await fetch(url,{headers:{Accept:"application/json","User-Agent":"Myvor-Supabase-Catalog/1.0"},signal:controller.signal});const raw=await response.text();let payload:any={};try{payload=raw?JSON.parse(raw):{};}catch{payload={};}if(!response.ok)throw new Error(`HTTP ${response.status}`);return payload;}finally{clearTimeout(timer);}}
 
 Deno.serve(async req=>{
   if(req.method!=="POST")return json({error:"Méthode non autorisée"},405);
-  const expected=Deno.env.get("MYVOR_CRON_SECRET")||"",supplied=req.headers.get("x-myvor-cron-secret")||"";
-  if(!expected||!supplied||!safeEqual(expected,supplied))return json({error:"Non autorisé"},401);
+  const supplied=req.headers.get("x-myvor-cron-secret")||"",suppliedHash=supplied?await sha256(supplied):"";
+  if(!suppliedHash||!safeEqual(CRON_SECRET_SHA256,suppliedHash))return json({error:"Non autorisé"},401);
   const supabaseUrl=Deno.env.get("SUPABASE_URL")||"",adminKey=getAdminKey();
   if(!supabaseUrl||!adminKey)return json({error:"Configuration Supabase serveur incomplète"},500);
   const sourceEndpoint=Deno.env.get("MYVOR_SOURCES_URL")||"https://myvor.app/api/veille/sources";
