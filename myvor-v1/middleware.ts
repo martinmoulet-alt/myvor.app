@@ -53,12 +53,12 @@ export async function middleware(request:NextRequest){
   if(!route||!route.methods.includes(request.method))return NextResponse.next();
   if(bodyTooLarge(request,route.maxBodyBytes))return json("Requête trop volumineuse.",413);
 
+  const authorization=request.headers.get("authorization")||"";
+  if(!authorization.toLowerCase().startsWith("bearer "))return json("Session Myvor requise.",401);
+
   const supabaseUrl=(process.env.NEXT_PUBLIC_SUPABASE_URL||"").replace(/\/$/,"");
   const anonKey=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY||"";
   if(!supabaseUrl||!anonKey)return json("La sécurité Supabase de Myvor n’est pas configurée.",503);
-
-  const authorization=request.headers.get("authorization")||"";
-  if(!authorization.toLowerCase().startsWith("bearer "))return json("Session Myvor requise.",401);
 
   try{
     const userResponse=await fetch(`${supabaseUrl}/auth/v1/user`,{
