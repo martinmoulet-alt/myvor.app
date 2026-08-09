@@ -1,8 +1,7 @@
 name: Temporary production dependency audit
 
 on:
-  push:
-    branches: [hardening-validation]
+  pull_request:
 
 permissions:
   contents: read
