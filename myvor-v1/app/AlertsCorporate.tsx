@@ -11,8 +11,8 @@ type DossierScope="all"|"selected";
 type DossierOption={id:string;client:string;title:string;status:string};
 type Preference={user_id:string;organization_id:string;enabled:boolean;level:Level;min_urgency:Urgency;min_confidence:number;frequency:Frequency;digest_hour:number;customized:boolean;dossier_scope:DossierScope;dossier_ids:string[]};
 type AlertEvent={id:string;watch_id:string;dossier_id:string|null;title:string;nature:string|null;source_url:string|null;urgency:Urgency;confidence:number;reason:string|null;delivery_frequency:Frequency;available_at:string;created_at:string;read_at:string|null;dismissed_at:string|null};
-
 type Preset={label:string;help:string;min_urgency:Urgency;min_confidence:number;frequency:Frequency;recommended?:boolean};
+
 const PRESETS:Record<Level,Preset>={
   essential:{label:"Essentiel",help:"Seulement les évolutions critiques qui imposent une décision.",min_urgency:"absolument urgent",min_confidence:.95,frequency:"daily"},
   reactive:{label:"Réactif",help:"Les signaux forts et fiables remontent rapidement sans bruit inutile.",min_urgency:"fort",min_confidence:.90,frequency:"hourly",recommended:true},
@@ -24,10 +24,10 @@ const URGENCY_LABELS:Record<Urgency,string>={faible:"Faible",moyen:"Moyen",fort:
 function timeLabel(value:string){const date=new Date(value);return Number.isFinite(date.getTime())?new Intl.DateTimeFormat("fr-FR",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}).format(date):"—";}
 function urgencyClass(value:string){return value.replaceAll(" ","-");}
 
-export default function AlertsCorporate({dossiers}:{dossiers:DossierOption[]}){
+export default function AlertsCorporate(){
   const[loading,setLoading]=useState(true),[saving,setSaving]=useState(false),[error,setError]=useState(""),[message,setMessage]=useState("");
   const[userId,setUserId]=useState(""),[organizationId,setOrganizationId]=useState("");
-  const[pref,setPref]=useState<Preference|null>(null),[events,setEvents]=useState<AlertEvent[]>([]),[eventFilter,setEventFilter]=useState("all");
+  const[pref,setPref]=useState<Preference|null>(null),[events,setEvents]=useState<AlertEvent[]>([]),[dossiers,setDossiers]=useState<DossierOption[]>([]),[eventFilter,setEventFilter]=useState("all");
 
   async function resolveContext(){
     if(!supabase)return null;
@@ -44,17 +44,17 @@ export default function AlertsCorporate({dossiers}:{dossiers:DossierOption[]}){
     if(!supabase)return;setLoading(true);setError("");
     const context=await resolveContext();if(!context?.org){setLoading(false);setError("Aucun workspace actif.");return;}
     setUserId(context.uid);setOrganizationId(context.org);
-    const[prefRes,eventRes]=await Promise.all([
+    const[prefRes,eventRes,dossierRes]=await Promise.all([
       supabase.from("alert_preferences").select("user_id,organization_id,enabled,level,min_urgency,min_confidence,frequency,digest_hour,customized,dossier_scope,dossier_ids").eq("user_id",context.uid).eq("organization_id",context.org).maybeSingle(),
       supabase.from("alert_events").select("id,watch_id,dossier_id,title,nature,source_url,urgency,confidence,reason,delivery_frequency,available_at,created_at,read_at,dismissed_at").eq("user_id",context.uid).eq("organization_id",context.org).is("dismissed_at",null).order("created_at",{ascending:false}).limit(80),
+      supabase.from("dossiers").select("id,client,title,status").eq("organization_id",context.org).order("created_at",{ascending:false}),
     ]);
     if(prefRes.error||eventRes.error){setError(prefRes.error?.message||eventRes.error?.message||"Impossible de charger les alertes.");setLoading(false);return;}
     if(prefRes.data)setPref({...prefRes.data,min_confidence:Number(prefRes.data.min_confidence),dossier_scope:(prefRes.data.dossier_scope||"all") as DossierScope,dossier_ids:Array.isArray(prefRes.data.dossier_ids)?prefRes.data.dossier_ids:[]} as Preference);
-    else{
-      const preset=PRESETS[context.profileLevel]||PRESETS.reactive;
-      setPref({user_id:context.uid,organization_id:context.org,enabled:true,level:context.profileLevel,min_urgency:preset.min_urgency,min_confidence:preset.min_confidence,frequency:preset.frequency,digest_hour:8,customized:false,dossier_scope:"all",dossier_ids:[]});
-    }
-    setEvents((eventRes.data||[]).map(item=>({...item,confidence:Number(item.confidence)}) as AlertEvent));setLoading(false);
+    else{const preset=PRESETS[context.profileLevel]||PRESETS.reactive;setPref({user_id:context.uid,organization_id:context.org,enabled:true,level:context.profileLevel,min_urgency:preset.min_urgency,min_confidence:preset.min_confidence,frequency:preset.frequency,digest_hour:8,customized:false,dossier_scope:"all",dossier_ids:[]});}
+    setEvents((eventRes.data||[]).map(item=>({...item,confidence:Number(item.confidence)}) as AlertEvent));
+    if(!dossierRes.error)setDossiers((dossierRes.data||[]) as DossierOption[]);
+    setLoading(false);
   }
 
   useEffect(()=>{void load();},[]);
@@ -101,13 +101,11 @@ export default function AlertsCorporate({dossiers}:{dossiers:DossierOption[]}){
     `}</style>
 
     <header className="alerts-head"><div><div className="alerts-kicker">Centre d’alertes</div><h1>Décidez exactement quand Myvor doit vous interrompre.</h1><p>Le moteur serveur filtre la veille selon le dossier, l’urgence, la pertinence et la cadence choisies.</p></div><div className="alerts-stats"><span className="alerts-stat gold">{unreadCount} non lue{unreadCount>1?"s":""}</span><span className="alerts-stat">{queuedCount} en attente</span></div></header>
-
     <div className="alert-rule-summary"><ShieldAlert size={19}/><div><b>Règle active</b><span>{ruleSummary}</span></div></div>
 
     <section className="alerts-grid">
       <article className="alerts-card"><div className="alerts-card-head"><h2><SlidersHorizontal size={15}/> Configuration</h2></div><div className="alerts-body">
         <div className="alert-presets">{(Object.keys(PRESETS) as Level[]).map(level=>{const item=PRESETS[level];return <button type="button" key={level} className={`alert-preset ${pref.level===level&&!pref.customized?"active":""}`} onClick={()=>applyPreset(level)}><span className="alert-radio">{pref.level===level&&!pref.customized&&<Check size={12}/>}</span><span><b>{item.label}{item.recommended&&<em className="recommended">Recommandé</em>}</b><small>{item.help}</small></span></button>;})}</div>
-
         <div className="alert-config"><div className="alert-config-title"><BriefcaseBusiness size={14}/> Périmètre et déclenchement</div>
           <div className="alert-switch"><span>Alertes actives</span><input type="checkbox" checked={pref.enabled} onChange={event=>patch({enabled:event.target.checked})}/></div>
           <div className="alert-field"><label>Dossiers surveillés</label><div className="scope-switch"><button type="button" className={pref.dossier_scope==="all"?"active":""} onClick={()=>patch({dossier_scope:"all"})}>Tous les dossiers</button><button type="button" className={pref.dossier_scope==="selected"?"active":""} onClick={()=>patch({dossier_scope:"selected"})}>Choisir les dossiers</button></div></div>
