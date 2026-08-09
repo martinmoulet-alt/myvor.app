@@ -1,0 +1,16 @@
+.mobile-module-dock{display:none}
+@media(max-width:850px){
+  .mobile-nav{display:none!important}
+  .mobile-module-dock{position:fixed;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));z-index:35;bottom:0;left:0;right:0;background:rgba(255,255,255,.98);border-top:1px solid var(--line);padding:6px 3px calc(6px + env(safe-area-inset-bottom));box-shadow:0 -8px 24px rgba(7,22,44,.08);backdrop-filter:blur(14px)}
+  .mobile-module-dock button{min-width:0;border:0;background:transparent;color:var(--muted);padding:4px 1px 3px;display:grid;place-items:center;gap:2px;font-size:8px;font-weight:700;line-height:1.05;letter-spacing:-.02em;-webkit-tap-highlight-color:transparent}
+  .mobile-module-dock button svg{width:17px;height:17px}
+  .mobile-module-dock button span{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mobile-module-dock button.active{color:var(--navy);font-weight:850}
+  .mobile-module-dock button.active svg{color:var(--gold);filter:drop-shadow(0 1px 2px rgba(243,189,62,.2))}
+  .mobile-module-dock button:active{transform:scale(.94)}
+  .main{padding-bottom:82px}
+}
+@media(max-width:390px){
+  .mobile-module-dock button{font-size:7.5px}
+  .mobile-module-dock button svg{width:16px;height:16px}
+}
