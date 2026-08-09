@@ -8,6 +8,7 @@ import "./impact-radar-labels.css";
 import "./note-builder-fullbleed.css";
 import "./note-builder-readability.css";
 import "./myvor-quality-pass.css";
+import "./mobile-module-dock.css";
 import PwaRegister from "./PwaRegister";
 import StartupRecovery from "./StartupRecovery";
 import NetworkStatus from "./NetworkStatus";
@@ -16,6 +17,7 @@ import MobileDossierTabs from "./MobileDossierTabs";
 import WorkflowGuide from "./WorkflowGuide";
 import AITransparencyNotice from "./AITransparencyNotice";
 import FirstRunOnboarding from "./FirstRunOnboarding";
+import MobileModuleDock from "./MobileModuleDock";
 
 export const metadata: Metadata = {
   title: "Myvor — Anticipez l’impact",
@@ -40,5 +42,5 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="fr"><body><PwaRegister/><StartupRecovery/><NetworkStatus/><LegalHelpMenu/><MobileDossierTabs/><WorkflowGuide/><AITransparencyNotice/><FirstRunOnboarding/>{children}</body></html>;
+  return <html lang="fr"><body><PwaRegister/><StartupRecovery/><NetworkStatus/><LegalHelpMenu/><MobileDossierTabs/><WorkflowGuide/><AITransparencyNotice/><FirstRunOnboarding/><MobileModuleDock/>{children}</body></html>;
 }
