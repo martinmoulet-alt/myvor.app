@@ -1,2 +1,0 @@
-Temporary CI marker for production-hardening validation. This branch is not intended to be merged.
-Validation pass: dependency security updates applied.
