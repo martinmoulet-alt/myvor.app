@@ -4,12 +4,13 @@ import {createClient} from "npm:@supabase/supabase-js@2";
 type PendingItem={id:string;user_id:string;title:string;nature:string;source_url:string;suggested_dossier_id:string;qualification_confidence:number|string;qualification_reason:string;published_at?:string|null};
 type Dossier={id:string;title:string;objective:string;context?:string};
 type Setting={user_id:string;auto_link_threshold:number|string};
-type AiResult={relevant:boolean;urgency:"faible"|"moyen"|"fort"|"absolument urgent";reason:string};
+type AiResult={relevant:boolean;directness:"direct"|"indirect"|"none";urgency:"faible"|"moyen"|"fort"|"absolument urgent";reason:string};
 
 const JSON_HEADERS={"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"};
 const RULE_PREFIX="Règles dossier v11 —";
 const MAX_ITEMS=8;
 const VALID_URGENCIES=new Set(["faible","moyen","fort","absolument urgent"]);
+const VALID_DIRECTNESS=new Set(["direct","indirect","none"]);
 const CRON_SECRET_SHA256="91370f1f47c9a4a1e099fe367b4c0988420faf23eb49067f797801bfb69932c8";
 
 function json(body:unknown,status=200){return new Response(JSON.stringify(body),{status,headers:JSON_HEADERS});}
@@ -22,23 +23,28 @@ async function fetchJson(url:string,init:RequestInit={},timeoutMs=18000){const c
 async function qualifyOne(apiKey:string,item:PendingItem,dossier:Dossier,sourceText:string):Promise<AiResult>{
   const prompt=[
     "Tu es le filtre de pertinence STRICT de la veille Myvor.",
-    "Confirme ou rejette le dossier proposé pour ce texte institutionnel.",
+    "Confirme ou rejette le dossier proposé pour ce texte institutionnel et distingue pertinence directe et indirecte.",
     "relevant=true uniquement si le texte modifie, précise, applique, menace ou ouvre une opportunité concrète pour l'objectif précis du dossier.",
-    "Un même public, un même secteur, les mots entreprise/PME/numérique/santé, une proximité thématique vague ou une référence incidente ne suffisent jamais.",
+    "directness=direct seulement si le texte agit directement sur le cadre juridique, réglementaire, économique ou opérationnel visé par l'objectif du dossier ou sur les obligations/leviers du client.",
+    "directness=indirect si le texte concerne un acteur, client, secteur ou environnement adjacent mais ne modifie pas directement le levier suivi par le dossier.",
+    "directness=none si le lien est seulement lexical, thématique ou fortuit; dans ce cas relevant=false.",
+    "Un même public, un même secteur, les mots entreprise/PME/numérique/santé/agriculture, une proximité thématique vague ou une référence incidente ne suffisent jamais à créer un lien direct.",
     "REGLE D'ANCRAGE: si le titre ou le contexte du dossier identifie une loi, un règlement, un article, une réforme, une date ou un régime nommé, relevant=true seulement si le texte source cite explicitement cet instrument (numéro, date, titre ou article) OU indique sans ambiguïté qu'il met en oeuvre/modifie une disposition précise décrite dans le dossier.",
     "Pour un dossier d'application d'une loi précise, une mesure qui affecte simplement le même type d'entreprises mais qui provient d'un autre régime juridique doit être rejetée.",
-    "Si relevant=false, urgency doit être faible.",
+    "Exemple: un texte sur les cotisations sociales des agriculteurs n'est qu'indirect pour un dossier centré sur les intrants, produits phytosanitaires, engrais ou biocontrôle, sauf lien explicite avec ces leviers.",
+    "Si relevant=false, urgency doit être faible et directness=none.",
     "Si relevant=true, urgency vaut faible, moyen, fort ou absolument urgent selon l'impact opérationnel et les échéances explicitement présentes.",
-    "reason doit citer le lien juridique ou opérationnel exact; s'il n'existe pas, dire brièvement pourquoi le texte est hors périmètre.",
+    "reason doit citer le lien juridique ou opérationnel exact et justifier brièvement la directness.",
     "reason doit être une seule phrase factuelle et brève.",
     JSON.stringify({title:clip(item.title,600),nature:clip(item.nature,120),official_text:clip(sourceText,5000),dossier:{title:clip(dossier.title,300),objective:clip(dossier.objective,800),context:clip(dossier.context,1100)}})
   ].join("\n");
-  const schema={type:"object",properties:{relevant:{type:"boolean"},urgency:{type:"string",enum:["faible","moyen","fort","absolument urgent"]},reason:{type:"string",maxLength:300}},required:["relevant","urgency","reason"],additionalProperties:false};
-  const payload=await fetchJson("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:Deno.env.get("OPENAI_MODEL")||"gpt-5-mini",store:false,reasoning:{effort:"minimal"},input:prompt,max_output_tokens:700,text:{verbosity:"low",format:{type:"json_schema",name:"myvor_watch_qualification",strict:true,schema}}})},18000);
+  const schema={type:"object",properties:{relevant:{type:"boolean"},directness:{type:"string",enum:["direct","indirect","none"]},urgency:{type:"string",enum:["faible","moyen","fort","absolument urgent"]},reason:{type:"string",maxLength:320}},required:["relevant","directness","urgency","reason"],additionalProperties:false};
+  const payload=await fetchJson("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:Deno.env.get("OPENAI_MODEL")||"gpt-5-mini",store:false,reasoning:{effort:"minimal"},input:prompt,max_output_tokens:760,text:{verbosity:"low",format:{type:"json_schema",name:"myvor_watch_qualification",strict:true,schema}}})},18000);
   if(payload?.status==="incomplete")throw new Error(`Réponse IA incomplète: ${clip(payload?.incomplete_details?.reason||"inconnue",120)}`);
   const raw=extractOutputText(payload);let parsed:any={};try{parsed=JSON.parse(raw||"{}");}catch{throw new Error(`JSON IA non parseable: ${clip(raw,100)}`);}
-  if(typeof parsed?.relevant!=="boolean"||!VALID_URGENCIES.has(String(parsed?.urgency)))throw new Error("Réponse IA invalide");
-  return{relevant:parsed.relevant,urgency:parsed.urgency,reason:clip(parsed.reason,300)};
+  if(typeof parsed?.relevant!=="boolean"||!VALID_DIRECTNESS.has(String(parsed?.directness))||!VALID_URGENCIES.has(String(parsed?.urgency)))throw new Error("Réponse IA invalide");
+  if(parsed.relevant===false&&parsed.directness!=="none")parsed.directness="none";
+  return{relevant:parsed.relevant,directness:parsed.directness,urgency:parsed.urgency,reason:clip(parsed.reason,320)};
 }
 
 Deno.serve(async req=>{
@@ -65,9 +71,12 @@ Deno.serve(async req=>{
     for(const outcome of settled){
       if(outcome.status!=="fulfilled"){failed++;continue;}
       const{item,result}=outcome.value,confidence=Number(item.qualification_confidence)||0,baseReason=String(item.qualification_reason||"").replace(/\s*Validation IA en attente\.\s*$/," ").trim();
-      if(!result.relevant){const{error}=await supabase.from("watch_items").update({dossier_id:null,suggested_dossier_id:null,urgency:"faible",qualification_confidence:Math.min(confidence,.49),qualification_reason:clip(`${baseReason} Filtre IA : rejeté — ${result.reason}`,760),qualified_at:new Date().toISOString()}).eq("id",item.id);if(error){failed++;continue;}rejected++;continue;}
-      const threshold=Math.max(.75,Math.min(1,Number(settingByUser.get(item.user_id)?.auto_link_threshold)||.95)),shouldLink=confidence>=threshold;
-      const{error}=await supabase.from("watch_items").update({dossier_id:shouldLink?item.suggested_dossier_id:null,suggested_dossier_id:shouldLink?null:item.suggested_dossier_id,urgency:result.urgency,qualification_reason:clip(`${baseReason} Filtre IA : pertinent — ${result.reason}`,760),qualified_at:new Date().toISOString()}).eq("id",item.id);if(error){failed++;continue;}
+      if(!result.relevant||result.directness==="none"){
+        const{error}=await supabase.from("watch_items").update({dossier_id:null,suggested_dossier_id:null,urgency:"faible",qualification_confidence:Math.min(confidence,.49),qualification_reason:clip(`${baseReason} Filtre IA : rejeté — ${result.reason}`,800),qualified_at:new Date().toISOString()}).eq("id",item.id);if(error){failed++;continue;}rejected++;continue;
+      }
+      const threshold=Math.max(.75,Math.min(1,Number(settingByUser.get(item.user_id)?.auto_link_threshold)||.95));
+      const shouldLink=result.directness==="direct"&&confidence>=threshold;
+      const{error}=await supabase.from("watch_items").update({dossier_id:shouldLink?item.suggested_dossier_id:null,suggested_dossier_id:shouldLink?null:item.suggested_dossier_id,urgency:result.urgency,qualification_reason:clip(`${baseReason} Filtre IA : pertinent ${result.directness} — ${result.reason}`,800),qualified_at:new Date().toISOString()}).eq("id",item.id);if(error){failed++;continue;}
       if(shouldLink){linked++;if(result.urgency==="fort"||result.urgency==="absolument urgent"){const type=item.nature.toLowerCase().includes("amendement")?"amendement":"analyse",title=type==="amendement"?`Préparer l’amendement — ${item.title}`:`Analyser l’impact — ${item.title}`;const{data:duplicate}=await supabase.from("actions").select("id").eq("user_id",item.user_id).eq("dossier_id",item.suggested_dossier_id).eq("type",type).eq("title",title).neq("status","termine").limit(1).maybeSingle();if(!duplicate)await supabase.from("actions").insert({user_id:item.user_id,dossier_id:item.suggested_dossier_id,type,title,description:`Action créée automatiquement par la veille Myvor. ${clip(result.reason,360)}`,actor_name:null,priority:result.urgency,status:"a_faire",due_date:null});}}else review++;
     }
   }
