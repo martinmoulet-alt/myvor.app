@@ -9,6 +9,7 @@ import "./note-builder-fullbleed.css";
 import "./note-builder-readability.css";
 import "./myvor-quality-pass.css";
 import "./mobile-module-dock.css";
+import "./myvor-app-background.css";
 import PwaRegister from "./PwaRegister";
 import StartupRecovery from "./StartupRecovery";
 import NetworkStatus from "./NetworkStatus";
