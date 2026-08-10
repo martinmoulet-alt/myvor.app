@@ -1,0 +1,1 @@
+The `veille-history-contract.test.cjs` regression test protects three V1 reliability requirements: no implicit age cutoff in the dossier scan, no high-confidence match from generic institutional wording alone, and explicit comparison of new relevant items with older linked dossier texts.

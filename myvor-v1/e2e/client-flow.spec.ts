@@ -40,9 +40,9 @@ test("le parcours client authentifié ouvre tous les modules critiques",async({p
 
   await openModule(page,/dossiers clients/i,/dossiers/i);
   await openModule(page,/veille/i,/veille/i);
-  await expect(page.getByRole("button",{name:/synchroniser maintenant/i})).toBeVisible();
-  await openModule(page,/note d’impact/i,/note d’impact/i);
-  await openModule(page,/radar d’influence/i,/radar d’influence/i);
+  await expect(page.getByRole("button",{name:/actualiser/i})).toBeVisible();
+  await openModule(page,/score d’urgence/i,/score d’urgence/i);
+  await openModule(page,/radar & war zone/i,/radar d’influence/i);
   await openModule(page,/note builder/i,/note builder/i);
 
   await page.getByRole("button",{name:/se déconnecter/i}).click();

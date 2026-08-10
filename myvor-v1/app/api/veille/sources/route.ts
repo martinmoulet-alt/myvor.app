@@ -22,7 +22,7 @@ const SOURCES: Source[] = [
 ];
 
 const SOURCE_POLICIES:Record<string,SourcePolicy>={
-  "Légifrance — Journal officiel":{tier:1,reserve:110},
+  "Légifrance — Journal officiel":{tier:1,reserve:180},
   "Assemblée nationale":{tier:1,reserve:36},
   "Sénat — Textes":{tier:1,reserve:36},
   "EUR-Lex":{tier:1,reserve:30},
@@ -30,6 +30,7 @@ const SOURCE_POLICIES:Record<string,SourcePolicy>={
   "Conseil d’État — Jurisprudence":{tier:2,reserve:18},
   "Conseil constitutionnel":{tier:2,reserve:18},
   "DGCCRF — Fiches pratiques":{tier:2,reserve:18},
+  "DGCCRF — Actualités":{tier:2,reserve:24},
   "CNIL":{tier:2,reserve:18},
   "ARCEP":{tier:2,reserve:18},
   "Sénat — Rapports":{tier:3,reserve:12},
@@ -55,7 +56,8 @@ const GENERIC_NAV_TITLES=[
   "communiqués","communiques","agenda et événements","agenda et evenements","agenda","événements","evenements",
   "les publications","publications","les prises de parole","prises de parole","le post, la newsletter mensuelle","newsletter",
   "quels sont mes droits ?","quels sont mes droits","achats et publicité","achats et publicite","banque/assurance","banque assurance",
-  "les pratiques numériques des français","les pratiques numeriques des francais","auditions devant le parlement","les auditions devant le parlement"
+  "les pratiques numériques des français","les pratiques numeriques des francais","auditions devant le parlement","les auditions devant le parlement",
+  "accompagner et conseiller"
 ];
 
 const MONTHS:Record<string,number>={janvier:0,"février":1,fevrier:1,mars:2,avril:3,mai:4,juin:5,juillet:6,"août":7,aout:7,septembre:8,octobre:9,novembre:10,"décembre":11,decembre:11};
@@ -87,6 +89,7 @@ function sleep(ms:number){return new Promise(resolve=>setTimeout(resolve,ms));}
 
 async function responseText(response:Response){const bytes=new Uint8Array(await response.arrayBuffer());const contentType=response.headers.get("content-type")||"";const charset=contentType.match(/charset=([^;\s]+)/i)?.[1]?.toLowerCase()||"utf-8";let text="";try{text=new TextDecoder(charset as any).decode(bytes);}catch{text=new TextDecoder("utf-8").decode(bytes);}const latin=new TextDecoder("windows-1252").decode(bytes);const repairedUtf8=repairMojibake(text);const candidates=[text,repairedUtf8,latin];candidates.sort((a,b)=>corruptionScore(a)-corruptionScore(b));return candidates[0];}
 async function fetchText(url:string,accept:string,timeoutMs=6500){let lastError:unknown;for(let attempt=0;attempt<3;attempt++){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);try{const response=await fetch(url,{headers:{"User-Agent":"Mozilla/5.0 Myvor/1.2","Accept":accept,"Accept-Language":"fr-FR,fr;q=0.9"},redirect:"follow",cache:"no-store",signal:controller.signal});if(response.ok)return await responseText(response);const retryable=response.status===408||response.status===429||response.status>=500;if(!retryable)throw new Error(`HTTP ${response.status}`);lastError=new Error(`HTTP ${response.status}`);}catch(error){lastError=error;}finally{clearTimeout(timer);}if(attempt<2)await sleep(attempt===0?300:900);}throw lastError instanceof Error?lastError:new Error("Source institutionnelle indisponible");}
+async function fetchTextOnce(url:string,accept:string,timeoutMs=2800){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);try{const response=await fetch(url,{headers:{"User-Agent":"Mozilla/5.0 Myvor/1.3","Accept":accept,"Accept-Language":"fr-FR,fr;q=0.9"},redirect:"follow",cache:"no-store",signal:controller.signal});if(!response.ok)throw new Error(`HTTP ${response.status}`);return await responseText(response);}finally{clearTimeout(timer);}}
 function first(block:string,tags:string[]){for(const tag of tags){const match=block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`,"i"));if(match?.[1])return decodeHtml(match[1]);}return "";}
 function linkFrom(block:string){const simple=first(block,["link"]);if(simple.startsWith("http"))return simple;const href=block.match(/<link[^>]+href=["']([^"']+)["'][^>]*>/i)?.[1];return href?decodeHtml(href):"";}
 function inferNature(title:string,fallback:string,context=""){
@@ -119,24 +122,27 @@ async function fetchHtmlListing(input:{name:string;url:string;base:string;pathPa
 
 function parseLegifranceIssue(html:string):FeedItem[]{const issueDate=decodeHtml(html.match(/Journal officiel de la République française[^<]*du\s+([^<]+)/i)?.[1]||"");const published_at=normalizePublishedAt(issueDate);const items:FeedItem[]=[];const regex=/<a\b[^>]*href=["']([^"']*\/jorf\/id\/JORFTEXT[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;for(const match of html.matchAll(regex)){const title=decodeHtml(match[2]);if(!title||isGenericNavigationTitle(title))continue;const nature=inferNature(title,"Texte réglementaire");if(!["Loi","Ordonnance","Décret","Arrêté","Décision / jurisprudence","Rapport"].includes(nature))continue;const href=match[1];const source_url=href.startsWith("http")?href:`https://www.legifrance.gouv.fr${href.startsWith("/")?"":"/"}${href}`;items.push({title,nature,source_url,source_name:"Légifrance — Journal officiel",published_at,excerpt:excerptAround(html,match.index||0,title)||undefined});}return dedupeItems(items).slice(0,40);}
 async function fetchLegifranceJorf():Promise<FeedItem[]>{
-  const currentHtml=await fetchText("https://www.legifrance.gouv.fr/jorf/jo","text/html,application/xhtml+xml,*/*",7500);
+  const [currentHtml,archiveHtml]=await Promise.all([
+    fetchTextOnce("https://www.legifrance.gouv.fr/jorf/jo","text/html,application/xhtml+xml,*/*",3200),
+    fetchTextOnce("https://www.legifrance.gouv.fr/jorf/jo/period/?datePubli=02%2F06%2F2004+%3E+31%2F12%2F2999","text/html,application/xhtml+xml,*/*",3200),
+  ]);
   const current=parseLegifranceIssue(currentHtml);
-  const archiveHtml=await fetchText("https://www.legifrance.gouv.fr/jorf/jo/period/?datePubli=02%2F06%2F2004+%3E+31%2F12%2F2999","text/html,application/xhtml+xml,*/*",7500);
   const issueUrls:string[]=[];
   for(const match of archiveHtml.matchAll(/href=["']([^"']*\/jorf\/jo\/20\d{2}\/\d{2}\/\d{2}\/\d{4})["']/gi)){
     const href=decodeHtml(match[1]);const url=href.startsWith("http")?href:`https://www.legifrance.gouv.fr${href.startsWith("/")?"":"/"}${href}`;
     if(!issueUrls.includes(url))issueUrls.push(url);
-    if(issueUrls.length>=16)break;
+    if(issueUrls.length>=48)break;
   }
   const historical:FeedItem[]=[];
-  for(let start=0;start<issueUrls.length;start+=4){
-    const batch=issueUrls.slice(start,start+4);
-    const pages=await Promise.all(batch.map(url=>fetchText(url,"text/html,application/xhtml+xml,*/*",5000).then(parseLegifranceIssue).catch(()=>[] as FeedItem[])));
+  for(let start=0;start<issueUrls.length;start+=16){
+    const batch=issueUrls.slice(start,start+16);
+    const pages=await Promise.all(batch.map(url=>fetchTextOnce(url,"text/html,application/xhtml+xml,*/*",2400).then(parseLegifranceIssue).catch(()=>[] as FeedItem[])));
     historical.push(...pages.flat());
   }
-  return newestFirst(dedupeItems([...current,...historical])).slice(0,340);
+  return newestFirst(dedupeItems([...current,...historical])).slice(0,420);
 }
 async function fetchDgccrf(){return fetchHtmlListing({name:"DGCCRF — Fiches pratiques",url:"https://www.economie.gouv.fr/dgccrf/les-fiches-pratiques",base:"https://www.economie.gouv.fr",pathPattern:/\/dgccrf\/les-fiches-pratiques\/[a-z0-9-]+/i,defaultNature:"Fiche pratique / doctrine",limit:40});}
+async function fetchDgccrfActualites(){return fetchHtmlListing({name:"DGCCRF — Actualités",url:"https://www.economie.gouv.fr/dgccrf/actualites-dgccrf",base:"https://www.economie.gouv.fr",pathPattern:/\/dgccrf\/actualites-dgccrf\/[a-z0-9-]+/i,defaultNature:"Communiqué institutionnel",limit:40});}
 async function fetchViePubliqueReports(){return fetchHtmlListing({name:"Vie-publique — Rapports",url:"https://www.vie-publique.fr/bibliotheque-rapports-publics",base:"https://www.vie-publique.fr",pathPattern:/\/rapport\//i,defaultNature:"Rapport",limit:30});}
 async function fetchConseilConstitutionnel(){return fetchHtmlListing({name:"Conseil constitutionnel",url:"https://qpc360.conseil-constitutionnel.fr/",base:"https://qpc360.conseil-constitutionnel.fr",pathPattern:/(decision|decisions|qpc)/i,defaultNature:"Décision / jurisprudence",limit:30});}
 async function fetchCnil(){return fetchHtmlListing({name:"CNIL",url:"https://www.cnil.fr/fr/actualite",base:"https://www.cnil.fr",pathPattern:/\/fr\/(?!actualite\/?$)(?:[a-z0-9-]+)(?:\/|$)/i,defaultNature:"Communiqué institutionnel",limit:30});}
@@ -158,6 +164,7 @@ export async function GET(){
     ...SOURCES.map(source=>collect(source.name,()=>fetchFeed(source))),
     collect("Légifrance — Journal officiel",fetchLegifranceJorf),
     collect("DGCCRF — Fiches pratiques",fetchDgccrf),
+    collect("DGCCRF — Actualités",fetchDgccrfActualites),
     collect("Vie-publique — Rapports",fetchViePubliqueReports),
     collect("Conseil constitutionnel",fetchConseilConstitutionnel),
     collect("CNIL",fetchCnil),
