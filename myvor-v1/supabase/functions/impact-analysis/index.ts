@@ -6,8 +6,8 @@ const corsHeaders={
 type ImpactDepth="express"|"standard"|"deep";
 type AttemptResult={ok:boolean;impact?:any;message?:string;status?:number;retryable?:boolean;model:string;execution_ms:number;output_chars?:number};
 
-const PROMPT_VERSION="impact-prompt-v8-deep";
-const ENGINE_VERSION="myvor-impact-authenticated-v6-deep";
+const PROMPT_VERSION="impact-prompt-v9-deep-density";
+const ENGINE_VERSION="myvor-impact-authenticated-v7-deep-density";
 const OUTPUT_TOKEN_BUDGETS:Record<ImpactDepth,number>={express:1800,standard:4000,deep:8500};
 const ATTEMPT_TIMEOUTS:Record<ImpactDepth,[number,number]>={express:[32000,18000],standard:[48000,27000],deep:[76000,42000]};
 const SCORE_KEYS=["juridique","economique_operationnel","urgence","probabilite","politique_reputation","capacite_action"] as const;
@@ -40,7 +40,30 @@ function cleanArray(value:any,maxItems:number,maxChars:number){return Array.isAr
 function extractOutputText(payload:any){if(typeof payload?.output_text==="string")return payload.output_text;const chunks=payload?.output?.flatMap((item:any)=>item?.content||[])||[];return chunks.map((chunk:any)=>chunk?.text||"").join("");}
 function extractRefusal(payload:any){const chunks=payload?.output?.flatMap((item:any)=>item?.content||[])||[];return chunks.map((chunk:any)=>chunk?.refusal||"").filter(Boolean).join(" ");}
 function parseJson(raw:unknown){const text=String(raw??"").trim().replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/i,"").trim();if(!text)return null;try{return JSON.parse(text);}catch{}const start=text.indexOf("{");const end=text.lastIndexOf("}");if(start>=0&&end>start){try{return JSON.parse(text.slice(start,end+1));}catch{}}return null;}
-function validateRawImpact(raw:any,depth:ImpactDepth){if(!raw||typeof raw!=="object")return"Objet d’impact absent.";const summary=clip(raw.synthese,6000);if(summary.length<30)return"Synthèse trop courte.";if(depth==="deep"&&summary.length<700)return"Synthèse approfondie trop courte.";if(depth==="deep"&&clip(raw.justification_score,3200).length<280)return"Lecture générale du score insuffisamment développée.";if(!raw.score_detail||!raw.score_justifications)return"Score détaillé ou justifications absents.";for(const key of SCORE_KEYS){if(!Number.isFinite(Number(raw.score_detail?.[key])))return`Sous-score ${key} absent.`;const justification=clip(raw.score_justifications?.[key],2200);if(justification.length<(depth==="deep"?140:12))return`Justification ${key} trop courte pour le niveau ${depth}.`;}return"";}
+function deepAnalysisText(raw:any){
+  const parts=[clip(raw?.synthese,6000),clip(raw?.justification_score,3200)];
+  for(const key of SCORE_KEYS)parts.push(clip(raw?.score_justifications?.[key],2200));
+  for(const item of Array.isArray(raw?.dispositions_concernees)?raw.dispositions_concernees:[])parts.push(clip(item?.disposition,900),clip(item?.impact_client,1800));
+  for(const item of Array.isArray(raw?.risques)?raw.risques:[])parts.push(clip(item?.titre,260),clip(item?.description,1800));
+  for(const item of Array.isArray(raw?.opportunites)?raw.opportunites:[])parts.push(clip(item?.titre,260),clip(item?.description,1600));
+  for(const item of Array.isArray(raw?.echeances)?raw.echeances:[])parts.push(clip(item?.evenement,900),clip(item?.importance,1400));
+  for(const item of Array.isArray(raw?.recommandations)?raw.recommandations:[])parts.push(clip(item?.action,1400),clip(item?.raison,1800));
+  return parts.filter(Boolean).join(" ");
+}
+function validateRawImpact(raw:any,depth:ImpactDepth){
+  if(!raw||typeof raw!=="object")return"Objet d’impact absent.";
+  const summary=clip(raw.synthese,6000);if(summary.length<30)return"Synthèse trop courte.";
+  if(!raw.score_detail||!raw.score_justifications)return"Score détaillé ou justifications absents.";
+  for(const key of SCORE_KEYS){if(!Number.isFinite(Number(raw.score_detail?.[key])))return`Sous-score ${key} absent.`;const justification=clip(raw.score_justifications?.[key],2200);if(justification.length<(depth==="deep"?60:12))return`Justification ${key} trop courte pour le niveau ${depth}.`;}
+  if(depth==="deep"){
+    if(summary.length<450)return"Synthèse approfondie insuffisamment développée.";
+    if(clip(raw.justification_score,3200).length<150)return"Lecture générale du score insuffisamment développée.";
+    const analyticalSections=[raw.dispositions_concernees,raw.risques,raw.opportunites,raw.echeances,raw.recommandations].filter(section=>Array.isArray(section)&&section.length>0).length;
+    if(analyticalSections<3)return"Analyse approfondie incomplète : moins de trois sections analytiques sont renseignées.";
+    const density=deepAnalysisText(raw).length;if(density<2600)return`Analyse approfondie trop peu dense (${density} caractères analytiques).`;
+  }
+  return"";
+}
 
 function normalizeImpact(raw:any,depth:ImpactDepth){
   const detail={juridique:clampNumber(raw?.score_detail?.juridique,0,20),economique_operationnel:clampNumber(raw?.score_detail?.economique_operationnel,0,20),urgence:clampNumber(raw?.score_detail?.urgence,0,15),probabilite:clampNumber(raw?.score_detail?.probabilite,0,15),politique_reputation:clampNumber(raw?.score_detail?.politique_reputation,0,15),capacite_action:clampNumber(raw?.score_detail?.capacite_action,0,15)};
@@ -82,7 +105,7 @@ function buildPrompt(depth:ImpactDepth,client:string,objectif:string,contexte:st
     "Si une information utile n’est pas vérifiable, place-la dans informations_a_confirmer en formulant précisément ce qui doit être confirmé et pourquoi cette confirmation est nécessaire.",
     "Le score mesure l’impact sur l’objectif précis du client, pas l’importance générale du texte.",
     "Barème proposé sur 100 : juridique 0-20 ; économique/opérationnel 0-20 ; urgence institutionnelle 0-15 ; probabilité d’évolution/adoption 0-15 ; politique/réputation 0-15 ; capacité d’action du client 0-15.",
-    depth==="deep"?"Chaque sous-score doit être justifié par 2 à 4 phrases causales, en distinguant les faits sourcés des inférences. La synthèse doit être dense, structurée et directement exploitable pour décider. Une Note Approfondie qui se contente d’énumérer des points sans expliquer les mécanismes d’impact est considérée comme incomplète.":"Chaque sous-score doit être justifié séparément par au moins une phrase complète et causale. La synthèse doit contenir au moins trois phrases utiles.",
+    depth==="deep"?"Chaque sous-score doit être justifié par plusieurs phrases causales lorsque le corpus le permet, en distinguant les faits sourcés des inférences. La synthèse doit être dense, structurée et directement exploitable pour décider. Une Note Approfondie qui se contente d’énumérer des points sans expliquer les mécanismes d’impact est considérée comme incomplète.":"Chaque sous-score doit être justifié séparément par au moins une phrase complète et causale. La synthèse doit contenir au moins trois phrases utiles.",
     "Myvor appliquera ensuite sa grille déterministe et pourra plafonner les scores insuffisamment étayés.",
     "Pour chaque échéance, donne une date calendaire explicite avec année uniquement si elle figure réellement dans le corpus.",
     "Respecte exactement le schéma JSON imposé par l’API.",
@@ -93,7 +116,7 @@ function buildPrompt(depth:ImpactDepth,client:string,objectif:string,contexte:st
 async function runOpenAiAttempt(args:{apiKey:string;model:string;prompt:string;depth:ImpactDepth;timeoutMs:number;compact?:boolean}):Promise<AttemptResult>{
   const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),args.timeoutMs);const startedAt=Date.now();
   try{
-    const retryInstruction=args.compact?(args.depth==="deep"?"\n\nDEUXIÈME TENTATIVE : supprime les répétitions et le remplissage, mais conserve toute la profondeur analytique exigée. Développe la synthèse et les six justifications ; ne raccourcis pas l’analyse en note Standard.":"\n\nDEUXIÈME TENTATIVE : réponds plus compactement, sans répétitions, tout en remplissant tous les champs requis."):"";
+    const retryInstruction=args.compact?(args.depth==="deep"?"\n\nDEUXIÈME TENTATIVE : supprime uniquement les répétitions et le remplissage. Conserve une Note Approfondie complète, avec une synthèse dense, six justifications causales et des sections analytiques concrètes. Ne transforme pas la réponse en note Standard.":"\n\nDEUXIÈME TENTATIVE : réponds plus compactement, sans répétitions, tout en remplissant tous les champs requis."):"";
     const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${args.apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:args.model,input:`${args.prompt}${retryInstruction}`,max_output_tokens:OUTPUT_TOKEN_BUDGETS[args.depth],text:{format:{type:"json_schema",name:"myvor_impact_note",schema:IMPACT_SCHEMA,strict:true}},store:false}),signal:controller.signal});
     if(!response.ok){const raw=await response.text();let message=raw;try{message=JSON.parse(raw)?.error?.message||raw;}catch{}const retryable=response.status===429||response.status>=500;return{ok:false,message:`OpenAI ${response.status} : ${String(message).slice(0,300)}`,status:response.status,retryable,model:args.model,execution_ms:Date.now()-startedAt};}
     const payload=await response.json();
@@ -101,11 +124,13 @@ async function runOpenAiAttempt(args:{apiKey:string;model:string;prompt:string;d
     if(payload?.status==="failed")return{ok:false,message:`OpenAI n’a pas terminé la génération : ${String(payload?.error?.message||"échec").slice(0,300)}`,status:502,retryable:true,model:args.model,execution_ms:Date.now()-startedAt};
     const refusal=extractRefusal(payload);if(refusal)return{ok:false,message:`OpenAI a refusé cette génération : ${refusal.slice(0,300)}`,status:502,retryable:false,model:args.model,execution_ms:Date.now()-startedAt};
     const outputText=extractOutputText(payload);const parsed=parseJson(outputText);if(!parsed)return{ok:false,message:`Sortie JSON inexploitable (${outputText.length} caractères).`,status:502,retryable:true,model:args.model,execution_ms:Date.now()-startedAt};
-    const validationError=validateRawImpact(parsed,args.depth);if(validationError)return{ok:false,message:`Réponse structurée incomplète : ${validationError}`,status:502,retryable:true,model:args.model,execution_ms:Date.now()-startedAt};
+    const validationError=validateRawImpact(parsed,args.depth);if(validationError)return{ok:false,message:`Réponse structurée incomplète : ${validationError}`,status:502,retryable:true,model:args.model,execution_ms:Date.now()-startedAt,output_chars:outputText.length};
     return{ok:true,impact:normalizeImpact(parsed,args.depth),model:args.model,execution_ms:Date.now()-startedAt,output_chars:outputText.length};
   }catch(error:any){const aborted=error?.name==="AbortError";return{ok:false,message:aborted?`Tentative OpenAI interrompue après ${Math.round(args.timeoutMs/1000)} s.`:`Erreur OpenAI : ${error?.message||"inconnue"}`,status:aborted?504:502,retryable:true,model:args.model,execution_ms:Date.now()-startedAt};}
   finally{clearTimeout(timer);}
 }
+
+function logAttempt(label:string,depth:ImpactDepth,result:AttemptResult){if(result.ok)return;console.error(`[impact-analysis] ${label}`,JSON.stringify({depth,model:result.model,status:result.status||502,execution_ms:result.execution_ms,output_chars:result.output_chars||0,error:String(result.message||"échec").slice(0,500)}));}
 
 Deno.serve(async(req:Request)=>{
   if(req.method==="OPTIONS")return new Response("ok",{headers:corsHeaders});
@@ -116,11 +141,13 @@ Deno.serve(async(req:Request)=>{
   if(!client||!objectif||!titre||!texte)return json({error:"Client, objectif, titre et corpus sont obligatoires."},400);
   const apiKey=cleanApiKey(Deno.env.get("OPENAI_API_KEY")||"");if(!apiKey)return json({error:"Le secret OPENAI_API_KEY n’est pas configuré dans Supabase."},503);
   const primaryModel=Deno.env.get("OPENAI_IMPACT_MODEL")||"gpt-4.1-mini";const fallbackModel=Deno.env.get("OPENAI_IMPACT_FALLBACK_MODEL")||primaryModel;const prompt=buildPrompt(depth,client,objectif,contexte,titre,lienOfficiel,texte);const startedAt=Date.now();const attempts:any[]=[];
-  const first=await runOpenAiAttempt({apiKey,model:primaryModel,prompt,depth,timeoutMs:ATTEMPT_TIMEOUTS[depth][0]});attempts.push({model:first.model,ok:first.ok,status:first.ok?200:first.status,execution_ms:first.execution_ms,...(!first.ok?{error:first.message}:{})});
+  const first=await runOpenAiAttempt({apiKey,model:primaryModel,prompt,depth,timeoutMs:ATTEMPT_TIMEOUTS[depth][0]});attempts.push({model:first.model,ok:first.ok,status:first.ok?200:first.status,execution_ms:first.execution_ms,output_chars:first.output_chars||0,...(!first.ok?{error:first.message}:{})});
   if(first.ok)return json({impact:first.impact!,engine:ENGINE_VERSION,model:first.model,prompt_version:PROMPT_VERSION,depth,execution_ms:Date.now()-startedAt,latency_budget_ms:ATTEMPT_TIMEOUTS[depth].reduce((a,b)=>a+b,0),output_token_budget:OUTPUT_TOKEN_BUDGETS[depth],attempt_count:1,fallback_model_used:false,attempts});
+  logAttempt("attempt_1_failed",depth,first);
   if(!first.retryable)return json({error:first.message,engine:ENGINE_VERSION,prompt_version:PROMPT_VERSION,attempts},first.status||502);
   await sleep(depth==="deep"?1800:650);
-  const second=await runOpenAiAttempt({apiKey,model:fallbackModel,prompt,depth,timeoutMs:ATTEMPT_TIMEOUTS[depth][1],compact:true});attempts.push({model:second.model,ok:second.ok,status:second.ok?200:second.status,execution_ms:second.execution_ms,...(!second.ok?{error:second.message}:{})});
+  const second=await runOpenAiAttempt({apiKey,model:fallbackModel,prompt,depth,timeoutMs:ATTEMPT_TIMEOUTS[depth][1],compact:true});attempts.push({model:second.model,ok:second.ok,status:second.ok?200:second.status,execution_ms:second.execution_ms,output_chars:second.output_chars||0,...(!second.ok?{error:second.message}:{})});
   if(second.ok)return json({impact:second.impact!,engine:ENGINE_VERSION,model:second.model,prompt_version:PROMPT_VERSION,depth,execution_ms:Date.now()-startedAt,latency_budget_ms:ATTEMPT_TIMEOUTS[depth].reduce((a,b)=>a+b,0),output_token_budget:OUTPUT_TOKEN_BUDGETS[depth],attempt_count:2,fallback_model_used:true,attempts});
+  logAttempt("attempt_2_failed",depth,second);console.error("[impact-analysis] all_attempts_failed",JSON.stringify({depth,total_ms:Date.now()-startedAt,attempts}));
   return json({error:`Les deux tentatives d’analyse IA ont échoué. ${second.message}`,engine:ENGINE_VERSION,prompt_version:PROMPT_VERSION,attempts},second.status===504?504:502);
 });
