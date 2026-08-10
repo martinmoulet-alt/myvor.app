@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase";
 
-export type ProductionType="impact"|"radar"|"builder"|"warzone";
+export type ProductionType="impact"|"urgency_score"|"radar"|"builder"|"warzone";
 export type AITrace={
   assisted_by_ai:true;
   system:"Myvor";
