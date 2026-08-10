@@ -13,6 +13,7 @@ import PwaRegister from "./PwaRegister";
 import StartupRecovery from "./StartupRecovery";
 import NetworkStatus from "./NetworkStatus";
 import LegalHelpMenu from "./LegalHelpMenu";
+import CommercialConsentGate from "./CommercialConsentGate";
 import MobileDossierTabs from "./MobileDossierTabs";
 import WorkflowGuide from "./WorkflowGuide";
 import AITransparencyNotice from "./AITransparencyNotice";
@@ -42,5 +43,5 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="fr"><body><PwaRegister/><StartupRecovery/><NetworkStatus/><LegalHelpMenu/><MobileDossierTabs/><WorkflowGuide/><AITransparencyNotice/><FirstRunOnboarding/><MobileModuleDock/>{children}</body></html>;
+  return <html lang="fr"><body><PwaRegister/><StartupRecovery/><NetworkStatus/><LegalHelpMenu/><CommercialConsentGate/><MobileDossierTabs/><WorkflowGuide/><AITransparencyNotice/><FirstRunOnboarding/><MobileModuleDock/>{children}</body></html>;
 }
