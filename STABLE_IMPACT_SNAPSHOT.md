@@ -1,0 +1,1 @@
+Stable Impact snapshot: commit 26bda7580eb43cab5d00ec93634c8c2bde726b81. Do not modify impact-analysis without reproducing a bug on this version first.
