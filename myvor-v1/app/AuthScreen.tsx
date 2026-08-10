@@ -6,6 +6,7 @@ import {supabase} from "@/lib/supabase";
 import styles from "./AuthScreen.module.css";
 
 type Mode="login"|"signup";
+const LEGAL_VERSION="2026-08-10";
 
 function passwordIssue(password:string){
   if(password.length<12)return "Le mot de passe doit contenir au moins 12 caractères.";
@@ -16,16 +17,21 @@ function passwordIssue(password:string){
   return "";
 }
 
+function openInfo(panel:"cgu"|"privacy"){
+  window.dispatchEvent(new CustomEvent("myvor:open-info",{detail:panel}));
+}
+
 export default function AuthScreen(){
   const[mode,setMode]=useState<Mode>("login");
   const[email,setEmail]=useState("");
   const[password,setPassword]=useState("");
   const[showPassword,setShowPassword]=useState(false);
+  const[termsAccepted,setTermsAccepted]=useState(false);
   const[busy,setBusy]=useState(false);
   const[message,setMessage]=useState("");
   const[messageType,setMessageType]=useState<"error"|"success">("error");
 
-  function switchMode(next:Mode){setMode(next);setMessage("");setPassword("");}
+  function switchMode(next:Mode){setMode(next);setMessage("");setPassword("");if(next==="login")setTermsAccepted(false);}
 
   async function submit(e:React.FormEvent){
     e.preventDefault();
@@ -33,16 +39,32 @@ export default function AuthScreen(){
     if(mode==="signup"){
       const issue=passwordIssue(password);
       if(issue){setMessageType("error");setMessage(issue);return;}
+      if(!termsAccepted){setMessageType("error");setMessage("Acceptez les CGU et la politique de confidentialité pour créer votre espace.");return;}
     }
     setBusy(true);setMessage("");
     try{
-      const result=mode==="login"
-        ?await supabase.auth.signInWithPassword({email:email.trim(),password})
-        :await supabase.auth.signUp({email:email.trim(),password});
+      let result;
+      if(mode==="login")result=await supabase.auth.signInWithPassword({email:email.trim(),password});
+      else{
+        const acceptedAt=new Date().toISOString();
+        const emailRedirectTo=typeof window!=="undefined"?new URL("/",window.location.origin).toString():undefined;
+        result=await supabase.auth.signUp({
+          email:email.trim(),
+          password,
+          options:{
+            emailRedirectTo,
+            data:{
+              myvor_legal_version:LEGAL_VERSION,
+              myvor_terms_accepted_at:acceptedAt,
+              myvor_privacy_accepted_at:acceptedAt,
+            },
+          },
+        });
+      }
       if(result.error)throw result.error;
       if(mode==="signup"){
         setMessageType("success");
-        setMessage("Compte créé. Vérifiez votre e-mail si la confirmation est activée.");
+        setMessage(result.data.session?"Votre espace Myvor est prêt.":"Compte créé. Ouvrez l’e-mail de confirmation pour activer votre espace Myvor.");
       }
     }catch(error:any){
       setMessageType("error");
@@ -86,7 +108,7 @@ export default function AuthScreen(){
         <div className={styles.cardHead}>
           <span className={styles.cardEyebrow}>{mode==="login"?"Espace professionnel":"Créer votre espace"}</span>
           <h2>{mode==="login"?"Bienvenue sur Myvor":"Commencez avec Myvor"}</h2>
-          <p>{mode==="login"?"Connectez-vous pour accéder à vos dossiers et analyses.":"Créez votre compte professionnel en quelques secondes."}</p>
+          <p>{mode==="login"?"Connectez-vous pour accéder à vos dossiers et analyses.":"Créez votre compte professionnel et personnalisez ensuite votre espace."}</p>
         </div>
 
         <div className={styles.tabs} role="tablist" aria-label="Authentification">
@@ -100,14 +122,19 @@ export default function AuthScreen(){
 
           {mode==="login"&&<div className={styles.formMeta}><span/><button type="button" onClick={resetPassword} disabled={busy}>Mot de passe oublié ?</button></div>}
 
+          {mode==="signup"&&<label style={{display:"flex",alignItems:"flex-start",gap:9,border:"1px solid #dbe3ec",borderRadius:10,padding:"10px 11px",background:"#f8fafc",color:"#526173",fontSize:11,lineHeight:1.45,cursor:"pointer"}}>
+            <input type="checkbox" checked={termsAccepted} onChange={event=>setTermsAccepted(event.target.checked)} style={{marginTop:2,accentColor:"#d7ad43"}}/>
+            <span>J’accepte les <button type="button" onClick={event=>{event.preventDefault();openInfo("cgu");}} style={{border:0,padding:0,background:"transparent",color:"#8d6a12",fontWeight:800,cursor:"pointer"}}>CGU</button> et la <button type="button" onClick={event=>{event.preventDefault();openInfo("privacy");}} style={{border:0,padding:0,background:"transparent",color:"#8d6a12",fontWeight:800,cursor:"pointer"}}>politique de confidentialité</button> de Myvor.</span>
+          </label>}
+
           {message&&<div className={`${styles.message} ${messageType==="success"?styles.success:styles.error}`}>{message}</div>}
 
-          <button className={styles.submit} disabled={busy}>{busy?(mode==="login"?"Connexion…":"Création…"):(mode==="login"?"Se connecter":"Créer mon espace")}<ArrowRight size={17}/></button>
+          <button className={styles.submit} disabled={busy||(mode==="signup"&&!termsAccepted)}>{busy?(mode==="login"?"Connexion…":"Création…"):(mode==="login"?"Se connecter":"Créer mon espace")}<ArrowRight size={17}/></button>
         </form>
 
         <div className={styles.security}><ShieldCheck size={15}/><span>Connexion sécurisée. Vos données ne sont jamais partagées entre organisations.</span></div>
       </div>
-      <div className={styles.legal}>Myvor · Anticipez l’impact.</div>
+      <div className={styles.legal}>Myvor · Anticipez l’impact. · Version contractuelle {LEGAL_VERSION}</div>
     </section>
   </main>;
 }
