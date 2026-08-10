@@ -7,3 +7,5 @@
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
+
+# Redeploy Myvor V1 after impact-analysis recovery — 2026-08-10
