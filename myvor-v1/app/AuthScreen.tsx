@@ -3,10 +3,10 @@
 import {useState} from "react";
 import {ArrowRight,Check,Eye,EyeOff,LockKeyhole,Mail,ShieldCheck,Sparkles} from "lucide-react";
 import {supabase} from "@/lib/supabase";
+import {MYVOR_LEGAL_VERSION} from "@/lib/legal";
 import styles from "./AuthScreen.module.css";
 
 type Mode="login"|"signup";
-const LEGAL_VERSION="2026-08-10";
 
 function passwordIssue(password:string){
   if(password.length<12)return "Le mot de passe doit contenir au moins 12 caractères.";
@@ -54,7 +54,7 @@ export default function AuthScreen(){
           options:{
             emailRedirectTo,
             data:{
-              myvor_legal_version:LEGAL_VERSION,
+              myvor_legal_version:MYVOR_LEGAL_VERSION,
               myvor_terms_accepted_at:acceptedAt,
               myvor_privacy_accepted_at:acceptedAt,
             },
@@ -134,7 +134,7 @@ export default function AuthScreen(){
 
         <div className={styles.security}><ShieldCheck size={15}/><span>Connexion sécurisée. Vos données ne sont jamais partagées entre organisations.</span></div>
       </div>
-      <div className={styles.legal}>Myvor · Anticipez l’impact. · Version contractuelle {LEGAL_VERSION}</div>
+      <div className={styles.legal}>Myvor · Anticipez l’impact. · Version contractuelle {MYVOR_LEGAL_VERSION}</div>
     </section>
   </main>;
 }
