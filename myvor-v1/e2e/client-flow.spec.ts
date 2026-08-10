@@ -12,6 +12,14 @@ async function signIn(page:Page){
   await emailField.fill(email);
   await passwordField.fill(password);
   await page.getByRole("button",{name:/se connecter|connexion/i}).click();
+
+  const consentHeading=page.getByRole("heading",{name:/Finalisez votre accès à Myvor/i});
+  if(await consentHeading.isVisible({timeout:5000}).catch(()=>false)){
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button",{name:/Accepter et continuer/i}).click();
+    await expect(consentHeading).toBeHidden({timeout:15_000});
+  }
+
   await expect(page.getByText("Tableau de bord",{exact:true}).first()).toBeVisible({timeout:30_000});
 }
 
@@ -42,7 +50,7 @@ test("le parcours client authentifié ouvre tous les modules critiques",async({p
   await openModule(page,/veille/i,/veille/i);
   await expect(page.getByRole("button",{name:/synchroniser maintenant/i})).toBeVisible();
   await openModule(page,/note d’impact/i,/note d’impact/i);
-  await openModule(page,/radar d’influence/i,/radar d’influence/i);
+  await openModule(page,/radar|war zone/i,/radar/i);
   await openModule(page,/note builder/i,/note builder/i);
 
   await page.getByRole("button",{name:/se déconnecter/i}).click();
