@@ -7,7 +7,7 @@ type Setting={user_id:string;auto_link_threshold:number|string};
 type AiResult={relevant:boolean;directness:"direct"|"indirect"|"none";urgency:"faible"|"moyen"|"fort"|"absolument urgent";reason:string};
 
 const JSON_HEADERS={"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"};
-const RULE_PREFIX="Règles dossier v11 —";
+const RULE_PREFIX="Règles dossier v12 —";
 const MAX_ITEMS=8;
 const VALID_URGENCIES=new Set(["faible","moyen","fort","absolument urgent"]);
 const VALID_DIRECTNESS=new Set(["direct","indirect","none"]);
@@ -24,14 +24,15 @@ async function qualifyOne(apiKey:string,item:PendingItem,dossier:Dossier,sourceT
   const prompt=[
     "Tu es le filtre de pertinence STRICT de la veille Myvor.",
     "Confirme ou rejette le dossier proposé pour ce texte institutionnel et distingue pertinence directe et indirecte.",
+    "L'OBJECTIF du dossier est la règle principale; le contexte est seulement informatif et ne doit jamais élargir artificiellement le périmètre de l'objectif.",
     "relevant=true uniquement si le texte modifie, précise, applique, menace ou ouvre une opportunité concrète pour l'objectif précis du dossier.",
     "directness=direct seulement si le texte agit directement sur le cadre juridique, réglementaire, économique ou opérationnel visé par l'objectif du dossier ou sur les obligations/leviers du client.",
     "directness=indirect si le texte concerne un acteur, client, secteur ou environnement adjacent mais ne modifie pas directement le levier suivi par le dossier.",
     "directness=none si le lien est seulement lexical, thématique ou fortuit; dans ce cas relevant=false.",
     "Un même public, un même secteur, les mots entreprise/PME/numérique/santé/agriculture, une proximité thématique vague ou une référence incidente ne suffisent jamais à créer un lien direct.",
-    "REGLE D'ANCRAGE: si le titre ou le contexte du dossier identifie une loi, un règlement, un article, une réforme, une date ou un régime nommé, relevant=true seulement si le texte source cite explicitement cet instrument (numéro, date, titre ou article) OU indique sans ambiguïté qu'il met en oeuvre/modifie une disposition précise décrite dans le dossier.",
+    "REGLE D'ANCRAGE: si le titre ou le contexte du dossier identifie une loi, un règlement, un article, une réforme, une date ou un régime nommé, relevant=true seulement si le texte source cite explicitement cet instrument OU indique sans ambiguïté qu'il met en oeuvre/modifie une disposition précise décrite dans le dossier.",
     "Pour un dossier d'application d'une loi précise, une mesure qui affecte simplement le même type d'entreprises mais qui provient d'un autre régime juridique doit être rejetée.",
-    "Exemple: un texte sur les cotisations sociales des agriculteurs n'est qu'indirect pour un dossier centré sur les intrants, produits phytosanitaires, engrais ou biocontrôle, sauf lien explicite avec ces leviers.",
+    "Exemple contraignant: un texte sur les cotisations sociales des agriculteurs est indirect pour un dossier dont l'objectif est l'accès aux solutions agronomiques/intrants, même si le contexte mentionne compétitivité agricole ou souveraineté alimentaire.",
     "Si relevant=false, urgency doit être faible et directness=none.",
     "Si relevant=true, urgency vaut faible, moyen, fort ou absolument urgent selon l'impact opérationnel et les échéances explicitement présentes.",
     "reason doit citer le lien juridique ou opérationnel exact et justifier brièvement la directness.",
