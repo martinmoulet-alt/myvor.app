@@ -1,7 +1,7 @@
 "use client";
 
 import {useMemo,useState} from "react";
-import {AlertTriangle,ArrowRight,CheckCircle2,Clock3,FileText,Radar,Sparkles,Target} from "lucide-react";
+import {AlertTriangle,ArrowRight,Clock3,FileText,Radar,Sparkles,Target} from "lucide-react";
 import {saveProduction} from "@/lib/productions";
 import {supabase} from "@/lib/supabase";
 import styles from "./UrgencyScoreModule.module.css";
@@ -33,6 +33,18 @@ function dateValue(item:Watch){const value=item.published_at||item.created_at||"
 function tone(level:string){const value=level.toLowerCase();if(value.includes("critique"))return styles.critical;if(value.includes("urgent"))return styles.urgent;if(value.includes("action"))return styles.action;if(value.includes("surve"))return styles.watch;return styles.low;}
 function priorityFromScore(score:number){return score>=85?"absolument urgent":score>=70?"fort":score>=50?"moyen":"faible";}
 
+async function edgeErrorMessage(error:any){
+  let message=String(error?.message||"Le moteur Score d’urgence a échoué.");
+  const context=error?.context;
+  if(context&&typeof context.clone==="function"){
+    try{
+      const payload=await context.clone().json();
+      if(payload?.error)message=String(payload.error);
+    }catch{}
+  }
+  return message;
+}
+
 export default function UrgencyScoreModule({dossiers,watch,onActions,onOpenRadar,onCreateDeliverable}:{dossiers:Dossier[];watch:Watch[];onActions?:(drafts:ActionDraft[])=>Promise<void>|void;onOpenRadar?:(dossierId:string,watchIds:string[])=>void;onCreateDeliverable?:(dossierId:string,watchIds:string[])=>void}){
   const[dossierId,setDossierId]=useState(dossiers[0]?.id||"");
   const[mode,setMode]=useState<Mode>("standard");
@@ -57,10 +69,19 @@ export default function UrgencyScoreModule({dossiers,watch,onActions,onOpenRadar
     if(!supabase){setError("Supabase n’est pas configuré.");return;}
     setLoading(true);setError("");setSaveMessage("");setResult(null);
     try{
-      const{data}=await supabase.auth.getSession();const token=String(data.session?.access_token||"");if(!token)throw new Error("Session Myvor expirée. Reconnecte-toi puis réessaie.");
-      const response=await fetch("/api/urgency-score",{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({dossier,items:selected,mode})});
-      const raw=await response.text();let payload:any=null;try{payload=raw?JSON.parse(raw):null;}catch{throw new Error(`Réponse serveur invalide (${response.status}).`);}if(!response.ok)throw new Error(payload?.error||`Calcul impossible (${response.status}).`);
-      const next=payload?.result as UrgencyResult|undefined;if(!next||!Number.isFinite(Number(next.score)))throw new Error("Le Score d’urgence n’a pas été retourné.");
+      const{data:sessionData}=await supabase.auth.getSession();
+      const token=String(sessionData.session?.access_token||"");
+      if(!token)throw new Error("Session Myvor expirée. Reconnecte-toi puis réessaie.");
+
+      // Appel direct Supabase : aucun proxy Netlify dans la chaîne de calcul.
+      const{data:payload,error:functionError}=await supabase.functions.invoke("urgency-score-analysis",{
+        body:{dossier,items:selected,mode},
+        headers:{Authorization:`Bearer ${token}`},
+      });
+      if(functionError)throw new Error(await edgeErrorMessage(functionError));
+
+      const next=payload?.result as UrgencyResult|undefined;
+      if(!next||!Number.isFinite(Number(next.score)))throw new Error("Le Score d’urgence n’a pas été retourné.");
       setResult(next);
       const title=`Score d’urgence ${currentMode.label.toLowerCase()} — ${dossier.title}`;
       const saved=await saveProduction({dossier_id:dossier.id,type:"urgency_score",title,content:{score:next.score,level:next.level,decision:next.decision,action_needed:next.action_needed,summary:next.summary,criteria:next.criteria,workstreams:next.workstreams,next_actions:next.next_actions,uncertainties:next.uncertainties,sources:next.sources,mode,engine:next.engine||payload?.engine||null,model:next.model||payload?.model||null,execution_ms:next.execution_ms||payload?.execution_ms||null,watch_ids:selected.map(item=>item.id)}});
