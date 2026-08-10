@@ -1,159 +1,170 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2.111.0";
+
 const corsHeaders={
   "Access-Control-Allow-Origin":"*",
   "Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type",
 };
-
-type Dossier={id:string;client:string;title:string;objective:string;context?:string};
-type WatchItem={id:string;title:string;nature:string;source_url?:string;urgency?:string};
-
-const MONTH_INDEX:Record<string,number>={janvier:1,fevrier:2,mars:3,avril:4,mai:5,juin:6,juillet:7,aout:8,septembre:9,octobre:10,novembre:11,decembre:12};
 const MAX_WATCH_ITEMS=24;
+const MAX_TOTAL_SOURCE_CHARS=60000;
+const MAX_SOURCE_CHARS=7000;
 
-function json(body:unknown,status=200){return new Response(JSON.stringify(body),{status,headers:{...corsHeaders,"Content-Type":"application/json; charset=utf-8"}});}
-function cleanApiKey(raw:string){const normalized=String(raw||"").normalize("NFKC");const match=normalized.match(/sk-[A-Za-z0-9_-]+/);return match?.[0]||"";}
-function extractOutputText(payload:any){if(typeof payload?.output_text==="string")return payload.output_text;const chunks=payload?.output?.flatMap((item:any)=>item?.content||[])||[];return chunks.map((chunk:any)=>chunk?.text||"").join("");}
-function clip(value:unknown,max:number){return String(value??"").slice(0,max);}
-function cleanSourceTitle(value:unknown){let text=String(value??"").normalize("NFKC").replace(/\s+/g," ").trim();text=text.replace(/\b([\p{L}À-ÿ'-]+)(?:\s+\1\b)+/giu,"$1");text=text.replace(/\s+n[°º]\s*[^0-9\s].*$/iu,"").trim();text=text.replace(/[\u0000-\u001F\u007F]/g,"").trim();return text||"Source institutionnelle";}
-function stripLeadingSubject(content:unknown){return String(content??"").replace(/^\s*Objet\s*:\s*[^\n]*(?:\n+|$)/iu,"").trim();}
-function normalizedFrench(value:unknown){return String(value??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();}
-function hasPastTemporalReference(value:unknown,now:Date){const text=normalizedFrench(value);if(!text)return false;const currentYear=now.getUTCFullYear();const currentMonth=now.getUTCMonth()+1;const currentDay=now.getUTCDate();const pattern=/(?:(\d{1,2})\s+)?(janvier|fevrier|mars|avril|mai|juin|juillet|aout|septembre|octobre|novembre|decembre)(?:\s+(\d{4}))?/g;let match:RegExpExecArray|null;while((match=pattern.exec(text))!==null){const day=match[1]?Number(match[1]):1;const month=MONTH_INDEX[match[2]];const year=match[3]?Number(match[3]):currentYear;if(year<currentYear)return true;if(year===currentYear&&month<currentMonth)return true;if(year===currentYear&&month===currentMonth&&day<currentDay)return true;}return false;}
-function removePastTemporalSentences(value:unknown,now:Date){const raw=String(value??"").trim();if(!raw)return "";const lines=raw.split(/\n+/).map(line=>line.split(/(?<=[.!?])\s+/).filter(sentence=>!hasPastTemporalReference(sentence,now)).join(" ").trim()).filter(Boolean);return lines.join("\n").replace(/\n{3,}/g,"\n\n").trim();}
-function cleanDerivedList(value:any,maxItems:number,maxChars:number,now:Date){if(!Array.isArray(value))return [];return value.slice(0,maxItems).map((item:any)=>removePastTemporalSentences(clip(item,maxChars),now)).filter(Boolean);}
-function compactImpact(value:any,now:Date){const note=value?.note||value||null;if(!note)return null;const dispositions=Array.isArray(note.dispositions_concernees)?note.dispositions_concernees.slice(0,6).map((item:any)=>({disposition:removePastTemporalSentences(clip(item?.disposition,500),now),impact_client:removePastTemporalSentences(clip(item?.impact_client,700),now),niveau:clip(item?.niveau,80)})).filter((item:any)=>item.disposition||item.impact_client):[];return{executive_summary:removePastTemporalSentences(clip(note.executive_summary,1600),now),score:note.score??null,level:clip(note.level,80),rationale:removePastTemporalSentences(clip(note.rationale,1000),now),risks:cleanDerivedList(note.risks,5,450,now),opportunities:cleanDerivedList(note.opportunities,5,450,now),deadlines:cleanDerivedList(note.deadlines,5,350,now),recommendations:cleanDerivedList(note.recommendations,6,500,now),dispositions_concernees:dispositions};}
-function compactRadar(value:any,now:Date){const actors=Array.isArray(value?.actors)?value.actors:Array.isArray(value)?value:[];if(!actors.length)return null;return actors.slice(0,8).map((actor:any)=>({name:clip(actor.name,180),role:removePastTemporalSentences(clip(actor.role,240),now),orbit:actor.orbit??null,position:clip(actor.position,80),influence:actor.influence??null,why:removePastTemporalSentences(clip(actor.why,550),now),window:removePastTemporalSentences(clip(actor.window,350),now),action:removePastTemporalSentences(clip(actor.action,450),now),certainty:clip(actor.certainty,80)}));}
-function sanitizeGeneratedContent(value:unknown,now:Date){return removePastTemporalSentences(stripLeadingSubject(value),now).replace(/\n\s*(Fenêtres? d[’']action|Prochaines étapes|Calendrier(?: institutionnel| législatif)?)\s*:\s*(?=\n|$)/giu,"").replace(/\s+(?=\d+\.\s)/g,"\n\n").replace(/\n{3,}/g,"\n\n").trim();}
+const DOCUMENT_SCHEMA={
+  type:"object",
+  additionalProperties:false,
+  properties:{
+    title:{type:"string"},
+    subject:{type:"string"},
+    content:{type:"string"},
+    key_points:{type:"array",maxItems:6,items:{type:"string"}},
+  },
+  required:["title","subject","content","key_points"],
+};
 
-async function requireAuthenticatedQuota(req:Request,feature:string){
+type EditAction="reformulate"|"shorten"|"strengthen"|"diplomatic";
+type SourceItem={id:string;title:string;nature:string;source_url:string;source_name:string;urgency:string;published_at:string;source_text:string};
+
+function json(body:unknown,status=200){return new Response(JSON.stringify(body),{status,headers:{...corsHeaders,"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}});}
+function clip(value:unknown,max:number){return String(value??"").normalize("NFKC").replace(/[\u0000-\u001f\u007f]/g,"").slice(0,max).trim();}
+function cleanApiKey(raw:string){const match=String(raw||"").normalize("NFKC").match(/sk-[A-Za-z0-9_-]+/);return match?.[0]||"";}
+function outputText(payload:any){if(typeof payload?.output_text==="string")return payload.output_text.trim();return(payload?.output||[]).flatMap((item:any)=>item?.content||[]).map((part:any)=>part?.text||"").join("").trim();}
+function getAdminKey(){const modern=Deno.env.get("SUPABASE_SECRET_KEYS");if(modern){try{const keys=JSON.parse(modern);const value=keys?.default||Object.values(keys||{})[0];if(typeof value==="string"&&value)return value;}catch{}}return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")||"";}
+function cleanSourceTitle(value:unknown){return clip(value,500).replace(/\s+/g," ").trim()||"Source institutionnelle";}
+function compact(value:unknown,max=12000){if(value==null)return null;try{return JSON.parse(JSON.stringify(value).slice(0,max));}catch{return clip(value,max)||null;}}
+
+async function authenticate(req:Request,feature:string){
   const authorization=req.headers.get("authorization")||"";
-  if(!authorization.toLowerCase().startsWith("bearer "))return json({error:"Session Myvor requise."},401);
-  const supabaseUrl=(Deno.env.get("SUPABASE_URL")||"").replace(/\/$/,"");
+  if(!authorization.toLowerCase().startsWith("bearer "))return{error:json({error:"Session Myvor requise."},401)};
+  const url=(Deno.env.get("SUPABASE_URL")||"").replace(/\/$/,"");
   const anonKey=Deno.env.get("SUPABASE_ANON_KEY")||"";
-  if(!supabaseUrl||!anonKey)return json({error:"La sécurité Supabase de Myvor n’est pas configurée."},503);
-  try{
-    const userResponse=await fetch(`${supabaseUrl}/auth/v1/user`,{method:"GET",headers:{apikey:anonKey,Authorization:authorization}});
-    if(!userResponse.ok)return json({error:"Session Myvor invalide ou expirée."},401);
-    const user=await userResponse.json().catch(()=>null);
-    if(!user?.id)return json({error:"Session Myvor invalide ou expirée."},401);
-    const quotaResponse=await fetch(`${supabaseUrl}/rest/v1/rpc/consume_ai_quota`,{method:"POST",headers:{apikey:anonKey,Authorization:authorization,"Content-Type":"application/json"},body:JSON.stringify({p_feature:feature})});
-    if(!quotaResponse.ok)return json({error:"Impossible de vérifier le quota IA Myvor."},503);
-    const allowed=await quotaResponse.json().catch(()=>false);
-    if(allowed!==true)return json({error:"Trop de générations IA en peu de temps. Réessaie dans quelques minutes."},429);
-    return null;
-  }catch{return json({error:"Impossible de vérifier la session Myvor."},503);}
+  if(!url||!anonKey)return{error:json({error:"La sécurité Supabase de Myvor n’est pas configurée."},503)};
+  const client=createClient(url,anonKey,{global:{headers:{Authorization:authorization}},auth:{persistSession:false,autoRefreshToken:false}});
+  const {data:{user},error:userError}=await client.auth.getUser();
+  if(userError||!user)return{error:json({error:"Session Myvor invalide ou expirée."},401)};
+  const {data:allowed,error:quotaError}=await client.rpc("consume_ai_quota",{p_feature:feature});
+  if(quotaError)return{error:json({error:"Impossible de vérifier le quota IA Myvor."},503)};
+  if(allowed!==true)return{error:json({error:"Trop de générations IA en peu de temps. Réessaie dans quelques minutes."},429)};
+  return{client,url,userId:user.id};
 }
 
-Deno.serve(async(req)=>{
-  if(req.method==="OPTIONS")return new Response("ok",{headers:corsHeaders});
-  if(req.method!=="POST")return json({error:"Méthode non autorisée."},405);
-  const contentLength=Number(req.headers.get("content-length")||0);
-  if(Number.isFinite(contentLength)&&contentLength>180000)return json({error:"Requête trop volumineuse."},413);
+async function loadContext(client:any,url:string,body:any){
+  const dossierId=clip(body?.dossier?.id,80);
+  if(!dossierId)return{error:"Sélectionne un dossier client."};
+  const {data:dossier,error:dossierError}=await client.from("dossiers").select("id,client,title,objective,context,sector,activity,risks_to_avoid,opportunities,client_position,key_actors,key_deadlines,internal_notes").eq("id",dossierId).maybeSingle();
+  if(dossierError||!dossier)return{error:"Le dossier n’est plus accessible dans ce workspace."};
 
-  const body=await req.json().catch(()=>null);
-  const mode=String(body?.mode||"generate");
-  const authError=await requireAuthenticatedQuota(req,mode==="edit"?"note-builder-edit":"note-builder");
-  if(authError)return authError;
+  const requestedIds=[...new Set((Array.isArray(body?.items)?body.items:[]).map((item:any)=>clip(item?.id,80)).filter((id:string)=>/^[0-9a-f-]{36}$/i.test(id)))].slice(0,MAX_WATCH_ITEMS) as string[];
+  if(!requestedIds.length)return{error:"Aucun texte du corpus applicable n’est disponible pour ce dossier."};
 
-  const apiKey=cleanApiKey(Deno.env.get("OPENAI_API_KEY")||"");
-  if(!apiKey)return json({error:"Le secret OPENAI_API_KEY n’est pas configuré dans Supabase."},503);
+  const {data:watchRows,error:watchError}=await client.from("watch_items").select("id,title,nature,source_url,source_name,urgency,published_at,created_at").in("id",requestedIds);
+  if(watchError)return{error:"Impossible de charger les textes du corpus applicable."};
+  const byId=new Map((watchRows||[]).map((row:any)=>[String(row.id),row]));
+  const ordered=requestedIds.map(id=>byId.get(id)).filter(Boolean);
+  if(!ordered.length)return{error:"Aucun texte accessible n’a été retrouvé pour ce dossier."};
 
-  if(mode==="edit"){
-    const selected=clip(body?.selected_text,4500).trim();
-    const action=String(body?.action||"reformulate");
-    const surrounding=clip(body?.surrounding_text,6000);
-    const actionRules:Record<string,string>={
-      reformulate:"Reformule ce passage pour le rendre plus clair, fluide, précis et professionnel, sans modifier le fond.",
-      shorten:"Raccourcis ce passage d’environ 30 à 40 %, conserve toutes les informations indispensables et supprime les répétitions.",
-      strengthen:"Renforce l’argumentation : rends le raisonnement plus structuré, plus convaincant et plus orienté décision, sans inventer de fait.",
-      diplomatic:"Rends ce passage plus diplomatique, institutionnel et nuancé, tout en conservant le message et l’objectif.",
-    };
-    if(!selected)return json({error:"Sélectionne d’abord un passage dans la note."},400);
-    const prompt=[
-      "Tu es l’assistant d’édition du Note Builder Myvor, spécialisé en affaires publiques.",
-      actionRules[action]||actionRules.reformulate,
-      "Rédige uniquement des phrases complètes et concrètes. Chaque phrase doit identifier clairement le sujet concerné et expliquer l’action, l’effet, le risque ou la décision ; évite les fragments nominaux comme 'risque juridique', 'enjeu fort', 'à surveiller' ou 'action rapide' sans explication.",
-      "Quand une action est proposée, précise qui doit agir, sur quoi et dans quel but dès que le contexte le permet.",
-      "Ne crée aucun fait, chiffre, date, acteur ou source qui n’existe pas dans le passage.",
-      "Conserve le sens, les noms propres et les réserves de fiabilité.",
-      "Réponds uniquement avec le passage réécrit, sans commentaire ni guillemets.",
-      "CONTEXTE DU DOCUMENT :",surrounding,
-      "PASSAGE À MODIFIER :",selected,
-    ].join("\n");
-    const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),30000);
-    try{
-      const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:"gpt-4.1-mini",input:prompt,max_output_tokens:900,store:false}),signal:controller.signal});
-      if(!response.ok){const raw=await response.text();return json({error:`OpenAI a refusé la requête (${response.status}) : ${raw.slice(0,220)}`},502);}
-      const text=extractOutputText(await response.json()).trim();if(!text)return json({error:"La réécriture n’a renvoyé aucun texte."},502);
-      return json({text,engine:"supabase-note-builder-edit-v2"});
-    }catch(error:any){if(error?.name==="AbortError")return json({error:"La réécriture a dépassé 30 secondes."},504);return json({error:`Erreur d’édition : ${error?.message||"inconnue"}`},500);}finally{clearTimeout(timer);}
+  const adminKey=getAdminKey();
+  const sourceMap=new Map<string,string>();
+  if(adminKey){
+    const admin=createClient(url,adminKey,{auth:{persistSession:false,autoRefreshToken:false}});
+    const {data:contents}=await admin.from("watch_item_content").select("watch_item_id,source_text").in("watch_item_id",ordered.map((row:any)=>row.id));
+    for(const row of contents||[])sourceMap.set(String(row.watch_item_id),String(row.source_text||""));
   }
 
-  const dossier:Dossier|null=body?.dossier||null;
-  const items:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,MAX_WATCH_ITEMS):[];
+  let remaining=MAX_TOTAL_SOURCE_CHARS;
+  const items:SourceItem[]=ordered.map((row:any)=>{
+    const raw=sourceMap.get(String(row.id))||"";
+    const take=Math.max(0,Math.min(MAX_SOURCE_CHARS,remaining));
+    const sourceText=clip(raw,take);
+    remaining=Math.max(0,remaining-sourceText.length);
+    return{
+      id:String(row.id),title:cleanSourceTitle(row.title),nature:clip(row.nature,140),source_url:clip(row.source_url,900),source_name:clip(row.source_name,220),urgency:clip(row.urgency,80),published_at:clip(row.published_at||row.created_at,80),source_text:sourceText,
+    };
+  });
+  return{dossier,items};
+}
+
+async function editPassage(apiKey:string,body:any){
+  const selected=clip(body?.selected_text,4500);
+  const surrounding=clip(body?.surrounding_text,7000);
+  const action=String(body?.action||"reformulate") as EditAction;
+  if(!selected)return json({error:"Sélectionne d’abord un passage dans la note."},400);
+  const rules:Record<EditAction,string>={
+    reformulate:"Reformule ce passage pour le rendre plus clair, fluide, précis et professionnel sans modifier le fond.",
+    shorten:"Raccourcis ce passage d’environ 30 à 40 %, conserve les informations indispensables et supprime les répétitions.",
+    strengthen:"Renforce l’argumentation et rends le raisonnement plus convaincant et orienté décision sans inventer de fait.",
+    diplomatic:"Rends ce passage plus diplomatique, institutionnel et nuancé tout en conservant son message.",
+  };
+  const input=["Tu es l’assistant d’édition du Note Builder Myvor.",rules[action]||rules.reformulate,"N’invente aucun fait, chiffre, date, acteur ou source.","Réponds uniquement avec le passage réécrit.","CONTEXTE :",surrounding,"PASSAGE :",selected].join("\n");
+  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),35000);
+  try{
+    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:clip(Deno.env.get("OPENAI_NOTE_BUILDER_MODEL")||"gpt-4.1-mini",120),input,max_output_tokens:900,store:false}),signal:controller.signal});
+    if(!response.ok){const raw=await response.text();console.error("note-builder edit OpenAI",response.status,raw.slice(0,500));return json({error:`La réécriture IA est indisponible (${response.status}).`},502);}
+    const text=outputText(await response.json());if(!text)return json({error:"La réécriture n’a renvoyé aucun texte."},502);
+    return json({text,engine:"supabase-note-builder-edit-v4"});
+  }catch(error:any){if(error?.name==="AbortError")return json({error:"La réécriture a dépassé le délai prévu."},504);console.error("note-builder edit error",error);return json({error:"Réécriture impossible pour le moment."},500);}finally{clearTimeout(timer);}
+}
+
+Deno.serve(async(req:Request)=>{
+  if(req.method==="OPTIONS")return new Response("ok",{headers:corsHeaders});
+  if(req.method!=="POST")return json({error:"Méthode non autorisée."},405);
+  const length=Number(req.headers.get("content-length")||0);if(Number.isFinite(length)&&length>200000)return json({error:"Requête trop volumineuse."},413);
+  const body=await req.json().catch(()=>null);
+  const mode=String(body?.mode||"generate");
+  const auth=await authenticate(req,mode==="edit"?"note-builder-edit":"note-builder");
+  if(auth.error)return auth.error;
+  const apiKey=cleanApiKey(Deno.env.get("OPENAI_API_KEY")||"");
+  if(!apiKey)return json({error:"Le moteur IA du Note Builder n’est pas configuré."},503);
+  if(mode==="edit")return editPassage(apiKey,body);
+
+  const loaded=await loadContext(auth.client,auth.url,body);
+  if(loaded.error)return json({error:loaded.error},400);
+  const dossier:any=loaded.dossier;
+  const items:SourceItem[]=loaded.items||[];
   const format=String(body?.format||"note-client");
-  const audience=String(body?.audience||"Client").slice(0,120);
-  const tone=String(body?.tone||"professionnel et direct").slice(0,120);
-  const instruction=String(body?.instruction||"").slice(0,1000);
-  const now=new Date();
-  const impact=compactImpact(body?.impact,now);
-  const radar=compactRadar(body?.radar,now);
-  const currentDateIso=now.toISOString().slice(0,10);
-  const currentDateFr=new Intl.DateTimeFormat("fr-FR",{day:"2-digit",month:"long",year:"numeric",timeZone:"Europe/Paris"}).format(now);
+  const audience=clip(body?.audience||"Client",120);
+  const tone=clip(body?.tone||"professionnel et direct",120);
+  const instruction=clip(body?.instruction,1200);
+  const impact=compact(body?.impact,14000);
+  const radar=compact(body?.radar,14000);
+  const currentDate=new Intl.DateTimeFormat("fr-FR",{day:"2-digit",month:"long",year:"numeric",timeZone:"Europe/Paris"}).format(new Date());
 
-  if(!dossier)return json({error:"Sélectionne un dossier client."},400);
-  if(!items.length)return json({error:"Aucune évolution n’est disponible pour ce dossier."},400);
-
-  const cleanedItems=items.map(item=>({title:cleanSourceTitle(item.title),nature:clip(item.nature,100),urgency:clip(item.urgency,80),source_url:clip(item.source_url,700)}));
   const formatRules:Record<string,string>={
-    "note-client":"NOTE STRATÉGIQUE. Structure attendue : 1) synthèse exécutive très courte ; 2) enjeu institutionnel ; 3) implications concrètes pour le client ; 4) risques et opportunités ; 5) acteurs à mobiliser ; 6) recommandations hiérarchisées avec verbes d’action. Écriture dense, décisionnelle, sans remplissage. Vise 650 à 850 mots.",
-    "synthese":"NOTE DE SYNTHÈSE. Structure attendue : 1) objet et périmètre ; 2) faits et signaux essentiels ; 3) points de convergence/divergence entre sources ; 4) implications ; 5) points de vigilance. Style neutre, factuel et condensé. Pas de recommandation sauf si explicitement demandée. Vise 400 à 600 mots.",
-    "email":"E-MAIL CLIENT. Structure attendue : objet court ; ouverture en une phrase ; message clé immédiatement visible ; 2 à 4 paragraphes courts sur les implications ; demande ou prochaine action explicite ; formule de clôture sobre. Vise 180 à 300 mots et évite les titres de section.",
-    "rendez-vous":"BRIEF RENDEZ-VOUS. Structure attendue : objectif du rendez-vous ; interlocuteur(s) ; contexte utile ; 3 messages à faire passer ; arguments/preuves ; questions à poser ; objections possibles et réponses ; résultat recherché ; points à confirmer. Format très scannable. Vise 450 à 650 mots.",
-    "argumentaire":"ARGUMENTAIRE. Structure attendue : thèse centrale ; 3 à 5 arguments numérotés ; pour chaque argument : preuve disponible, bénéfice client/intérêt général et réponse à l’objection probable ; demandes précises ; éléments non confirmés. Ton convaincant sans exagération. Vise 500 à 750 mots.",
-    "elements-langage":"ÉLÉMENTS DE LANGAGE. Produit des formulations courtes, orales et réutilisables : message principal ; 5 à 8 messages secondaires ; 3 réponses à objections ; 3 phrases de conclusion ou d’appel à l’action. Chaque élément doit pouvoir être prononcé tel quel. Pas de paragraphes longs. Vise 250 à 450 mots.",
+    "note-client":"NOTE STRATÉGIQUE : synthèse exécutive, enjeu institutionnel, implications concrètes pour le client, risques/opportunités, acteurs à mobiliser, recommandations hiérarchisées. 650 à 850 mots.",
+    "synthese":"NOTE DE SYNTHÈSE : objet/périmètre, faits et signaux essentiels, convergences/divergences entre sources, implications et points de vigilance. 400 à 600 mots.",
+    "email":"E-MAIL CLIENT : objet court, message clé immédiat, 2 à 4 paragraphes courts, implications et prochaine action explicite. 180 à 300 mots.",
+    "rendez-vous":"BRIEF RENDEZ-VOUS : objectif, contexte, messages à faire passer, arguments, questions, objections/réponses et résultat recherché. 450 à 650 mots.",
+    "argumentaire":"ARGUMENTAIRE : thèse centrale, 3 à 5 arguments étayés, objections et réponses, demandes précises. 500 à 750 mots.",
+    "elements-langage":"ÉLÉMENTS DE LANGAGE : message principal, 5 à 8 messages secondaires, réponses aux objections et phrases de conclusion réutilisables oralement. 250 à 450 mots.",
   };
 
+  const sourceInput=items.map((item,index)=>({index:index+1,title:item.title,nature:item.nature,source:item.source_name,date:item.published_at,urgency:item.urgency,url:item.source_url,source_text:item.source_text||null}));
   const prompt=[
-    "Tu es le Note Builder de Myvor, outil professionnel d’affaires publiques.",
-    "Transforme les analyses existantes en un document directement exploitable par un consultant. Le résultat doit ressembler à un livrable métier, jamais à une réponse générique d’assistant IA.",
-    "RÈGLE DE RÉDACTION OBLIGATOIRE : rédige des phrases complètes, concrètes et autonomes. Une phrase utile doit indiquer clairement qui ou quoi est concerné, ce qui change ou doit être fait, et pourquoi cela compte pour le client.",
-    "Interdis les formulations télégraphiques ou nominales isolées telles que 'risque juridique', 'pression réglementaire', 'enjeu réputationnel', 'à surveiller', 'mobiliser les acteurs' ou 'agir rapidement'. Remplace-les par une explication opérationnelle complète.",
-    "Pour chaque recommandation ou prochaine étape, précise le responsable ou l’équipe concernée lorsque le contexte le permet, l’action à réaliser, l’objet de cette action et le résultat attendu. Si un élément manque, dis précisément lequel doit être confirmé au lieu de rester vague.",
-    "Les key_points doivent eux aussi être rédigés comme des phrases complètes et décisionnelles, pas comme des intitulés.",
-    `DATE DE GÉNÉRATION : ${currentDateFr} (${currentDateIso}).`,
-    `Tu dois traiter transversalement l’ensemble des ${cleanedItems.length} évolutions de veille fournies. Ne réduis pas l’analyse à la première source et fais ressortir convergences, divergences et signaux cumulés lorsqu’ils existent.`,
-    "IMPORTANT : les données temporelles antérieures à aujourd’hui ont été retirées du contexte. N’essaie pas de reconstruire ou de deviner un ancien calendrier. Si aucun calendrier actuel fiable n’est fourni, indique seulement qu’une vérification du calendrier institutionnel actuel est requise.",
-    "RÈGLE DE FIABILITÉ : la Note d’impact et le Radar d’influence sont des analyses Myvor dérivées, pas des sources primaires. Les dates, procédures, noms d'acteurs, positions, compétences institutionnelles, dispositions précises ou chiffres provenant uniquement de ces analyses doivent être formulés comme à confirmer, sauf lorsqu'ils sont explicitement établis par les éléments de veille fournis.",
-    "Les titres et URL de veille servent de références. N'infère jamais le contenu intégral d'un texte à partir de son seul titre ou de son URL.",
+    "MYVOR — NOTE BUILDER PROFESSIONNEL D’AFFAIRES PUBLIQUES.",
+    `Date de génération : ${currentDate}.`,
+    "Transforme le dossier et son corpus applicable en un livrable immédiatement exploitable par un consultant.",
+    "Le corpus applicable peut contenir des textes anciens et nouveaux. Utilise les textes anciens comme cadre de référence et les plus récents pour identifier ce qui change. Ne crée pas de section rétrospective ou d’historique pour elle-même.",
+    "Les extraits source_text sont la preuve primaire. Les titres et URL seuls ne suffisent pas à affirmer une disposition précise.",
+    "N’invente aucun fait, chiffre, date, disposition, acteur ou position. Si une information n’est pas établie par le corpus, ne l’affirme pas.",
+    "Rédige des phrases complètes, concrètes et décisionnelles. Chaque recommandation précise l’action, son objet et son résultat attendu.",
+    "Évite les banalités, répétitions, formulations télégraphiques et commentaires techniques sur le fonctionnement de l’IA.",
     formatRules[format]||formatRules["note-client"],
     `Public visé : ${audience}. Ton : ${tone}.`,
     instruction?`Instruction utilisateur : ${instruction}`:"",
-    "Priorité de travail : dossier et objectif > éléments de veille > Note d’impact > Radar d’influence.",
-    "N’invente aucun fait, date, chiffre, disposition ou position. Toute incertitude doit être explicitement signalée.",
-    "Les recommandations peuvent être déduites du contexte, mais doivent être présentées comme recommandations.",
-    "Évite les banalités, les introductions longues, les répétitions et les phrases de type 'il convient de noter'.",
-    "Ne répète pas Objet dans le champ content : l'objet doit apparaître uniquement dans le champ subject.",
-    "Dans le champ content, chaque grande partie numérotée (1., 2., 3., etc.) doit commencer après une ligne vide. Ne colle jamais deux parties numérotées dans le même paragraphe.",
-    "Les key_points doivent être 3 à 6 points réellement décisionnels, pas un résumé phrase par phrase.",
-    "Réponds uniquement en JSON valide avec exactement cette structure :",
-    JSON.stringify({title:"string",subject:"string",content:"string",key_points:["string"]}),
-    "DOSSIER :",JSON.stringify({client:clip(dossier.client,300),title:clip(dossier.title,300),objective:clip(dossier.objective,1200),context:removePastTemporalSentences(clip(dossier.context,1600),now)}),
-    "ÉLÉMENTS DE VEILLE :",JSON.stringify(cleanedItems),
-    "NOTE D'IMPACT MYVOR :",JSON.stringify(impact),
-    "RADAR D'INFLUENCE MYVOR :",JSON.stringify(radar),
+    "Réponds uniquement selon le schéma JSON demandé.",
+    "DOSSIER :",JSON.stringify(dossier),
+    "CORPUS APPLICABLE :",JSON.stringify(sourceInput),
+    "SCORE / ANALYSE MYVOR DÉRIVÉE :",JSON.stringify(impact),
+    "RADAR MYVOR DÉRIVÉ :",JSON.stringify(radar),
   ].filter(Boolean).join("\n");
 
-  const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),90000);
+  const model=clip(Deno.env.get("OPENAI_NOTE_BUILDER_MODEL")||"gpt-4.1-mini",120);
+  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),90000);
   try{
-    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:"gpt-4.1-mini",input:prompt,max_output_tokens:2100,text:{format:{type:"json_object"}},store:false}),signal:controller.signal});
-    if(!response.ok){const raw=await response.text();let message=raw;try{message=JSON.parse(raw)?.error?.message||raw;}catch{}return json({error:`OpenAI a refusé la requête (${response.status}) : ${String(message).slice(0,260)}`},502);}
-    const payload=await response.json();
-    let document:any={};
-    try{document=JSON.parse(extractOutputText(payload)||"{}");}catch{return json({error:"La réponse IA du Note Builder n’était pas exploitable. Réessaie."},502);}
-    const cleanedContent=sanitizeGeneratedContent(document?.content,now);
-    if(!cleanedContent)return json({error:"La réponse IA est incomplète. Réessaie."},502);
-    const cleanedKeyPoints=Array.isArray(document.key_points)?document.key_points.map((item:any)=>removePastTemporalSentences(String(item),now)).filter(Boolean).slice(0,6):[];
-    return json({document:{title:String(document.title||`Document — ${dossier.title}`),subject:String(document.subject||""),content:cleanedContent,key_points:cleanedKeyPoints,sources:cleanedItems.map(item=>({title:item.title,url:item.source_url||""}))},engine:"supabase-note-builder-authenticated-v3",context_used:{impact:!!impact,radar:!!radar,watch_items:items.length,generation_date:currentDateIso,past_dates_filtered:true,complete_sentence_style:true}});
-  }catch(error:any){if(error?.name==="AbortError")return json({error:"La génération IA a dépassé 90 secondes. Réessaie."},504);return json({error:`Erreur du Note Builder : ${error?.message||"inconnue"}`},500);}
-  finally{clearTimeout(timer);}
+    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model,input:prompt,max_output_tokens:2600,store:false,text:{format:{type:"json_schema",name:"myvor_note_builder_v4",strict:true,schema:DOCUMENT_SCHEMA}}}),signal:controller.signal});
+    if(!response.ok){const raw=await response.text();console.error("note-builder OpenAI",response.status,raw.slice(0,700));let detail="";try{detail=JSON.parse(raw)?.error?.message||"";}catch{}return json({error:`Le moteur du Note Builder est indisponible (${response.status})${detail?` : ${clip(detail,220)}`:"."}`},502);}
+    const raw=outputText(await response.json());let document:any=null;try{document=JSON.parse(raw);}catch{console.error("note-builder parse",raw.slice(0,700));return json({error:"Le Note Builder a reçu une réponse non exploitable. Réessaie."},502);}
+    const content=clip(document?.content,30000);if(!content)return json({error:"Le Note Builder n’a renvoyé aucun contenu exploitable."},502);
+    const keyPoints=Array.isArray(document?.key_points)?document.key_points.map((v:any)=>clip(v,900)).filter(Boolean).slice(0,6):[];
+    return json({document:{title:clip(document?.title,500)||`Document — ${dossier.title}`,subject:clip(document?.subject,500),content,key_points:keyPoints,sources:items.map(item=>({title:item.title,url:item.source_url}))},engine:"supabase-note-builder-grounded-v4",model,context_used:{watch_items:items.length,source_text_items:items.filter(item=>item.source_text).length,impact:!!impact,radar:!!radar,corpus_applicable:true}});
+  }catch(error:any){if(error?.name==="AbortError")return json({error:"La génération du Note Builder a dépassé 90 secondes. Réessaie."},504);console.error("note-builder runtime",error);return json({error:"Erreur du Note Builder. Réessaie dans quelques instants."},500);}finally{clearTimeout(timer);}
 });
