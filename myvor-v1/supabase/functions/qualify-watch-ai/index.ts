@@ -10,11 +10,13 @@ const JSON_HEADERS={"Content-Type":"application/json; charset=utf-8","Cache-Cont
 const RULE_PREFIX="Règles dossier v11 —";
 const MAX_ITEMS=8;
 const VALID_URGENCIES=new Set(["faible","moyen","fort","absolument urgent"]);
+const CRON_SECRET_SHA256="91370f1f47c9a4a1e099fe367b4c0988420faf23eb49067f797801bfb69932c8";
 
 function json(body:unknown,status=200){return new Response(JSON.stringify(body),{status,headers:JSON_HEADERS});}
 function clip(value:unknown,max:number){return String(value??"").normalize("NFKC").replace(/[\u0000-\u001f\u007f]/g,"").slice(0,max).trim();}
 function getAdminKey(){const modern=Deno.env.get("SUPABASE_SECRET_KEYS");if(modern){try{const keys=JSON.parse(modern);const value=keys?.default||Object.values(keys||{})[0];if(typeof value==="string"&&value)return value;}catch{}}return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")||"";}
 function safeEqual(a:string,b:string){const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]^bb[i];return diff===0;}
+async function sha256(value:string){const bytes=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value));return Array.from(new Uint8Array(bytes)).map(byte=>byte.toString(16).padStart(2,"0")).join("");}
 function extractOutputText(payload:any){if(typeof payload?.output_text==="string")return payload.output_text;return(payload?.output||[]).flatMap((item:any)=>item?.content||[]).map((part:any)=>part?.text||"").join("");}
 async function fetchJson(url:string,init:RequestInit={},timeoutMs=18000){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);try{const response=await fetch(url,{...init,signal:controller.signal});const raw=await response.text();let payload:any={};try{payload=raw?JSON.parse(raw):{};}catch{payload={raw};}if(!response.ok)throw new Error(`HTTP ${response.status}: ${clip(payload?.error?.message||payload?.error||payload?.raw||response.statusText,260)}`);return payload;}finally{clearTimeout(timer);}}
 async function qualifyOne(apiKey:string,item:PendingItem,dossier:Dossier,sourceText:string):Promise<AiResult>{
@@ -38,8 +40,8 @@ async function qualifyOne(apiKey:string,item:PendingItem,dossier:Dossier,sourceT
 
 Deno.serve(async req=>{
   if(req.method!=="POST")return json({error:"Méthode non autorisée"},405);
-  const expected=Deno.env.get("MYVOR_CRON_SECRET")||"",supplied=req.headers.get("x-myvor-cron-secret")||"";
-  if(!expected||!supplied||!safeEqual(expected,supplied))return json({error:"Non autorisé"},401);
+  const supplied=req.headers.get("x-myvor-cron-secret")||"",suppliedHash=supplied?await sha256(supplied):"";
+  if(!suppliedHash||!safeEqual(CRON_SECRET_SHA256,suppliedHash))return json({error:"Non autorisé"},401);
   const url=Deno.env.get("SUPABASE_URL")||"",adminKey=getAdminKey(),apiKey=Deno.env.get("OPENAI_API_KEY")||"";if(!url||!adminKey||!apiKey)return json({error:"Configuration serveur incomplète"},503);
   const supabase=createClient(url,adminKey,{auth:{persistSession:false,autoRefreshToken:false}});
   const{data:pending,error:pendingError}=await supabase.from("watch_items").select("id,user_id,title,nature,source_url,suggested_dossier_id,qualification_confidence,qualification_reason,published_at").not("suggested_dossier_id","is",null).like("qualification_reason",`${RULE_PREFIX}%Validation IA en attente.%`).order("published_at",{ascending:false,nullsFirst:false}).limit(MAX_ITEMS);
