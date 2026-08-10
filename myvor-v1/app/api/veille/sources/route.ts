@@ -26,6 +26,7 @@ const SOURCE_POLICIES:Record<string,SourcePolicy>={
   "Assemblée nationale":{tier:1,reserve:36},
   "Sénat — Textes":{tier:1,reserve:36},
   "EUR-Lex":{tier:1,reserve:30},
+  "Commission européenne — Numérique":{tier:2,reserve:36},
   "Conseil d’État — Avis":{tier:2,reserve:18},
   "Conseil d’État — Jurisprudence":{tier:2,reserve:18},
   "Conseil constitutionnel":{tier:2,reserve:18},
@@ -141,6 +142,32 @@ async function fetchViePubliqueReports(){return fetchHtmlListing({name:"Vie-publ
 async function fetchConseilConstitutionnel(){return fetchHtmlListing({name:"Conseil constitutionnel",url:"https://qpc360.conseil-constitutionnel.fr/",base:"https://qpc360.conseil-constitutionnel.fr",pathPattern:/(decision|decisions|qpc)/i,defaultNature:"Décision / jurisprudence",limit:30});}
 async function fetchCnil(){return fetchHtmlListing({name:"CNIL",url:"https://www.cnil.fr/fr/actualite",base:"https://www.cnil.fr",pathPattern:/\/fr\/(?!actualite\/?$)(?:[a-z0-9-]+)(?:\/|$)/i,defaultNature:"Communiqué institutionnel",limit:30});}
 async function fetchArcep(){return fetchHtmlListing({name:"ARCEP",url:"https://www.arcep.fr/actualites.html",base:"https://www.arcep.fr",pathPattern:/(communiques-de-presse|actualites\/actualites-et-communiques|uploads\/tx_gspublication|consultations-publiques)/i,defaultNature:"Communiqué institutionnel",limit:30});}
+async function fetchCommissionDigital():Promise<FeedItem[]>{
+  const name="Commission européenne — Numérique",base="https://digital-strategy.ec.europa.eu";
+  const roots=[
+    {url:`${base}/en/policies/artificial-intelligence`,defaultNature:"Politique / doctrine"},
+    {url:`${base}/en/library`,defaultNature:"Publication institutionnelle"},
+    {url:`${base}/en/news`,defaultNature:"Communiqué institutionnel"},
+  ];
+  const items:FeedItem[]=[];
+  const pathPattern=/^\/en\/(news|library|policies|factpages|faqs|consultations)\/[a-z0-9][a-z0-9\-_/?.=&%]*$/i;
+  const absolutePattern=/^https:\/\/digital-strategy\.ec\.europa\.eu\/en\/(news|library|policies|factpages|faqs|consultations)\//i;
+  for(const root of roots){
+    const html=await fetchText(root.url,"text/html,application/xhtml+xml,*/*",8500);
+    const regex=/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+    for(const match of html.matchAll(regex)){
+      const href=decodeHtml(match[1]);
+      if(!pathPattern.test(href)&&!absolutePattern.test(href))continue;
+      const title=decodeHtml(match[2]);
+      if(title.length<12||isGenericNavigationTitle(title))continue;
+      const source_url=href.startsWith("http")?href:`${base}${href.startsWith("/")?"":"/"}${href}`;
+      const excerpt=excerptAround(html,match.index||0,title);
+      if(excerpt.length<40)continue;
+      items.push({title,nature:inferNature(title,root.defaultNature,`${name} ${source_url} ${excerpt}`),source_url,source_name:name,published_at:dateAround(html,match.index||0),excerpt});
+    }
+  }
+  return newestFirst(dedupeItems(items)).slice(0,80);
+}
 async function fetchEurLex():Promise<FeedItem[]>{const html=await fetchText("https://eur-lex.europa.eu/oj/direct-access.html?locale=fr","text/html,*/*");const items:FeedItem[]=[];const regex=/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;for(const match of html.matchAll(regex)){const href=decodeHtml(match[1]);const title=decodeHtml(match[2]);if(title.length<8||isGenericNavigationTitle(title))continue;if(!/(legal-content|oj\/daily-view|oj\/direct-access)/i.test(href))continue;if(!/(règlement|reglement|directive|décision|decision|journal officiel|législation|legislation)/i.test(title))continue;const source_url=href.startsWith("http")?href:`https://eur-lex.europa.eu${href.startsWith("/")?"":"/"}${href}`;items.push({title,nature:inferNature(title,"Acte de l’Union européenne",source_url),source_url,source_name:"EUR-Lex",published_at:dateAround(html,match.index||0),excerpt:excerptAround(html,match.index||0,title)||undefined});}return newestFirst(dedupeItems(items)).slice(0,40);}
 
 async function collect(name:string,task:()=>Promise<FeedItem[]>):Promise<SourceResult>{
@@ -162,6 +189,7 @@ export async function GET(){
     collect("Conseil constitutionnel",fetchConseilConstitutionnel),
     collect("CNIL",fetchCnil),
     collect("ARCEP",fetchArcep),
+    collect("Commission européenne — Numérique",fetchCommissionDigital),
     collect("EUR-Lex",fetchEurLex),
   ];
   const results=await Promise.all(tasks);
