@@ -21,21 +21,24 @@ function extractOutputText(payload:any){if(typeof payload?.output_text==="string
 async function fetchJson(url:string,init:RequestInit={},timeoutMs=18000){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);try{const response=await fetch(url,{...init,signal:controller.signal});const raw=await response.text();let payload:any={};try{payload=raw?JSON.parse(raw):{};}catch{payload={raw};}if(!response.ok)throw new Error(`HTTP ${response.status}: ${clip(payload?.error?.message||payload?.error||payload?.raw||response.statusText,260)}`);return payload;}finally{clearTimeout(timer);}}
 async function qualifyOne(apiKey:string,item:PendingItem,dossier:Dossier,sourceText:string):Promise<AiResult>{
   const prompt=[
-    "Tu es le filtre de pertinence de la veille Myvor.",
+    "Tu es le filtre de pertinence STRICT de la veille Myvor.",
     "Confirme ou rejette le dossier proposé pour ce texte institutionnel.",
-    "relevant=true uniquement si le texte modifie, précise, menace ou ouvre une opportunité concrète pour l'objectif du dossier.",
-    "Un mot commun, une proximité thématique vague ou une référence incidente ne suffit jamais.",
+    "relevant=true uniquement si le texte modifie, précise, applique, menace ou ouvre une opportunité concrète pour l'objectif précis du dossier.",
+    "Un même public, un même secteur, les mots entreprise/PME/numérique/santé, une proximité thématique vague ou une référence incidente ne suffisent jamais.",
+    "REGLE D'ANCRAGE: si le titre ou le contexte du dossier identifie une loi, un règlement, un article, une réforme, une date ou un régime nommé, relevant=true seulement si le texte source cite explicitement cet instrument (numéro, date, titre ou article) OU indique sans ambiguïté qu'il met en oeuvre/modifie une disposition précise décrite dans le dossier.",
+    "Pour un dossier d'application d'une loi précise, une mesure qui affecte simplement le même type d'entreprises mais qui provient d'un autre régime juridique doit être rejetée.",
     "Si relevant=false, urgency doit être faible.",
     "Si relevant=true, urgency vaut faible, moyen, fort ou absolument urgent selon l'impact opérationnel et les échéances explicitement présentes.",
+    "reason doit citer le lien juridique ou opérationnel exact; s'il n'existe pas, dire brièvement pourquoi le texte est hors périmètre.",
     "reason doit être une seule phrase factuelle et brève.",
-    JSON.stringify({title:clip(item.title,600),nature:clip(item.nature,120),official_text:clip(sourceText,5000),dossier:{title:clip(dossier.title,300),objective:clip(dossier.objective,800),context:clip(dossier.context,900)}})
+    JSON.stringify({title:clip(item.title,600),nature:clip(item.nature,120),official_text:clip(sourceText,5000),dossier:{title:clip(dossier.title,300),objective:clip(dossier.objective,800),context:clip(dossier.context,1100)}})
   ].join("\n");
-  const schema={type:"object",properties:{relevant:{type:"boolean"},urgency:{type:"string",enum:["faible","moyen","fort","absolument urgent"]},reason:{type:"string",maxLength:260}},required:["relevant","urgency","reason"],additionalProperties:false};
+  const schema={type:"object",properties:{relevant:{type:"boolean"},urgency:{type:"string",enum:["faible","moyen","fort","absolument urgent"]},reason:{type:"string",maxLength:300}},required:["relevant","urgency","reason"],additionalProperties:false};
   const payload=await fetchJson("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:Deno.env.get("OPENAI_MODEL")||"gpt-5-mini",store:false,reasoning:{effort:"minimal"},input:prompt,max_output_tokens:700,text:{verbosity:"low",format:{type:"json_schema",name:"myvor_watch_qualification",strict:true,schema}}})},18000);
   if(payload?.status==="incomplete")throw new Error(`Réponse IA incomplète: ${clip(payload?.incomplete_details?.reason||"inconnue",120)}`);
   const raw=extractOutputText(payload);let parsed:any={};try{parsed=JSON.parse(raw||"{}");}catch{throw new Error(`JSON IA non parseable: ${clip(raw,100)}`);}
   if(typeof parsed?.relevant!=="boolean"||!VALID_URGENCIES.has(String(parsed?.urgency)))throw new Error("Réponse IA invalide");
-  return{relevant:parsed.relevant,urgency:parsed.urgency,reason:clip(parsed.reason,260)};
+  return{relevant:parsed.relevant,urgency:parsed.urgency,reason:clip(parsed.reason,300)};
 }
 
 Deno.serve(async req=>{
@@ -62,9 +65,9 @@ Deno.serve(async req=>{
     for(const outcome of settled){
       if(outcome.status!=="fulfilled"){failed++;continue;}
       const{item,result}=outcome.value,confidence=Number(item.qualification_confidence)||0,baseReason=String(item.qualification_reason||"").replace(/\s*Validation IA en attente\.\s*$/," ").trim();
-      if(!result.relevant){const{error}=await supabase.from("watch_items").update({dossier_id:null,suggested_dossier_id:null,urgency:"faible",qualification_confidence:Math.min(confidence,.49),qualification_reason:clip(`${baseReason} Filtre IA : rejeté — ${result.reason}`,700),qualified_at:new Date().toISOString()}).eq("id",item.id);if(error){failed++;continue;}rejected++;continue;}
+      if(!result.relevant){const{error}=await supabase.from("watch_items").update({dossier_id:null,suggested_dossier_id:null,urgency:"faible",qualification_confidence:Math.min(confidence,.49),qualification_reason:clip(`${baseReason} Filtre IA : rejeté — ${result.reason}`,760),qualified_at:new Date().toISOString()}).eq("id",item.id);if(error){failed++;continue;}rejected++;continue;}
       const threshold=Math.max(.75,Math.min(1,Number(settingByUser.get(item.user_id)?.auto_link_threshold)||.95)),shouldLink=confidence>=threshold;
-      const{error}=await supabase.from("watch_items").update({dossier_id:shouldLink?item.suggested_dossier_id:null,suggested_dossier_id:shouldLink?null:item.suggested_dossier_id,urgency:result.urgency,qualification_reason:clip(`${baseReason} Filtre IA : pertinent — ${result.reason}`,700),qualified_at:new Date().toISOString()}).eq("id",item.id);if(error){failed++;continue;}
+      const{error}=await supabase.from("watch_items").update({dossier_id:shouldLink?item.suggested_dossier_id:null,suggested_dossier_id:shouldLink?null:item.suggested_dossier_id,urgency:result.urgency,qualification_reason:clip(`${baseReason} Filtre IA : pertinent — ${result.reason}`,760),qualified_at:new Date().toISOString()}).eq("id",item.id);if(error){failed++;continue;}
       if(shouldLink){linked++;if(result.urgency==="fort"||result.urgency==="absolument urgent"){const type=item.nature.toLowerCase().includes("amendement")?"amendement":"analyse",title=type==="amendement"?`Préparer l’amendement — ${item.title}`:`Analyser l’impact — ${item.title}`;const{data:duplicate}=await supabase.from("actions").select("id").eq("user_id",item.user_id).eq("dossier_id",item.suggested_dossier_id).eq("type",type).eq("title",title).neq("status","termine").limit(1).maybeSingle();if(!duplicate)await supabase.from("actions").insert({user_id:item.user_id,dossier_id:item.suggested_dossier_id,type,title,description:`Action créée automatiquement par la veille Myvor. ${clip(result.reason,360)}`,actor_name:null,priority:result.urgency,status:"a_faire",due_date:null});}}else review++;
     }
   }
