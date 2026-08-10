@@ -17,7 +17,7 @@ type UrgencyResult={score:number;level:string;decision:string;action_needed:bool
 const MODES:{value:Mode;label:string;time:string;description:string;maxItems:number}[]=[
   {value:"express",label:"Express",time:"cible 20 s",description:"Décision immédiate : faut-il agir, pourquoi, et sur quoi en premier ?",maxItems:6},
   {value:"standard",label:"Standard",time:"cible 40 s",description:"Score justifié + pistes de travail pour préparer la suite du dossier.",maxItems:12},
-  {value:"deep",label:"Approfondie",time:"analyse complète",description:"Justification détaillée de chaque chiffre, preuves, incertitudes et leviers.",maxItems:24},
+  {value:"deep",label:"Approfondie",time:"analyse complète",description:"Justification détaillée de chaque chiffre, preuves, incertitudes et leviers.",maxItems:16},
 ];
 
 const CRITERIA:{key:CriterionKey;label:string;max:number;description:string}[]=[
