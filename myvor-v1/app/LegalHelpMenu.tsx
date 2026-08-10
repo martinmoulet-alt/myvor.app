@@ -2,9 +2,9 @@
 
 import {BookOpen,FileText,Scale,ShieldCheck,UserRoundCheck,X} from "lucide-react";
 import {useEffect,useState} from "react";
+import {MYVOR_LEGAL_VERSION} from "@/lib/legal";
 
 type Panel="cgu"|"privacy"|"legal"|"ai-act"|"manual";
-const LEGAL_VERSION="2026-08-10";
 const tabs:Array<{id:Panel;label:string;icon:typeof Scale}>=[
   {id:"cgu",label:"CGU",icon:Scale},
   {id:"privacy",label:"Confidentialité",icon:UserRoundCheck},
@@ -38,7 +38,7 @@ export default function LegalHelpMenu(){
 
     {open&&<div className="myvor-info-backdrop" role="presentation" onMouseDown={event=>{if(event.target===event.currentTarget)setOpen(null);}}>
       <section className="myvor-info-modal" role="dialog" aria-modal="true" aria-labelledby="myvor-info-title">
-        <header className="myvor-info-head"><div><small>Myvor · version {LEGAL_VERSION}</small><h2 id="myvor-info-title">Informations & aide</h2></div><button type="button" className="myvor-info-close" onClick={()=>setOpen(null)} aria-label="Fermer"><X size={19}/></button></header>
+        <header className="myvor-info-head"><div><small>Myvor · version {MYVOR_LEGAL_VERSION}</small><h2 id="myvor-info-title">Informations & aide</h2></div><button type="button" className="myvor-info-close" onClick={()=>setOpen(null)} aria-label="Fermer"><X size={19}/></button></header>
         <nav className="myvor-info-tabs" aria-label="Rubriques d'information">{tabs.map(({id,label,icon:Icon})=><button key={id} type="button" className={open===id?"active":""} onClick={()=>setOpen(id)}><Icon size={15}/>{label}</button>)}</nav>
         <div className="myvor-info-content">{open==="cgu"&&<Cgu/>}{open==="privacy"&&<Privacy/>}{open==="legal"&&<Legal/>}{open==="ai-act"&&<AiAct/>}{open==="manual"&&<Manual/>}</div>
       </section>
@@ -52,7 +52,7 @@ export default function LegalHelpMenu(){
 
 function Cgu(){return <article>
   <h3>Conditions générales d’utilisation</h3>
-  <p>Version applicable : <strong>{LEGAL_VERSION}</strong>. Les présentes conditions encadrent l’accès et l’utilisation de Myvor, plateforme professionnelle d’aide à la veille, à l’analyse d’impact, à la cartographie d’influence et à la production de livrables en affaires publiques.</p>
+  <p>Version applicable : <strong>{MYVOR_LEGAL_VERSION}</strong>. Les présentes conditions encadrent l’accès et l’utilisation de Myvor, plateforme professionnelle d’aide à la veille, à l’analyse d’impact, à la cartographie d’influence et à la production de livrables en affaires publiques.</p>
   <h4>1. Accès au service</h4><p>L’accès nécessite un compte personnel. Les identifiants ne doivent pas être partagés. L’utilisateur est responsable de l’usage réalisé depuis son compte et de la gestion des accès accordés à son organisation.</p>
   <h4>2. Usage autorisé</h4><p>Myvor doit être utilisé dans un cadre professionnel et licite. Sont interdits le contournement des protections, l’accès aux données d’un autre workspace, l’extraction automatisée non autorisée, l’introduction volontaire de contenus malveillants et tout usage frauduleux.</p>
   <h4>3. Sources, IA et validation humaine</h4><p>Les synthèses, scores, recommandations, cartographies et documents générés sont des aides à la décision. Les sources officielles, faits, dates, acteurs, citations et recommandations doivent être contrôlés avant toute diffusion externe ou décision professionnelle.</p>
@@ -65,7 +65,7 @@ function Cgu(){return <article>
 
 function Privacy(){return <article>
   <h3>Politique de confidentialité</h3>
-  <p>Version applicable : <strong>{LEGAL_VERSION}</strong>. Cette politique décrit les traitements nécessaires au fonctionnement du service Myvor. Elle concerne les utilisateurs de la plateforme ; les données de tiers éventuellement intégrées dans un dossier restent également sous la responsabilité de l’organisation qui les renseigne.</p>
+  <p>Version applicable : <strong>{MYVOR_LEGAL_VERSION}</strong>. Cette politique décrit les traitements nécessaires au fonctionnement du service Myvor. Elle concerne les utilisateurs de la plateforme ; les données de tiers éventuellement intégrées dans un dossier restent également sous la responsabilité de l’organisation qui les renseigne.</p>
   <h4>1. Responsable du traitement</h4><p>Le responsable du traitement est <strong>Myvor, SASU</strong>. L’identité administrative complète et le point de contact doivent figurer dans la rubrique « Mentions légales » avant ouverture commerciale publique.</p>
   <h4>2. Données traitées</h4><ul><li>Données de compte : adresse e-mail, identifiant technique, informations de profil et appartenance aux workspaces.</li><li>Données métier : dossiers clients, objectifs, contexte, règles de veille, actions, productions, préférences et contenus saisis par les utilisateurs.</li><li>Données de fonctionnement : journaux techniques, erreurs, dates de connexion, paramètres de sécurité et preuve d’acceptation des conditions.</li><li>Données traitées par les fonctions d’IA : contexte strictement nécessaire à la génération ou à la qualification demandée.</li></ul>
   <h4>3. Finalités</h4><ul><li>Créer et sécuriser le compte, isoler les workspaces et gérer les droits.</li><li>Fournir la veille, les analyses, alertes, cartographies et livrables demandés.</li><li>Assurer la continuité, la prévention des abus, le diagnostic d’incidents et la protection du service.</li><li>Conserver les preuves nécessaires au suivi contractuel et à la sécurité.</li></ul>
