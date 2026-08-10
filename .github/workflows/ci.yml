@@ -15,6 +15,7 @@ concurrency:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: myvor-v1
@@ -41,8 +42,14 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Browser smoke test
+      - name: Desktop browser smoke
         run: npm run test:e2e -- --project=desktop-chromium
+
+      - name: Install WebKit
+        run: npx playwright install --with-deps webkit
+
+      - name: iPhone browser smoke
+        run: npm run test:e2e -- --project=iphone
 
       - name: Upload Playwright report on failure
         if: failure()
