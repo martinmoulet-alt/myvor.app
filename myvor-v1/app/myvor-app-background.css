@@ -1,0 +1,26 @@
+/* Myvor global application canvas — navy background, light page headings, white content cards unchanged. */
+html,
+body,
+.app,
+.shell,
+.main {
+  background: #07162c !important;
+}
+
+/* Page-level headings that previously assumed the light paper canvas. */
+.corp-head h1,
+.h1 {
+  color: #ffffff !important;
+}
+
+.corp-head p,
+.lead,
+.eyebrow {
+  color: #9fb0c9 !important;
+}
+
+@media (max-width: 850px) {
+  .main {
+    background: #07162c !important;
+  }
+}
