@@ -2,17 +2,11 @@ import {NextResponse} from "next/server";
 
 export const runtime="nodejs";
 
-type Mode="express"|"standard"|"deep";
-
 function supabaseConfig(){
   const url=(process.env.NEXT_PUBLIC_SUPABASE_URL||"").replace(/\/$/,"");
   const anonKey=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY||"";
   if(!url||!anonKey)throw new Error("La connexion Supabase de Myvor n’est pas configurée.");
   return{url,anonKey};
-}
-
-function normalizeMode(value:unknown):Mode{
-  return value==="express"||value==="deep"?value:"standard";
 }
 
 export async function POST(request:Request){
@@ -25,7 +19,6 @@ export async function POST(request:Request){
     const body=await request.json().catch(()=>null);
     const dossier=body?.dossier||null;
     const items=Array.isArray(body?.items)?body.items:[];
-    const mode=normalizeMode(body?.mode||body?.depth);
 
     if(!dossier?.objective||!items.length){
       return NextResponse.json({error:"Dossier et veille rattachée sont obligatoires."},{status:400});
@@ -39,7 +32,7 @@ export async function POST(request:Request){
         apikey:anonKey,
         "Content-Type":"application/json",
       },
-      body:JSON.stringify({dossier,items,mode}),
+      body:JSON.stringify({dossier,items,mode:"deep"}),
       cache:"no-store",
     });
 
