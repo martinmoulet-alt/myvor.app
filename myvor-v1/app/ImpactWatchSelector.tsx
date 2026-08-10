@@ -14,6 +14,17 @@ const WORKFLOW_CONTEXT_KEY="myvor:workflow-context";
 
 function watchTime(item:WatchForImpact){const published=item.published_at?Date.parse(item.published_at):NaN;if(Number.isFinite(published))return published;const created=item.created_at?Date.parse(item.created_at):NaN;return Number.isFinite(created)?created:0;}
 function urgencyRank(value:string){return value==="absolument urgent"?4:value==="fort"?3:value==="moyen"?2:1;}
+function readWorkflowContext(dossierId:string){
+  if(typeof window==="undefined"||!dossierId)return[] as string[];
+  try{
+    const raw=sessionStorage.getItem(WORKFLOW_CONTEXT_KEY);
+    if(!raw)return[];
+    const parsed=JSON.parse(raw);
+    if(String(parsed?.dossierId||"")!==dossierId)return[];
+    const ids=Array.isArray(parsed?.watchIds)?parsed.watchIds.map((id:unknown)=>String(id||"")).filter(Boolean):[];
+    return [...new Set<string>(ids)];
+  }catch{return[];}
+}
 function publishWorkflowContext(dossierId:string,watchIds:string[]){if(typeof window==="undefined"||!dossierId)return;const detail={dossierId,watchIds:[...new Set(watchIds)]};try{sessionStorage.setItem(WORKFLOW_CONTEXT_KEY,JSON.stringify(detail));}catch{}window.dispatchEvent(new CustomEvent("myvor:workflow-context",{detail}));}
 
 export function buildImpactCandidates(allWatch:WatchForImpact[],dossierId:string,assignments:ImpactAssignment[]){
@@ -35,6 +46,13 @@ export function buildImpactCandidates(allWatch:WatchForImpact[],dossierId:string
 }
 
 export function defaultImpactSelection(candidates:ImpactCandidate[]){
+  const dossierId=candidates[0]?.dossierId||"";
+  const requested=readWorkflowContext(dossierId);
+  if(requested.length){
+    const available=new Set(candidates.map(candidate=>candidate.item.id));
+    const preserved=requested.filter(id=>available.has(id));
+    if(preserved.length)return preserved;
+  }
   return candidates.filter(candidate=>candidate.linked||Number(candidate.confidence)>=DEFAULT_SELECTION_THRESHOLD).map(candidate=>candidate.item.id);
 }
 
@@ -42,7 +60,6 @@ export function useImpactRelevance({dossier,allWatch,onResults,onLoading,onMessa
   const key=useMemo(()=>dossier?`${dossier.id}|${allWatch.length}|${revision}`:"",[dossier?.id,allWatch.length,revision]);
   useEffect(()=>{
     if(!dossier){onResults([]);onMessage("");onLoading(false);return;}
-    publishWorkflowContext(dossier.id,[]);
     let cancelled=false;
     const timer=setTimeout(async()=>{
       const candidates=[...allWatch].filter(item=>!item.dossier_id||item.dossier_id===dossier.id).sort((a,b)=>watchTime(b)-watchTime(a)).slice(0,40);
@@ -60,7 +77,7 @@ export function useImpactRelevance({dossier,allWatch,onResults,onLoading,onMessa
           if(Array.isArray(payload.assignments))results.push(...payload.assignments as ImpactAssignment[]);
         }
         const matches=results.filter(result=>result.dossier_id===dossier.id&&Number(result.confidence)>=RELEVANCE_THRESHOLD);
-        if(!cancelled){onResults(matches);onMessage(matches.length?`${matches.length} évolution(s) pertinente(s) détectée(s). Les plus fortes sont présélectionnées pour l’analyse.`:"Aucune évolution récente n’atteint 60 % de pertinence pour ce dossier.");}
+        if(!cancelled){onResults(matches);onMessage(matches.length?`${matches.length} évolution(s) pertinente(s) détectée(s). La sélection transmise par le dossier est conservée lorsqu’elle est disponible.`:"Aucune évolution récente n’atteint 60 % de pertinence pour ce dossier.");}
       }catch(error:any){if(!cancelled){onResults([]);onMessage(`Détection indisponible : ${error?.message||"erreur inconnue"}. Les textes déjà rattachés restent utilisables.`);}}
       finally{if(!cancelled)onLoading(false);}
     },250);
@@ -71,7 +88,16 @@ export function useImpactRelevance({dossier,allWatch,onResults,onLoading,onMessa
 export default function ImpactWatchSelector({candidates,effectiveIds,loading,message,toggle,recalculate}:{candidates:ImpactCandidate[];effectiveIds:string[];loading:boolean;message:string;toggle:(id:string)=>void;recalculate:()=>void}){
   const dossierId=candidates[0]?.dossierId||"";
   const contextKey=`${dossierId}|${effectiveIds.join("|")}`;
-  useEffect(()=>{if(dossierId)publishWorkflowContext(dossierId,effectiveIds);},[contextKey]);
+  useEffect(()=>{
+    if(!dossierId)return;
+    const requested=readWorkflowContext(dossierId);
+    if(requested.length){
+      const available=new Set(candidates.map(candidate=>candidate.item.id));
+      const pending=requested.some(id=>!available.has(id));
+      if(pending)return;
+    }
+    publishWorkflowContext(dossierId,effectiveIds);
+  },[contextKey,candidates.length]);
 
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"center",marginBottom:10}}><div style={{fontSize:12,color:"#526278",lineHeight:1.45}}>{message}</div><button type="button" onClick={recalculate} disabled={loading} style={{display:"inline-flex",alignItems:"center",gap:6,border:"1px solid #d9e2ee",background:"white",color:"#17324f",borderRadius:9,padding:"7px 9px",fontWeight:800,fontSize:11,cursor:loading?"wait":"pointer"}}><RefreshCw size={13} className={loading?"impact-relevance-spin":""}/>{loading?"Analyse…":"Recalculer"}</button></div>
