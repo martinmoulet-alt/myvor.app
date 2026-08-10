@@ -28,7 +28,6 @@ function json(body:unknown,status=200){return new Response(JSON.stringify(body),
 function clip(value:unknown,max:number){return String(value??"").normalize("NFKC").replace(/[\u0000-\u001f\u007f]/g,"").slice(0,max).trim();}
 function cleanApiKey(raw:string){const match=String(raw||"").normalize("NFKC").match(/sk-[A-Za-z0-9_-]+/);return match?.[0]||"";}
 function outputText(payload:any){if(typeof payload?.output_text==="string")return payload.output_text.trim();return(payload?.output||[]).flatMap((item:any)=>item?.content||[]).map((part:any)=>part?.text||"").join("").trim();}
-function getAdminKey(){const modern=Deno.env.get("SUPABASE_SECRET_KEYS");if(modern){try{const keys=JSON.parse(modern);const value=keys?.default||Object.values(keys||{})[0];if(typeof value==="string"&&value)return value;}catch{}}return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")||"";}
 function cleanSourceTitle(value:unknown){return clip(value,500).replace(/\s+/g," ").trim()||"Source institutionnelle";}
 function compact(value:unknown,max=12000){if(value==null)return null;try{return JSON.parse(JSON.stringify(value).slice(0,max));}catch{return clip(value,max)||null;}}
 
@@ -44,10 +43,10 @@ async function authenticate(req:Request,feature:string){
   const {data:allowed,error:quotaError}=await client.rpc("consume_ai_quota",{p_feature:feature});
   if(quotaError)return{error:json({error:"Impossible de vérifier le quota IA Myvor."},503)};
   if(allowed!==true)return{error:json({error:"Trop de générations IA en peu de temps. Réessaie dans quelques minutes."},429)};
-  return{client,url,userId:user.id};
+  return{client};
 }
 
-async function loadContext(client:any,url:string,body:any){
+async function loadContext(client:any,body:any){
   const dossierId=clip(body?.dossier?.id,80);
   if(!dossierId)return{error:"Sélectionne un dossier client."};
   const {data:dossier,error:dossierError}=await client.from("dossiers").select("id,client,title,objective,context,sector,activity,risks_to_avoid,opportunities,client_position,key_actors,key_deadlines,internal_notes").eq("id",dossierId).maybeSingle();
@@ -62,13 +61,10 @@ async function loadContext(client:any,url:string,body:any){
   const ordered=requestedIds.map(id=>byId.get(id)).filter(Boolean);
   if(!ordered.length)return{error:"Aucun texte accessible n’a été retrouvé pour ce dossier."};
 
-  const adminKey=getAdminKey();
+  const {data:contents,error:contentError}=await client.from("watch_item_content").select("watch_item_id,source_text").in("watch_item_id",ordered.map((row:any)=>row.id));
+  if(contentError)return{error:"Impossible de charger le contenu du corpus applicable."};
   const sourceMap=new Map<string,string>();
-  if(adminKey){
-    const admin=createClient(url,adminKey,{auth:{persistSession:false,autoRefreshToken:false}});
-    const {data:contents}=await admin.from("watch_item_content").select("watch_item_id,source_text").in("watch_item_id",ordered.map((row:any)=>row.id));
-    for(const row of contents||[])sourceMap.set(String(row.watch_item_id),String(row.source_text||""));
-  }
+  for(const row of contents||[])sourceMap.set(String(row.watch_item_id),String(row.source_text||""));
 
   let remaining=MAX_TOTAL_SOURCE_CHARS;
   const items:SourceItem[]=ordered.map((row:any)=>{
@@ -100,7 +96,7 @@ async function editPassage(apiKey:string,body:any){
     const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:clip(Deno.env.get("OPENAI_NOTE_BUILDER_MODEL")||"gpt-4.1-mini",120),input,max_output_tokens:900,store:false}),signal:controller.signal});
     if(!response.ok){const raw=await response.text();console.error("note-builder edit OpenAI",response.status,raw.slice(0,500));return json({error:`La réécriture IA est indisponible (${response.status}).`},502);}
     const text=outputText(await response.json());if(!text)return json({error:"La réécriture n’a renvoyé aucun texte."},502);
-    return json({text,engine:"supabase-note-builder-edit-v4"});
+    return json({text,engine:"supabase-note-builder-edit-v5"});
   }catch(error:any){if(error?.name==="AbortError")return json({error:"La réécriture a dépassé le délai prévu."},504);console.error("note-builder edit error",error);return json({error:"Réécriture impossible pour le moment."},500);}finally{clearTimeout(timer);}
 }
 
@@ -116,7 +112,7 @@ Deno.serve(async(req:Request)=>{
   if(!apiKey)return json({error:"Le moteur IA du Note Builder n’est pas configuré."},503);
   if(mode==="edit")return editPassage(apiKey,body);
 
-  const loaded=await loadContext(auth.client,auth.url,body);
+  const loaded=await loadContext(auth.client,body);
   if(loaded.error)return json({error:loaded.error},400);
   const dossier:any=loaded.dossier;
   const items:SourceItem[]=loaded.items||[];
@@ -160,11 +156,11 @@ Deno.serve(async(req:Request)=>{
   const model=clip(Deno.env.get("OPENAI_NOTE_BUILDER_MODEL")||"gpt-4.1-mini",120);
   const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),90000);
   try{
-    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model,input:prompt,max_output_tokens:2600,store:false,text:{format:{type:"json_schema",name:"myvor_note_builder_v4",strict:true,schema:DOCUMENT_SCHEMA}}}),signal:controller.signal});
+    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model,input:prompt,max_output_tokens:2600,store:false,text:{format:{type:"json_schema",name:"myvor_note_builder_v5",strict:true,schema:DOCUMENT_SCHEMA}}}),signal:controller.signal});
     if(!response.ok){const raw=await response.text();console.error("note-builder OpenAI",response.status,raw.slice(0,700));let detail="";try{detail=JSON.parse(raw)?.error?.message||"";}catch{}return json({error:`Le moteur du Note Builder est indisponible (${response.status})${detail?` : ${clip(detail,220)}`:"."}`},502);}
     const raw=outputText(await response.json());let document:any=null;try{document=JSON.parse(raw);}catch{console.error("note-builder parse",raw.slice(0,700));return json({error:"Le Note Builder a reçu une réponse non exploitable. Réessaie."},502);}
     const content=clip(document?.content,30000);if(!content)return json({error:"Le Note Builder n’a renvoyé aucun contenu exploitable."},502);
     const keyPoints=Array.isArray(document?.key_points)?document.key_points.map((v:any)=>clip(v,900)).filter(Boolean).slice(0,6):[];
-    return json({document:{title:clip(document?.title,500)||`Document — ${dossier.title}`,subject:clip(document?.subject,500),content,key_points:keyPoints,sources:items.map(item=>({title:item.title,url:item.source_url}))},engine:"supabase-note-builder-grounded-v4",model,context_used:{watch_items:items.length,source_text_items:items.filter(item=>item.source_text).length,impact:!!impact,radar:!!radar,corpus_applicable:true}});
+    return json({document:{title:clip(document?.title,500)||`Document — ${dossier.title}`,subject:clip(document?.subject,500),content,key_points:keyPoints,sources:items.map(item=>({title:item.title,url:item.source_url}))},engine:"supabase-note-builder-grounded-v5",model,context_used:{watch_items:items.length,source_text_items:items.filter(item=>item.source_text).length,impact:!!impact,radar:!!radar,corpus_applicable:true}});
   }catch(error:any){if(error?.name==="AbortError")return json({error:"La génération du Note Builder a dépassé 90 secondes. Réessaie."},504);console.error("note-builder runtime",error);return json({error:"Erreur du Note Builder. Réessaie dans quelques instants."},500);}finally{clearTimeout(timer);}
 });
