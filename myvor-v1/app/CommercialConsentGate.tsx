@@ -1,6 +1,7 @@
 "use client";
 
 import {useEffect,useState} from "react";
+import {usePathname} from "next/navigation";
 import {Check,FileCheck2,RefreshCw,ShieldCheck} from "lucide-react";
 import {supabase} from "@/lib/supabase";
 
@@ -12,13 +13,15 @@ function openInfo(panel:"cgu"|"privacy"){
 }
 
 export default function CommercialConsentGate(){
+  const pathname=usePathname();
   const[state,setState]=useState<GateState>("checking");
   const[accepted,setAccepted]=useState(false);
   const[saving,setSaving]=useState(false);
   const[message,setMessage]=useState("");
+  const bypass=pathname==="/reset-password";
 
   async function evaluate(session:any){
-    if(!supabase||!session?.user?.id){setState("hidden");return;}
+    if(bypass||!supabase||!session?.user?.id){setState("hidden");return;}
     const{data,error}=await supabase.from("user_profiles").select("terms_accepted_at,privacy_accepted_at,legal_version").eq("user_id",session.user.id).maybeSingle();
     if(error){setMessage("Impossible de vérifier les conditions d’utilisation pour le moment.");setState("error");return;}
     const complete=Boolean(data?.terms_accepted_at&&data?.privacy_accepted_at&&data?.legal_version===LEGAL_VERSION);
@@ -26,12 +29,12 @@ export default function CommercialConsentGate(){
   }
 
   useEffect(()=>{
-    if(!supabase){setState("hidden");return;}
+    if(bypass||!supabase){setState("hidden");return;}
     let active=true;
     supabase.auth.getSession().then(({data})=>{if(active)void evaluate(data.session);});
     const{data:listener}=supabase.auth.onAuthStateChange((_event,session)=>{if(active)void evaluate(session);});
     return()=>{active=false;listener.subscription.unsubscribe();};
-  },[]);
+  },[bypass]);
 
   async function accept(){
     if(!supabase||saving||!accepted)return;
@@ -47,7 +50,7 @@ export default function CommercialConsentGate(){
     const{data}=await supabase.auth.getSession();await evaluate(data.session);
   }
 
-  if(state==="hidden"||state==="checking")return null;
+  if(bypass||state==="hidden"||state==="checking")return null;
 
   return <div className="commercial-consent-backdrop" role="presentation">
     <section className="commercial-consent-card" role="dialog" aria-modal="true" aria-labelledby="commercial-consent-title">
