@@ -5,7 +5,7 @@ type ProtectedRoute={feature:string|null;methods:string[];maxBodyBytes?:number};
 const protectedRoutes:Record<string,ProtectedRoute>={
   "/api/radar":{feature:"radar",methods:["POST"],maxBodyBytes:350_000},
   "/api/radar/fast":{feature:"radar",methods:["POST"],maxBodyBytes:350_000},
-  "/api/impact":{feature:null,methods:["POST"],maxBodyBytes:1_500_000},
+  "/api/impact":{feature:null,methods:["POST"]},
   "/api/builder":{feature:"note-builder",methods:["POST"],maxBodyBytes:750_000},
   "/api/veille/assign":{feature:"veille-assign",methods:["POST"],maxBodyBytes:300_000},
 };
