@@ -21,6 +21,13 @@ test('generic institutional phrases cannot be discriminating by themselves',()=>
   assert.match(sync,/\.filter\(isStrongConfiguredTerm\)/);
 });
 
+test('named instruments are required for instrument-specific dossiers',()=>{
+  assert.match(sync,/function instrumentAliases\(/);
+  assert.match(sync,/loi du \\d\{1,2\}/);
+  assert.match(sync,/artificial intelligence act/);
+  assert.match(sync,/instrument nommé absent/);
+});
+
 test('qualifier compares a new item against older linked dossier texts',()=>{
   assert.match(qualifier,/RULE_PREFIX="Règles dossier v14 —"/);
   assert.match(qualifier,/TEXTES HISTORIQUES/);
