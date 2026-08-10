@@ -14,7 +14,7 @@ type CriterionResult={score:number;max:number;justification:string;evidence:stri
 type UrgencyResult={score:number;level:string;decision:string;action_needed:boolean;summary:string;criteria:Record<CriterionKey,CriterionResult>;workstreams:string[];next_actions:string[];uncertainties:string[];sources:{title:string;url:string;status:string}[];mode?:string;engine?:string;model?:string;execution_ms?:number};
 
 const MODE="deep" as const;
-const MAX_ITEMS=16;
+const MAX_ITEMS=12;
 
 const CRITERIA:{key:CriterionKey;label:string;max:number;description:string}[]=[
   {key:"juridique",label:"Juridique",max:15,description:"Effet sur les droits, obligations, responsabilités ou contentieux."},
