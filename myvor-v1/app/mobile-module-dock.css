@@ -1,16 +1,16 @@
 .mobile-module-dock{display:none}
 @media(max-width:850px){
   .mobile-nav{display:none!important}
-  .mobile-module-dock{position:fixed;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));z-index:35;bottom:0;left:0;right:0;background:rgba(7,22,44,.98);border-top:1px solid rgba(243,189,62,.18);padding:6px 3px calc(6px + env(safe-area-inset-bottom));box-shadow:0 -8px 24px rgba(3,11,24,.28);backdrop-filter:blur(14px)}
-  .mobile-module-dock button{min-width:0;border:0;background:transparent;color:#c8d3e3;padding:4px 1px 3px;display:grid;place-items:center;gap:2px;font-size:8px;font-weight:700;line-height:1.05;letter-spacing:-.02em;-webkit-tap-highlight-color:transparent}
-  .mobile-module-dock button svg{width:17px;height:17px;color:var(--gold)}
+  .mobile-module-dock{position:fixed;display:grid;grid-template-columns:repeat(8,minmax(0,1fr));z-index:35;bottom:0;left:0;right:0;background:rgba(7,22,44,.98);border-top:1px solid rgba(243,189,62,.18);padding:6px 2px calc(6px + env(safe-area-inset-bottom));box-shadow:0 -8px 24px rgba(3,11,24,.28);backdrop-filter:blur(14px)}
+  .mobile-module-dock button{min-width:0;border:0;background:transparent;color:#c8d3e3;padding:4px 0 3px;display:grid;place-items:center;gap:2px;font-size:7.5px;font-weight:700;line-height:1.05;letter-spacing:-.03em;-webkit-tap-highlight-color:transparent}
+  .mobile-module-dock button svg{width:16px;height:16px;color:var(--gold)}
   .mobile-module-dock button span{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .mobile-module-dock button.active{color:white;font-weight:850;background:rgba(243,189,62,.08);border-radius:10px}
+  .mobile-module-dock button.active{color:white;font-weight:850;background:rgba(243,189,62,.08);border-radius:9px}
   .mobile-module-dock button.active svg{color:var(--gold);filter:drop-shadow(0 1px 3px rgba(243,189,62,.28))}
   .mobile-module-dock button:active{transform:scale(.94)}
   .main{padding-bottom:82px}
 }
 @media(max-width:390px){
-  .mobile-module-dock button{font-size:7.5px}
-  .mobile-module-dock button svg{width:16px;height:16px}
+  .mobile-module-dock button{font-size:6.8px}
+  .mobile-module-dock button svg{width:15px;height:15px}
 }
