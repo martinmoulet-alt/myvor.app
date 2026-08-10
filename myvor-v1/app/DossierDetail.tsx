@@ -61,16 +61,17 @@ export default function DossierDetail({dossier,watch,actions,back,go,onUpdate}:{
   }
 
   async function identifyRelevant(automatic=false){
-    if(analyzingRelevance||!watch.length)return;
-    setAnalyzingRelevance(true);if(!automatic)setRelevanceMessage("Analyse des évolutions de veille…");
+    if(analyzingRelevance||!supabase)return;
+    setAnalyzingRelevance(true);
+    if(!automatic)setRelevanceMessage("Analyse de tout l’historique du dossier…");
     try{
-      const candidates=[...watch].sort((a,b)=>watchTime(b)-watchTime(a)).slice(0,40);
-      const dossierPayload={id:dossier.id,title:dossier.title,objective:dossier.objective,context:dossier.context,watch_keywords:dossier.watch_keywords||[],watch_priority_phrases:dossier.watch_priority_phrases||[],watch_excluded_keywords:dossier.watch_excluded_keywords||[]};
-      const results:Assignment[]=[];
-      for(let start=0;start<candidates.length;start+=20){const batch=candidates.slice(start,start+20);const response=await fetch("/api/veille/assign",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:batch.map(item=>({id:item.id,title:item.title,nature:item.nature,source_url:item.source_url})),dossiers:[dossierPayload]})});const payload=await response.json();if(!response.ok)throw new Error(payload?.error||"Analyse impossible");if(Array.isArray(payload.assignments))results.push(...payload.assignments as Assignment[]);}
-      const matches=results.filter(result=>result.dossier_id===dossier.id&&Number(result.confidence)>=RELEVANCE_THRESHOLD);
+      const {data,error}=await supabase.functions.invoke("scan-dossier-history",{body:{dossier_id:dossier.id}});
+      if(error)throw error;
+      const results=Array.isArray(data?.results)?data.results:[];
+      const matches:Assignment[]=results.filter((result:any)=>Number(result.score)>=RELEVANCE_THRESHOLD).map((result:any)=>({watch_id:String(result.id),dossier_id:dossier.id,confidence:Number(result.score)||0,reason:String(result.reason||"Correspondance détectée dans l’historique.")}));
       setRelevance(matches);
-      setRelevanceMessage(matches.length?`${matches.length} évolution(s) pertinente(s) détectée(s) à 50 % ou plus sur les publications récentes.`:"Aucune évolution récente n’atteint 50 % de pertinence pour ce dossier.");
+      setRelevanceMessage(matches.length?`${matches.length} évolution(s) pertinente(s) détectée(s) dans l’ensemble de l’historique.`:`Aucun texte pertinent détecté dans l’ensemble du corpus Myvor.`);
+      window.dispatchEvent(new Event("pageshow"));
     }catch(error:any){setRelevanceMessage(`Analyse indisponible : ${error?.message||"erreur inconnue"}`);}finally{setAnalyzingRelevance(false);}
   }
 
@@ -106,7 +107,7 @@ export default function DossierDetail({dossier,watch,actions,back,go,onUpdate}:{
     <section className="corp-panel"><div className="corp-panel-head"><div><span>Veille du dossier</span><h2>Évolutions pertinentes</h2></div><button onClick={()=>void identifyRelevant(false)} disabled={analyzingRelevance}>{analyzingRelevance?"Analyse…":"Actualiser"}</button></div>
       <div className="myvor-relevance-summary"><div className="myvor-relevance-stat"><span>Pertinentes ≥ 50 %</span><strong>{relevantEvolutions.length}</strong></div><div className="myvor-relevance-stat"><span>Très fortes ≥ 75 %</span><strong>{highRelevance}</strong></div><div className="myvor-relevance-stat"><span>Détectées non rattachées</span><strong>{detectedNotLinked}</strong></div></div>
       {relevanceMessage&&<div style={{margin:"0 0 12px",padding:"10px 12px",borderRadius:10,background:"#f5f8fc",color:"#34506f",fontSize:12}}>{relevanceMessage}</div>}
-      <div className="myvor-relevance-list">{relevantEvolutions.length?relevantEvolutions.slice(0,12).map(item=><article className="myvor-relevance-row" key={item.id}><div><div className="myvor-relevance-meta"><span>{item.nature}</span><span>•</span><span>{watchDate(item)}</span>{item.source_name&&<><span>•</span><span>{item.source_name}</span></>}</div><h3>{item.title}</h3><p className="myvor-relevance-reason">{item.reason}</p></div><div className="myvor-relevance-side"><strong className="myvor-relevance-score">{Math.round(item.confidence*100)} %</strong><span className="myvor-relevance-badge">{item.linkedToCurrent?"Rattaché":item.linkedElsewhere?"Déjà lié ailleurs":"Détecté"}</span><button className="myvor-relevance-open" onClick={()=>openEvolution(item)}>Voir dans la veille</button></div></article>):<div className="corp-empty">{analyzingRelevance?"Analyse des publications en cours…":"Aucune évolution pertinente détectée pour le moment."}</div>}</div>
+      <div className="myvor-relevance-list">{relevantEvolutions.length?relevantEvolutions.slice(0,12).map(item=><article className="myvor-relevance-row" key={item.id}><div><div className="myvor-relevance-meta"><span>{item.nature}</span><span>•</span><span>{watchDate(item)}</span>{item.source_name&&<><span>•</span><span>{item.source_name}</span></>}</div><h3>{item.title}</h3><p className="myvor-relevance-reason">{item.reason}</p></div><div className="myvor-relevance-side"><strong className="myvor-relevance-score">{Math.round(item.confidence*100)} %</strong><span className="myvor-relevance-badge">{item.linkedToCurrent?"Rattaché":item.linkedElsewhere?"Déjà lié ailleurs":"Détecté"}</span><button className="myvor-relevance-open" onClick={()=>openEvolution(item)}>Voir dans la veille</button></div></article>):<div className="corp-empty">{analyzingRelevance?"Analyse de l’historique en cours…":"Aucune évolution pertinente détectée pour le moment."}</div>}</div>
     </section>
 
     <div className="corp-dashboard-grid"><section className="corp-panel"><div className="corp-panel-head"><div><span>Veille liée</span><h2>Textes rattachés</h2></div><button onClick={()=>go("veille")}>Ouvrir la veille</button></div><div className="corp-list">{related.length?related.map(item=><a className="corp-list-row" key={item.id} href={item.source_url||undefined} target={item.source_url?"_blank":undefined} rel="noreferrer"><span className="corp-doc"><FileText size={18}/></span><span className="corp-list-copy"><b>{item.title}</b><small>{item.nature}</small></span><span className={`corp-impact ${item.urgency.replaceAll(" ","-")}`}>{item.urgency}</span></a>):<div className="corp-empty">Aucun texte rattaché.</div>}</div></section>
