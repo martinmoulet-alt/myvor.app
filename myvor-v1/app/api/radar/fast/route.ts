@@ -50,23 +50,32 @@ function institutionFromSource(item:WatchItem):ActorSeed|null{
     ["conseil-etat.fr","Conseil d’État","Institution",4],
     ["conseil-constitutionnel.fr","Conseil constitutionnel","Institution",4],
     ["ccomptes.fr","Cour des comptes","Institution",4],
+    ["digital-strategy.ec.europa.eu","Commission européenne","Institution européenne",5],
     ["eur-lex.europa.eu","Institutions de l’Union européenne","Institution européenne",4],
   ];
   const match=matches.find(([domain])=>host===domain||host.endsWith(`.${domain}`));
   return match?{name:match[1],role:match[2],institution:match[1],certainty:"confirme",source:item,baseInfluence:match[3],origin:"source"}:null;
 }
 
+function actorsNamedBySource(item:WatchItem):ActorSeed[]{
+  const title=normalized(item.title);const host=hostname(text(item.source_url));const seeds:ActorSeed[]=[];
+  if((host==="digital-strategy.ec.europa.eu"||host.endsWith(".digital-strategy.ec.europa.eu"))&&(title.includes("european ai office")||title==="ai office"||title.includes(" ai office "))){
+    seeds.push({name:"European AI Office",role:"Organe européen de gouvernance de l’IA",institution:"Commission européenne",certainty:"confirme",source:item,baseInfluence:5,origin:"source"});
+  }
+  return seeds;
+}
+
 function buildSeeds(dossier:Dossier,items:WatchItem[]){
   const seeds:ActorSeed[]=[];const seen=new Set<string>();const clientKey=normalized(dossier.client);
   const push=(seed:ActorSeed)=>{const key=normalized(seed.name);if(!key||key===clientKey||seen.has(key))return;seen.add(key);seeds.push(seed);};
   (Array.isArray(dossier.key_actors)?dossier.key_actors:[]).map(text).filter(Boolean).forEach((name,index)=>push({name,role:"Acteur clé suivi dans le dossier",institution:"",certainty:"a_confirmer",source:items[index%Math.max(1,items.length)]||null,baseInfluence:index<2?5:index<4?4:3,origin:"dossier"}));
-  items.forEach(item=>{const seed=institutionFromSource(item);if(seed)push(seed);});
+  items.forEach(item=>{actorsNamedBySource(item).forEach(push);const seed=institutionFromSource(item);if(seed)push(seed);});
   return seeds.slice(0,MAX_ACTORS);
 }
 
 function signalsFor(seed:ActorSeed,items:WatchItem[]){
   const actorKey=normalized(seed.name);
-  return items.filter(item=>seed.origin==="source"?institutionFromSource(item)?.name===seed.name:actorKey.length>3&&normalized(item.title).includes(actorKey)).slice(0,3).map(item=>({title:item.title,nature:item.nature,date:text(item.published_at)||text(item.created_at),url:text(item.source_url),source_name:text(item.source_name),urgency:text(item.urgency)||"faible"}));
+  return items.filter(item=>seed.origin==="source"?(normalized(item.title).includes(actorKey)||institutionFromSource(item)?.name===seed.name):actorKey.length>3&&normalized(item.title).includes(actorKey)).slice(0,3).map(item=>({title:item.title,nature:item.nature,date:text(item.published_at)||text(item.created_at),url:text(item.source_url),source_name:text(item.source_name),urgency:text(item.urgency)||"faible"}));
 }
 function scoreFor(seed:ActorSeed,signals:ReturnType<typeof signalsFor>,items:WatchItem[]){
   const base=Math.max(1,Math.min(5,seed.baseInfluence||3));const institutional=({1:10,2:16,3:23,4:29,5:35} as Record<number,number>)[base]||23;
