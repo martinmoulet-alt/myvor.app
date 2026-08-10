@@ -3,11 +3,11 @@ import {createClient} from "npm:@supabase/supabase-js@2";
 type Dossier={id:string;user_id:string;title:string;objective:string;context?:string;watch_keywords?:string[];watch_priority_phrases?:string[];watch_excluded_keywords?:string[]};
 type WatchItem={id:string;user_id:string;title:string;nature:string;source_url:string;dossier_id:string|null;suggested_dossier_id?:string|null;qualification_reason?:string|null;published_at?:string|null};
 type Setting={user_id:string;enabled:boolean;auto_link_threshold:number|string;review_threshold:number|string};
-type Score={score:number;matches:string[];priorityMatches:string[];explicitMatches:string[];blockedBy:string|null};
+type Score={score:number;matches:string[];primaryPriority:string[];primaryExact:string[];secondarySignals:string[];blockedBy:string|null};
 
 const JSON_HEADERS={"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"};
-const RULE_PREFIX="Règles dossier v11 —";
-const OLD_RULE_PREFIXES=["Règles dossier v10 —","Règles dossier v9 —","Règles dossier v8 —","Règles dossier v7 —","Règles dossier v6 —"];
+const RULE_PREFIX="Règles dossier v12 —";
+const OLD_RULE_PREFIXES=["Règles dossier v11 —","Règles dossier v10 —","Règles dossier v9 —","Règles dossier v8 —","Règles dossier v7 —","Règles dossier v6 —"];
 const PROCESS_LIMIT=80;
 const STOP_WORDS=new Set(["avec","dans","pour","sans","sous","entre","vers","chez","plus","moins","ainsi","comme","cette","celui","celle","ceux","elles","leurs","notre","votre","nous","vous","tout","tous","toute","toutes","texte","obtenir","modification","favorable","reforme","projet","proposition","objectif","client","dossier","action","impact","enjeu","enjeux","suivi","veille","mesure","mesures","nouveau","nouvelle","relatif","relative","concernant","article","articles","application","applicable","regle","regles","aide","autorisation","transmission","donnee","donnees","collecte","relation"]);
 const GENERIC_NAV_TITLES=["accueil","particuliers","professionnels","entreprises","associations","vie associative","être informé","etre informe","accéder à la rubrique","acceder a la rubrique","actualités et communiqués","actualites et communiques","actualités","actualites","communiqués","communiques","agenda et événements","agenda et evenements","agenda","événements","evenements","les publications","publications","les prises de parole","prises de parole","newsletter","quels sont mes droits","achats et publicité","achats et publicite","banque assurance","les pratiques numériques des français","les pratiques numeriques des francais","auditions devant le parlement","les auditions devant le parlement"];
@@ -23,7 +23,36 @@ function keywords(value:string){const out:string[]=[];for(const raw of normalize
 function cleanedList(value:unknown){return Array.isArray(value)?value.map(v=>String(v||"").trim()).filter(Boolean):[];}
 function containsPhrase(normalizedText:string,phrase:string){const needle=normalize(phrase);return !!needle&&` ${normalizedText} `.includes(` ${needle} `);}
 function keywordHit(itemWords:Set<string>,word:string){if(itemWords.has(word))return 1;if(word.length<6)return 0;for(const itemWord of itemWords)if(itemWord.length>=6&&(itemWord.startsWith(word)||word.startsWith(itemWord)))return .7;return 0;}
-function scoreItem(text:string,dossier:Dossier):Score{const normalizedText=normalize(text),itemWords=new Set(keywords(normalizedText));const excluded=cleanedList(dossier.watch_excluded_keywords),watchKeywords=cleanedList(dossier.watch_keywords),priority=cleanedList(dossier.watch_priority_phrases);const blockedBy=excluded.find(term=>containsPhrase(normalizedText,term))||null;if(blockedBy)return{score:0,matches:[],priorityMatches:[],explicitMatches:[],blockedBy};const priorityMatches=priority.filter(term=>containsPhrase(normalizedText,term));const explicitMatches=watchKeywords.filter(term=>containsPhrase(normalizedText,term));if(!watchKeywords.length&&!priorityMatches.length)return{score:0,matches:[],priorityMatches:[],explicitMatches:[],blockedBy:null};const multi=explicitMatches.filter(term=>normalize(term).split(/\s+/).length>=2),single=explicitMatches.filter(term=>normalize(term).split(/\s+/).length===1);const words=[...new Set(watchKeywords.flatMap(value=>keywords(value)))],wordHits=words.filter(word=>keywordHit(itemWords,word)>0);let score=0;if(priorityMatches.length)score=.99;else if(explicitMatches.length>=2)score=.97;else if(multi.length===1)score=.94;else if(single.length>=2)score=.86;else if(single.length===1)score=.62;else if(wordHits.length>=3)score=.76;else if(wordHits.length===2)score=.68;else if(wordHits.length===1)score=.52;return{score,matches:[...new Set([...explicitMatches,...wordHits])].slice(0,8),priorityMatches:priorityMatches.slice(0,4),explicitMatches:explicitMatches.slice(0,6),blockedBy:null};}
+function substantiveScope(title:string,sourceText:string){if(!sourceText)return title;const lower=sourceText.toLowerCase();const starts=["publics concernés", "publics concernes", "objet :", "objet:", "objet "].map(marker=>lower.indexOf(marker)).filter(index=>index>=0);let body="";if(starts.length){const start=Math.min(...starts),slice=sourceText.slice(start),sliceLower=slice.toLowerCase();const endMarkers=["le premier ministre", "la première ministre", "la premiere ministre", "le président de la république", "le president de la republique", "la ministre ", "le ministre "];const ends=endMarkers.map(marker=>sliceLower.indexOf(marker,300)).filter(index=>index>300);const end=ends.length?Math.min(...ends):Math.min(slice.length,5000);body=slice.slice(0,end);}else body=sourceText.slice(0,3500);return `${title} ${body}`;}
+function scoreItem(primaryText:string,fullText:string,dossier:Dossier):Score{
+  const primary=normalize(primaryText),full=normalize(fullText||primaryText),primaryWords=new Set(keywords(primary)),fullWords=new Set(keywords(full));
+  const excluded=cleanedList(dossier.watch_excluded_keywords),watchKeywords=cleanedList(dossier.watch_keywords),priority=cleanedList(dossier.watch_priority_phrases);
+  const blockedBy=excluded.find(term=>containsPhrase(full,term))||null;if(blockedBy)return{score:0,matches:[],primaryPriority:[],primaryExact:[],secondarySignals:[],blockedBy};
+  const primaryPriority=priority.filter(term=>containsPhrase(primary,term)),primaryExact=watchKeywords.filter(term=>containsPhrase(primary,term));
+  const fullPriority=priority.filter(term=>containsPhrase(full,term)),fullExact=watchKeywords.filter(term=>containsPhrase(full,term));
+  if(!watchKeywords.length&&!primaryPriority.length&&!fullPriority.length)return{score:0,matches:[],primaryPriority:[],primaryExact:[],secondarySignals:[],blockedBy:null};
+  const primaryMulti=primaryExact.filter(term=>normalize(term).split(/\s+/).length>=2),primarySingles=primaryExact.filter(term=>normalize(term).split(/\s+/).length===1);
+  const fullMulti=fullExact.filter(term=>normalize(term).split(/\s+/).length>=2),fullSingles=fullExact.filter(term=>normalize(term).split(/\s+/).length===1);
+  const words=[...new Set(watchKeywords.flatMap(value=>keywords(value)))],primaryWordHits=words.filter(word=>keywordHit(primaryWords,word)>0),fullWordHits=words.filter(word=>keywordHit(fullWords,word)>0);
+  let score=0;
+  if(primaryPriority.length)score=.99;
+  else if(primaryMulti.length)score=.96;
+  else if(primarySingles.length>=2)score=.86;
+  else if(primarySingles.length===1)score=.62;
+  else if(fullPriority.length)score=.84;
+  else if(fullMulti.length)score=.82;
+  else if(fullSingles.length>=2)score=.78;
+  else if(fullSingles.length===1)score=.60;
+  else if(primaryWordHits.length>=3)score=.74;
+  else if(primaryWordHits.length===2)score=.68;
+  else if(primaryWordHits.length===1)score=.52;
+  else if(fullWordHits.length>=3)score=.66;
+  else if(fullWordHits.length===2)score=.60;
+  else if(fullWordHits.length===1)score=.50;
+  const secondarySignals=[...new Set([...fullPriority.filter(x=>!primaryPriority.includes(x)),...fullExact.filter(x=>!primaryExact.includes(x))])].slice(0,6);
+  const matches=[...new Set([...primaryPriority,...primaryExact,...primaryWordHits,...secondarySignals,...fullWordHits])].slice(0,10);
+  return{score,matches,primaryPriority:primaryPriority.slice(0,4),primaryExact:primaryExact.slice(0,6),secondarySignals,blockedBy:null};
+}
 
 Deno.serve(async req=>{
   if(req.method!=="POST")return json({error:"Méthode non autorisée"},405);
@@ -37,7 +66,7 @@ Deno.serve(async req=>{
     const userId=setting.user_id,tenMinutesAgo=new Date(Date.now()-10*60*1000).toISOString();
     const{data:activeRun}=await supabase.from("veille_runs").select("id").eq("user_id",userId).eq("status","running").gte("started_at",tenMinutesAgo).limit(1).maybeSingle();
     if(activeRun){summaries.push({status:"skipped",reason:"already_running"});continue;}
-    const engine="catalog-dossier-relevance-v11-deterministic";
+    const engine="catalog-dossier-relevance-v12-primary-scope";
     const{data:run,error:runError}=await supabase.from("veille_runs").insert({user_id:userId,status:"running",sources_count:1,fetched_count:0,engine}).select("id").single();if(runError){summaries.push({status:"error",message:"run_log_failed"});continue;}
     const runId=run.id as string;
     try{
@@ -56,13 +85,13 @@ Deno.serve(async req=>{
       for(const item of processItems){
         const cached:any=contentById.get(item.id),sourceText=String(cached?.source_text||"");if(sourceText){withContent++;totalChars+=Number(cached?.source_text_chars)||sourceText.length;}
         if(isGenericNavigationTitle(item.title)){await supabase.from("watch_items").update({dossier_id:null,suggested_dossier_id:null,qualification_confidence:0,qualification_reason:`${RULE_PREFIX} Page générique détectée : aucun rattachement.`,qualified_at:new Date().toISOString(),urgency:"faible"}).eq("id",item.id).eq("user_id",userId);rejected++;continue;}
-        const searchable=`${item.title} ${item.nature} ${sourceText}`;
-        const ranked=allDossiers.map(d=>({d,...scoreItem(searchable,d)})).sort((a,b)=>b.score-a.score),best=ranked[0],second=ranked[1];
-        if(!best||best.score<reviewThreshold){const blocked=ranked.find(x=>x.blockedBy);const reason=blocked?`${RULE_PREFIX} Exclusion détectée : ${blocked.blockedBy}.`:`${RULE_PREFIX} Aucun mot-clé de veille explicite suffisamment discriminant.`;await supabase.from("watch_items").update({dossier_id:null,suggested_dossier_id:null,qualification_confidence:0,qualification_reason:reason,qualified_at:new Date().toISOString(),urgency:"faible"}).eq("id",item.id).eq("user_id",userId);rejected++;continue;}
+        const primary=substantiveScope(item.title,sourceText),full=`${item.title} ${item.nature} ${sourceText}`;
+        const ranked=allDossiers.map(d=>({d,...scoreItem(primary,full,d)})).sort((a,b)=>b.score-a.score),best=ranked[0],second=ranked[1];
+        if(!best||best.score<reviewThreshold){const blocked=ranked.find(x=>x.blockedBy);const reason=blocked?`${RULE_PREFIX} Exclusion détectée : ${blocked.blockedBy}.`:`${RULE_PREFIX} Aucun signal explicite suffisamment discriminant dans le titre/résumé juridique.`;await supabase.from("watch_items").update({dossier_id:null,suggested_dossier_id:null,qualification_confidence:0,qualification_reason:reason,qualified_at:new Date().toISOString(),urgency:"faible"}).eq("id",item.id).eq("user_id",userId);rejected++;continue;}
         let confidence=best.score;if(second&&second.score>=reviewThreshold&&(best.score-second.score)<.12)confidence=Math.min(confidence,.84);
-        const signals=[best.priorityMatches.length?`Expression prioritaire : ${best.priorityMatches.join(", ")}.`:"",best.explicitMatches.length?`Mots-clés exacts : ${best.explicitMatches.join(", ")}.`:"",!best.explicitMatches.length&&best.matches.length?`Signaux lexicaux explicites : ${best.matches.join(", ")}.`:""].filter(Boolean).join(" ");
+        const signals=[best.primaryPriority.length?`Expression prioritaire dans le sujet : ${best.primaryPriority.join(", ")}.`:"",best.primaryExact.length?`Mots-clés exacts dans le sujet : ${best.primaryExact.join(", ")}.`:"",best.secondarySignals.length?`Signaux secondaires dans le texte : ${best.secondarySignals.join(", ")}.`:"",!best.primaryPriority.length&&!best.primaryExact.length&&best.matches.length?`Signaux lexicaux : ${best.matches.join(", ")}.`:""].filter(Boolean).join(" ");
         const reason=`${RULE_PREFIX} ${signals} Validation IA en attente.`;
-        const{error:updateError}=await supabase.from("watch_items").update({dossier_id:null,suggested_dossier_id:best.d.id,qualification_confidence:Number(confidence.toFixed(2)),qualification_reason:clip(reason,650),qualified_at:new Date().toISOString(),urgency:"moyen"}).eq("id",item.id).eq("user_id",userId);if(updateError)throw new Error(`Mise à jour qualification impossible: ${clip(updateError.message,180)}`);candidates++;
+        const{error:updateError}=await supabase.from("watch_items").update({dossier_id:null,suggested_dossier_id:best.d.id,qualification_confidence:Number(confidence.toFixed(2)),qualification_reason:clip(reason,700),qualified_at:new Date().toISOString(),urgency:"moyen"}).eq("id",item.id).eq("user_id",userId);if(updateError)throw new Error(`Mise à jour qualification impossible: ${clip(updateError.message,180)}`);candidates++;
       }
       const message=`${processItems.length} texte(s) scoré(s) · ${withContent} avec contenu source · ${totalChars} caractères · ${candidates} candidat(s) IA · ${rejected} écarté(s).`;
       await supabase.from("veille_runs").update({status:"success",finished_at:new Date().toISOString(),fetched_count:processItems.length,new_count:0,auto_linked_count:0,review_count:candidates,actions_created_count:0,engine,message}).eq("id",runId);
