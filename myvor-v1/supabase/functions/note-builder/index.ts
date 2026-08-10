@@ -10,11 +10,12 @@ const MAX_TOTAL_SOURCE_CHARS=45000;
 const MAX_SOURCE_CHARS=6500;
 const PRIMARY_MODEL="gpt-5-mini";
 const FALLBACK_MODEL="gpt-4.1-mini";
-const ENGINE="supabase-note-builder-grounded-v10-recovery";
+const ENGINE="supabase-note-builder-grounded-v11-workflow-context";
 
 type EditAction="reformulate"|"shorten"|"strengthen"|"diplomatic";
 type SourceItem={id:string;title:string;nature:string;source_url:string;source_name:string;urgency:string;published_at:string;source_text:string};
 type Attempt={ok:boolean;status:number;document?:any;text?:string;message?:string;request_id?:string;execution_ms:number;model:string;endpoint:string};
+type WorkflowContext={urgency_score:any|null;radar:any|null;warzone:any|null;impact:any|null;error:string|null};
 
 const DOCUMENT_SCHEMA={
   type:"object",
@@ -53,6 +54,15 @@ async function authenticate(req:Request,feature:string){
   return{client};
 }
 
+async function loadWorkflowContext(client:any,dossierId:string):Promise<WorkflowContext>{
+  const empty:WorkflowContext={urgency_score:null,radar:null,warzone:null,impact:null,error:null};
+  const {data,error}=await client.from("productions").select("type,content,created_at").eq("dossier_id",dossierId).in("type",["urgency_score","radar","warzone","impact"]).order("created_at",{ascending:false}).limit(60);
+  if(error)return{...empty,error:clip(error.message,220)};
+  const rows=Array.isArray(data)?data:[];
+  const latest=(type:string)=>rows.find((row:any)=>String(row?.type)===type)?.content||null;
+  return{urgency_score:latest("urgency_score"),radar:latest("radar"),warzone:latest("warzone"),impact:latest("impact"),error:null};
+}
+
 async function loadContext(client:any,body:any){
   const dossierId=clip(body?.dossier?.id,80);
   if(!dossierId)return{error:"Sélectionne un dossier client."};
@@ -81,16 +91,19 @@ async function loadContext(client:any,body:any){
     remaining=Math.max(0,remaining-sourceText.length);
     return{id:String(row.id),title:cleanSourceTitle(row.title),nature:clip(row.nature,140),source_url:clip(row.source_url,900),source_name:clip(row.source_name,220),urgency:clip(row.urgency,80),published_at:clip(row.published_at||row.created_at,80),source_text:sourceText};
   });
-  return{dossier,items};
+  const workflow=await loadWorkflowContext(client,dossierId);
+  return{dossier,items,workflow};
 }
 
-function buildPrompt(body:any,dossier:any,items:SourceItem[]){
+function buildPrompt(body:any,dossier:any,items:SourceItem[],workflow:WorkflowContext){
   const format=String(body?.format||"note-client");
   const audience=clip(body?.audience||"Client",120);
   const tone=clip(body?.tone||"professionnel et direct",120);
   const instruction=clip(body?.instruction,1200);
-  const impact=compact(body?.impact,12000);
-  const radar=compact(body?.radar,12000);
+  const urgency=compact(workflow?.urgency_score,12000);
+  const radar=compact(workflow?.radar||body?.radar,12000);
+  const warzone=compact(workflow?.warzone,15000);
+  const legacyImpact=compact(workflow?.impact||body?.impact,9000);
   const currentDate=new Intl.DateTimeFormat("fr-FR",{day:"2-digit",month:"long",year:"numeric",timeZone:"Europe/Paris"}).format(new Date());
   const formatRules:Record<string,string>={
     "note-client":"NOTE STRATÉGIQUE : synthèse exécutive, enjeu institutionnel, implications concrètes pour le client, risques/opportunités, acteurs à mobiliser, recommandations hiérarchisées. 650 à 850 mots.",
@@ -104,26 +117,30 @@ function buildPrompt(body:any,dossier:any,items:SourceItem[]){
   return[
     "MYVOR — NOTE BUILDER PROFESSIONNEL D’AFFAIRES PUBLIQUES.",
     `Date de génération : ${currentDate}.`,
-    "Transforme le dossier et son corpus applicable en un livrable immédiatement exploitable par un consultant.",
-    "Le corpus applicable peut contenir des textes anciens et nouveaux. Utilise les textes anciens comme cadre de référence et les plus récents pour identifier ce qui change. Ne crée pas de section rétrospective ou d’historique pour elle-même.",
-    "Les extraits source_text sont la preuve primaire. Les titres et URL seuls ne suffisent pas à affirmer une disposition précise.",
-    "N’invente aucun fait, chiffre, date, disposition, acteur ou position. Si une information n’est pas établie par le corpus, ne l’affirme pas.",
+    "Construis le livrable à partir de CINQ briques complémentaires : 1) dossier client, 2) corpus applicable / veille reliée, 3) dernier Score d’urgence enregistré, 4) dernier Radar d’influence enregistré, 5) dernière War Zone enregistrée.",
+    "HIÉRARCHIE DE FIABILITÉ : les textes du corpus applicable constituent la preuve factuelle primaire. Le Score d’urgence sert à prioriser les enjeux et le timing. Le Radar sert à contextualiser les acteurs uniquement lorsqu’ils sont sourcés. La War Zone sert à structurer le chemin d’action, les cibles, les moyens et le séquençage. Les productions Myvor dérivées ne doivent jamais créer un fait absent du corpus.",
+    "Utilise le dossier pour rester strictement centré sur l’objectif du client et sa position.",
+    "Utilise les textes anciens comme cadre applicable et les textes récents pour identifier ce qui change, sans créer de section rétrospective pour elle-même.",
+    "Si le Score d’urgence, le Radar ou la War Zone n’existent pas encore, rédige avec les briques disponibles sans inventer ce qui manque.",
+    "N’invente aucun fait, chiffre, date, disposition, acteur ou position. Si une information n’est pas établie, ne l’affirme pas.",
     "Rédige des phrases complètes, concrètes et décisionnelles. Chaque recommandation précise l’action, son objet et son résultat attendu.",
     formatRules[format]||formatRules["note-client"],
     `Public visé : ${audience}. Ton : ${tone}.`,
     instruction?`Instruction utilisateur : ${instruction}`:"",
     "Réponds uniquement selon le schéma JSON demandé.",
-    "DOSSIER :",JSON.stringify(dossier),
-    "CORPUS APPLICABLE :",JSON.stringify(sourceInput),
-    "SCORE / ANALYSE MYVOR DÉRIVÉE :",JSON.stringify(impact),
-    "RADAR MYVOR DÉRIVÉ :",JSON.stringify(radar),
+    "DOSSIER CLIENT :",JSON.stringify(dossier),
+    "CORPUS APPLICABLE / VEILLE RELIÉE :",JSON.stringify(sourceInput),
+    "DERNIER SCORE D'URGENCE ENREGISTRÉ :",JSON.stringify(urgency),
+    "DERNIER RADAR D'INFLUENCE ENREGISTRÉ :",JSON.stringify(radar),
+    "DERNIÈRE WAR ZONE ENREGISTRÉE :",JSON.stringify(warzone),
+    "ANCIENNE ANALYSE D'IMPACT DISPONIBLE EN SECOURS :",JSON.stringify(legacyImpact),
   ].filter(Boolean).join("\n");
 }
 
 async function callResponses(apiKey:string,prompt:string):Promise<Attempt>{
   const started=Date.now();const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),40000);
   try{
-    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json","X-Client-Request-Id":crypto.randomUUID()},body:JSON.stringify({model:PRIMARY_MODEL,input:prompt,max_output_tokens:2600,store:false,text:{verbosity:"low",format:{type:"json_schema",name:"myvor_note_builder_v10",strict:true,schema:DOCUMENT_SCHEMA}}}),signal:controller.signal});
+    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json","X-Client-Request-Id":crypto.randomUUID()},body:JSON.stringify({model:PRIMARY_MODEL,input:prompt,max_output_tokens:2600,store:false,text:{verbosity:"low",format:{type:"json_schema",name:"myvor_note_builder_v11",strict:true,schema:DOCUMENT_SCHEMA}}}),signal:controller.signal});
     const requestId=response.headers.get("x-request-id")||response.headers.get("request-id")||"";
     if(!response.ok){const raw=await response.text();return{ok:false,status:response.status,message:upstreamMessage(raw,response.status),request_id:requestId||undefined,execution_ms:Date.now()-started,model:PRIMARY_MODEL,endpoint:"responses"};}
     const payload=await response.json();if(payload?.status==="incomplete"||payload?.status==="failed")return{ok:false,status:502,message:`Réponse IA ${clip(payload?.status,40)}.`,request_id:requestId||undefined,execution_ms:Date.now()-started,model:PRIMARY_MODEL,endpoint:"responses"};
@@ -135,7 +152,7 @@ async function callResponses(apiKey:string,prompt:string):Promise<Attempt>{
 async function callChat(apiKey:string,prompt:string):Promise<Attempt>{
   const started=Date.now();const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),45000);
   try{
-    const response=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json","X-Client-Request-Id":crypto.randomUUID()},body:JSON.stringify({model:FALLBACK_MODEL,store:false,messages:[{role:"developer",content:"Tu es le Note Builder Myvor. Respecte strictement les faits du corpus et le schéma JSON."},{role:"user",content:prompt}],response_format:{type:"json_schema",json_schema:{name:"myvor_note_builder_v10_fallback",strict:true,schema:DOCUMENT_SCHEMA}}}),signal:controller.signal});
+    const response=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json","X-Client-Request-Id":crypto.randomUUID()},body:JSON.stringify({model:FALLBACK_MODEL,store:false,messages:[{role:"developer",content:"Tu es le Note Builder Myvor. Respecte strictement le corpus, l'objectif client et le schéma JSON. Le Score d'urgence, le Radar et la War Zone sont des analyses dérivées utiles à la priorisation et à l'action, jamais des preuves factuelles autonomes."},{role:"user",content:prompt}],response_format:{type:"json_schema",json_schema:{name:"myvor_note_builder_v11_fallback",strict:true,schema:DOCUMENT_SCHEMA}}}),signal:controller.signal});
     const requestId=response.headers.get("x-request-id")||response.headers.get("request-id")||"";
     if(!response.ok){const raw=await response.text();return{ok:false,status:response.status,message:upstreamMessage(raw,response.status),request_id:requestId||undefined,execution_ms:Date.now()-started,model:FALLBACK_MODEL,endpoint:"chat_completions"};}
     const payload=await response.json();const raw=String(payload?.choices?.[0]?.message?.content||"").trim();let document:any=null;try{document=JSON.parse(raw);}catch{return{ok:false,status:502,message:"Réponse IA de secours inexploitable.",request_id:requestId||undefined,execution_ms:Date.now()-started,model:FALLBACK_MODEL,endpoint:"chat_completions"};}
@@ -147,7 +164,7 @@ async function generateWithRecovery(apiKey:string,prompt:string){
   const attempts:any[]=[];
   let run=await callResponses(apiKey,prompt);attempts.push({endpoint:run.endpoint,model:run.model,status:run.status,execution_ms:run.execution_ms,request_id:run.request_id||null,error:run.ok?null:run.message||null});
   if(run.ok)return{run,attempts};
-  if(retryable(run.status)){await new Promise(resolve=>setTimeout(resolve,500));run=await callResponses(apiKey,prompt);attempts.push({endpoint:run.endpoint,model:run.model,status:run.status,execution_ms:run.execution_ms,request_id:run.request_id||null,error:run.ok?null:run.message||null});if(run.ok)return{run,attempts};}
+  if(retryable(run.status)&&run.status!==504){await new Promise(resolve=>setTimeout(resolve,500));run=await callResponses(apiKey,prompt);attempts.push({endpoint:run.endpoint,model:run.model,status:run.status,execution_ms:run.execution_ms,request_id:run.request_id||null,error:run.ok?null:run.message||null});if(run.ok)return{run,attempts};}
   run=await callChat(apiKey,prompt);attempts.push({endpoint:run.endpoint,model:run.model,status:run.status,execution_ms:run.execution_ms,request_id:run.request_id||null,error:run.ok?null:run.message||null});
   return{run,attempts};
 }
@@ -158,7 +175,7 @@ async function editPassage(apiKey:string,body:any){
   const rules:Record<EditAction,string>={reformulate:"Reformule ce passage pour le rendre plus clair, fluide, précis et professionnel sans modifier le fond.",shorten:"Raccourcis ce passage d’environ 30 à 40 %, conserve les informations indispensables et supprime les répétitions.",strengthen:"Renforce l’argumentation et rends le raisonnement plus convaincant et orienté décision sans inventer de fait.",diplomatic:"Rends ce passage plus diplomatique, institutionnel et nuancé tout en conservant son message."};
   const input=["Tu es l’assistant d’édition du Note Builder Myvor.",rules[action]||rules.reformulate,"N’invente aucun fait, chiffre, date, acteur ou source.","Réponds uniquement avec le passage réécrit.","CONTEXTE :",surrounding,"PASSAGE :",selected].join("\n");
   const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),35000);
-  try{const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:FALLBACK_MODEL,input,max_output_tokens:900,store:false}),signal:controller.signal});if(!response.ok)return json({error:`La réécriture IA est indisponible (${response.status}).`},502);const text=outputText(await response.json());if(!text)return json({error:"La réécriture n’a renvoyé aucun texte."},502);return json({text,engine:"supabase-note-builder-edit-v10"});}catch(error:any){if(error?.name==="AbortError")return json({error:"La réécriture a dépassé le délai prévu."},504);return json({error:"Réécriture impossible pour le moment."},500);}finally{clearTimeout(timer);}
+  try{const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model:FALLBACK_MODEL,input,max_output_tokens:900,store:false}),signal:controller.signal});if(!response.ok)return json({error:`La réécriture IA est indisponible (${response.status}).`},502);const text=outputText(await response.json());if(!text)return json({error:"La réécriture n’a renvoyé aucun texte."},502);return json({text,engine:"supabase-note-builder-edit-v11"});}catch(error:any){if(error?.name==="AbortError")return json({error:"La réécriture a dépassé le délai prévu."},504);return json({error:"Réécriture impossible pour le moment."},500);}finally{clearTimeout(timer);}
 }
 
 Deno.serve(async(req:Request)=>{
@@ -170,9 +187,9 @@ Deno.serve(async(req:Request)=>{
   const apiKey=cleanApiKey(Deno.env.get("OPENAI_API_KEY")||"");if(!apiKey)return json({error:"Le moteur IA du Note Builder n’est pas configuré."},503);
   if(mode==="edit")return editPassage(apiKey,body);
   const loaded=await loadContext(auth.client,body);if(loaded.error)return json({error:loaded.error},400);
-  const dossier:any=loaded.dossier;const items:SourceItem[]=loaded.items||[];const prompt=buildPrompt(body,dossier,items);
+  const dossier:any=loaded.dossier;const items:SourceItem[]=loaded.items||[];const workflow:WorkflowContext=loaded.workflow||{urgency_score:null,radar:null,warzone:null,impact:null,error:null};const prompt=buildPrompt(body,dossier,items,workflow);
   const started=Date.now();const recovery=await generateWithRecovery(apiKey,prompt);const run=recovery.run;
   if(!run.ok){console.error(JSON.stringify({tag:"note_builder_openai_failure",attempts:recovery.attempts}));return json({error:"Le service IA du Note Builder est temporairement indisponible. Réessaie dans quelques instants.",engine:ENGINE,attempts:recovery.attempts},run.status===429?429:502);}
   const document=normalizeDocument(run.document,dossier,items);if(!document)return json({error:"Le Note Builder n’a renvoyé aucun contenu exploitable.",attempts:recovery.attempts},502);
-  return json({document,engine:ENGINE,model:run.model,execution_ms:Date.now()-started,context_used:{watch_items:items.length,source_text_items:items.filter(item=>item.source_text).length,impact:!!body?.impact,radar:!!body?.radar,corpus_applicable:true},attempts:recovery.attempts});
+  return json({document,engine:ENGINE,model:run.model,execution_ms:Date.now()-started,context_used:{watch_items:items.length,source_text_items:items.filter(item=>item.source_text).length,corpus_applicable:true,urgency_score:!!workflow.urgency_score,radar:!!workflow.radar,warzone:!!workflow.warzone,legacy_impact:!!workflow.impact,workflow_context_error:workflow.error},attempts:recovery.attempts});
 });
