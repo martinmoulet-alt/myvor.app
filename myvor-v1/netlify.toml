@@ -7,3 +7,5 @@
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
+
+# Clean redeploy after rollback — 2026-08-10 14:28 Europe/Paris
