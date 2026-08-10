@@ -1,7 +1,7 @@
 "use client";
 
 import {useEffect,useState} from "react";
-import {AlertTriangle,BarChart3,Bell,BriefcaseBusiness,Radar,Search,Sparkles} from "lucide-react";
+import {AlertTriangle,BarChart3,Bell,BriefcaseBusiness,Radar,Search,Sparkles,Users} from "lucide-react";
 
 const items=[
   {sidebarIndex:0,label:"Accueil",Icon:BarChart3},
@@ -10,6 +10,7 @@ const items=[
   {sidebarIndex:3,label:"Impact",Icon:AlertTriangle},
   {sidebarIndex:4,label:"Radar",Icon:Radar},
   {sidebarIndex:5,label:"Builder",Icon:Sparkles},
+  {sidebarIndex:6,label:"Équipe",Icon:Users},
   {sidebarIndex:7,label:"Alertes",Icon:Bell}
 ] as const;
 
@@ -39,6 +40,6 @@ export default function MobileModuleDock(){
   }
 
   return <nav className="mobile-module-dock" aria-label="Modules Myvor">
-    {items.map(({label,Icon},index)=><button type="button" key={label} className={activeIndex===index?"active":""} onClick={()=>go(index)} aria-label={label}><Icon size={17} strokeWidth={2.1}/><span>{label}</span></button>)}
+    {items.map(({label,Icon},index)=><button type="button" key={label} className={activeIndex===index?"active":""} onClick={()=>go(index)} aria-label={label}><Icon size={16} strokeWidth={2.1}/><span>{label}</span></button>)}
   </nav>;
 }
