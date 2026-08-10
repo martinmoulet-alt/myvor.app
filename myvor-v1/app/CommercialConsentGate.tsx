@@ -4,8 +4,8 @@ import {useEffect,useState} from "react";
 import {usePathname} from "next/navigation";
 import {Check,FileCheck2,RefreshCw,ShieldCheck} from "lucide-react";
 import {supabase} from "@/lib/supabase";
+import {MYVOR_LEGAL_VERSION} from "@/lib/legal";
 
-const LEGAL_VERSION="2026-08-10";
 type GateState="checking"|"hidden"|"required"|"error";
 
 function openInfo(panel:"cgu"|"privacy"){
@@ -24,7 +24,7 @@ export default function CommercialConsentGate(){
     if(bypass||!supabase||!session?.user?.id){setState("hidden");return;}
     const{data,error}=await supabase.from("user_profiles").select("terms_accepted_at,privacy_accepted_at,legal_version").eq("user_id",session.user.id).maybeSingle();
     if(error){setMessage("Impossible de vérifier les conditions d’utilisation pour le moment.");setState("error");return;}
-    const complete=Boolean(data?.terms_accepted_at&&data?.privacy_accepted_at&&data?.legal_version===LEGAL_VERSION);
+    const complete=Boolean(data?.terms_accepted_at&&data?.privacy_accepted_at&&data?.legal_version===MYVOR_LEGAL_VERSION);
     setState(complete?"hidden":"required");
   }
 
@@ -39,7 +39,7 @@ export default function CommercialConsentGate(){
   async function accept(){
     if(!supabase||saving||!accepted)return;
     setSaving(true);setMessage("");
-    const{data,error}=await supabase.rpc("accept_myvor_legal_terms",{p_version:LEGAL_VERSION});
+    const{data,error}=await supabase.rpc("accept_myvor_legal_terms",{p_version:MYVOR_LEGAL_VERSION});
     setSaving(false);
     if(error||data!==true){setMessage("L’acceptation n’a pas pu être enregistrée. Réessayez.");setState("error");return;}
     setState("hidden");
@@ -68,7 +68,7 @@ export default function CommercialConsentGate(){
       {message&&<div className="commercial-consent-error">{message}</div>}
 
       {state==="required"?<button type="button" className="commercial-consent-primary" disabled={!accepted||saving} onClick={()=>void accept()}>{saving?"Enregistrement…":"Accepter et continuer"}</button>:<button type="button" className="commercial-consent-primary" onClick={()=>void retry()}><RefreshCw size={16}/>Réessayer</button>}
-      <small className="commercial-consent-version">Version contractuelle {LEGAL_VERSION} · preuve d’acceptation enregistrée dans votre profil.</small>
+      <small className="commercial-consent-version">Version contractuelle {MYVOR_LEGAL_VERSION} · preuve d’acceptation enregistrée dans votre profil.</small>
     </section>
 
     <style jsx global>{`
