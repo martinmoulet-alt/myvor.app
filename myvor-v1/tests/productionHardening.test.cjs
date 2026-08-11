@@ -24,15 +24,15 @@ test('Radar fast fallback is authenticated and quota protected',()=>{
   assert.match(middleware,/matcher:\["\/api\/radar","\/api\/radar\/fast"/);
 });
 
-test('server Veille catalog preserves publication metadata and stays internal',()=>{
+test('server Veille catalog is strict DILA JORF ingestion and stays internal',()=>{
   const catalog=read('supabase/functions/sync-watch-catalog/index.ts');
-  const middleware=read('middleware.ts');
-  assert.match(catalog,/source_name:clip\(item\?\.source_name,180\)\|\|undefined/);
-  assert.match(catalog,/published_at:clip\(item\?\.published_at,100\)\|\|undefined/);
-  assert.match(catalog,/source_name:item\.source_name\|\|null/);
-  assert.match(catalog,/published_at:safeTimestamp\(item\.published_at\)/);
-  assert.match(middleware,/pathname==="\/api\/veille\/sources"/);
-  assert.match(middleware,/x-myvor-cron-secret/);
+  assert.match(catalog,/https:\/\/echanges\.dila\.gouv\.fr\/OPENDATA\/JORFSIMPLE\//);
+  assert.match(catalog,/<ID\(\?:\\s\[\^>\]\*\)\?>\\s\*JORFTEXT\\d\+\\s\*<\\\/ID>/);
+  assert.match(catalog,/source_name:"Légifrance — Journal officiel"/);
+  assert.match(catalog,/published_at:safeDate\(i\.published_at\)/);
+  assert.match(catalog,/verify_veille_internal_request/);
+  assert.match(catalog,/p_worker:"catalog"/);
+  assert.doesNotMatch(catalog,/\/api\/veille\/sources/);
 });
 
 test('Veille cards prefer publication date over import date',()=>{
