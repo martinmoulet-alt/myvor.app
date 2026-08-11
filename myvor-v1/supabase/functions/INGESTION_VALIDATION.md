@@ -1,0 +1,1 @@
+Validation production au 11 août 2026 : aucun `watch_item` automatisé sans corps, aucune date automatisée manquante, aucun doublon `(organization_id, source_url)` et aucun corps JORF dont l’identifiant ne correspond pas au `JORFTEXT` de l’URL. Ces métriques doivent rester des invariants de non-régression.
