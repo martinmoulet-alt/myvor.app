@@ -45,7 +45,11 @@ export function isProtectedSupabaseRead(targetUrl:string,method:string,supabaseU
 
 function cacheKey(targetUrl:string,headers:Headers){
   const authorization=headers.get("authorization")||"anonymous";
-  return `${authorization}|${targetUrl}`;
+  const range=headers.get("range")||"";
+  const rangeUnit=headers.get("range-unit")||"";
+  const acceptProfile=headers.get("accept-profile")||"";
+  const prefer=headers.get("prefer")||"";
+  return `${authorization}|${rangeUnit}|${range}|${acceptProfile}|${prefer}|${targetUrl}`;
 }
 
 function prune(cache:Map<string,CachedResponse>){
