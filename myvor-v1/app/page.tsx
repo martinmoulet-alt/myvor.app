@@ -1,19 +1,22 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import {useEffect,useState} from "react";
 import {AlertTriangle,ArrowRightLeft,BarChart3,Bell,BriefcaseBusiness,LogOut,Radar,Search,Sparkles,Users,X} from "lucide-react";
 import {isSupabaseConfigured,supabase} from "@/lib/supabase";
 import AuthScreen from "./AuthScreen";
 import DashboardCorporate,{type Action} from "./DashboardCorporate";
-import DossiersCorporate from "./DossiersCorporate";
-import VeilleCorporate from "./VeilleCorporate";
-import ChangesModule from "./ChangesModule";
-import AlertsCorporate from "./AlertsCorporate";
-import ImpactModule from "./ImpactModule";
-import RadarModule from "./RadarModule";
-import BuilderModule from "./BuilderModule";
-import DossierDetail from "./DossierDetail";
-import TeamWorkspace from "./TeamWorkspace";
+
+const lazyOptions={ssr:false,loading:()=> <div className="muted" style={{padding:24}}>Chargement du module…</div>};
+const DossiersCorporate=dynamic(()=>import("./DossiersCorporate"),lazyOptions);
+const VeilleCorporate=dynamic(()=>import("./VeilleCorporate"),lazyOptions);
+const ChangesModule=dynamic(()=>import("./ChangesModule"),lazyOptions);
+const AlertsCorporate=dynamic(()=>import("./AlertsCorporate"),lazyOptions);
+const ImpactModule=dynamic(()=>import("./ImpactModule"),lazyOptions);
+const RadarModule=dynamic(()=>import("./RadarModule"),lazyOptions);
+const BuilderModule=dynamic(()=>import("./BuilderModule"),lazyOptions);
+const DossierDetail=dynamic(()=>import("./DossierDetail"),lazyOptions);
+const TeamWorkspace=dynamic(()=>import("./TeamWorkspace"),lazyOptions);
 
 type Tab="dashboard"|"dossiers"|"veille"|"changes"|"alerts"|"impact"|"radar"|"builder"|"team";
 type ModuleTarget="impact"|"radar"|"builder";
@@ -30,16 +33,18 @@ function normalizeModuleContext(value:any):ModuleContext|null{const dossierId=St
 
 async function loadAllWatchItems(organizationId:string){
   if(!supabase)return{data:[] as Watch[],error:new Error("Supabase n’est pas configuré.")};
-  const rows:Watch[]=[];
   const pageSize=500;
-  for(let from=0;;from+=pageSize){
-    const{data,error}=await supabase.from("watch_items").select("*").eq("organization_id",organizationId).order("created_at",{ascending:false}).range(from,from+pageSize-1);
-    if(error)return{data:rows,error};
-    const batch=(data||[]) as Watch[];
-    rows.push(...batch);
-    if(batch.length<pageSize)break;
-  }
-  return{data:rows,error:null};
+  const first=await supabase.from("watch_items").select("*",{count:"exact"}).eq("organization_id",organizationId).order("created_at",{ascending:false}).range(0,pageSize-1);
+  if(first.error)return{data:[] as Watch[],error:first.error};
+  const head=(first.data||[]) as Watch[];
+  const total=Number(first.count)||head.length;
+  if(head.length<pageSize||total<=pageSize)return{data:head,error:null};
+  const tasks=[];
+  for(let from=pageSize;from<total;from+=pageSize){tasks.push(supabase.from("watch_items").select("*").eq("organization_id",organizationId).order("created_at",{ascending:false}).range(from,Math.min(from+pageSize-1,total-1)));}
+  const pages=await Promise.all(tasks);
+  const failed=pages.find(page=>page.error)?.error||null;
+  const data=head.concat(...pages.map(page=>(page.data||[]) as Watch[]));
+  return{data,error:failed};
 }
 
 export default function Home(){
@@ -75,9 +80,9 @@ export default function Home(){
     setActionsError(readErrors.length?"Mise à jour partielle : les dernières données disponibles restent affichées.":"");setActionsLoading(false);
   }
 
-  async function persistActions(drafts:ActionDraft[],existing=actions,reload=true){if(!supabase||!drafts.length)return;const keys=new Set(existing.filter(a=>a.status!=="termine").map(a=>`${a.dossier_id}|${a.type}|${a.title}`));const rows=drafts.filter(d=>{const key=`${d.dossier_id}|${d.type}|${d.title}`;if(keys.has(key))return false;keys.add(key);return true;}).map(d=>({...d,status:"a_faire",due_date:d.due_date||null,actor_name:d.actor_name||null,description:d.description||null}));if(!rows.length)return;const{error}=await supabase.from("actions").insert(rows);if(error){setActionsError(error.message);return;}if(reload)await loadData();}
-  async function linkWatchToDossier(watchId:string,dossierId:string|null){if(!supabase)return;const previous=watch;setWatch(items=>items.map(item=>item.id===watchId?{...item,dossier_id:dossierId}:item));const{error}=await supabase.from("watch_items").update({dossier_id:dossierId}).eq("id",watchId);if(error){setWatch(previous);setSyncMessage(`Impossible de rattacher le texte : ${error.message}`);}else await loadData();}
-  async function findRelevantForDossier(dossier:Dossier){if(!supabase||searchingDossier)return;setSearchingDossier(dossier.id);setDossierMessages(m=>({...m,[dossier.id]:"Analyse de la veille en cours…"}));try{const candidates=watch.filter(w=>!w.dossier_id||w.dossier_id===dossier.id).slice(0,40);if(!candidates.length){setDossierMessages(m=>({...m,[dossier.id]:"Aucune évolution à analyser pour le moment."}));return;}const response=await fetch(new URL("/api/veille/assign",window.location.origin).toString(),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:candidates.map(w=>({id:w.id,title:w.title,nature:w.nature,source_url:w.source_url})),dossiers:[{id:dossier.id,title:dossier.title,objective:dossier.objective,context:dossier.context,watch_keywords:dossier.watch_keywords||[],watch_priority_phrases:dossier.watch_priority_phrases||[],watch_excluded_keywords:dossier.watch_excluded_keywords||[]}]})});const payload=await response.json();if(!response.ok)throw new Error(payload?.error||"Analyse impossible");const relevant=(payload.assignments||[]).filter((a:any)=>a.dossier_id===dossier.id&&Number(a.confidence)>=AUTO_LINK_THRESHOLD);let linked=0;for(const a of relevant){const{error}=await supabase.from("watch_items").update({dossier_id:dossier.id}).eq("id",a.watch_id);if(error)throw error;linked++;}await loadData();setDossierMessages(m=>({...m,[dossier.id]:linked?`${linked} évolution(s) à 95 % ou plus trouvée(s) et rattachée(s).`:"Aucune évolution n’atteint le seuil automatique de 95 %."}));}catch(error:any){setDossierMessages(m=>({...m,[dossier.id]:error?.message||"Analyse impossible"}));}finally{setSearchingDossier(null);}}
+  async function persistActions(drafts:ActionDraft[],existing=actions,reload=true){if(!supabase||!drafts.length)return;const keys=new Set(existing.filter(a=>a.status!=="termine").map(a=>`${a.dossier_id}|${a.type}|${a.title}`));const rows=drafts.filter(d=>{const key=`${d.dossier_id}|${d.type}|${d.title}`;if(keys.has(key))return false;keys.add(key);return true;}).map(d=>({...d,status:"a_faire",due_date:d.due_date||null,actor_name:d.actor_name||null,description:d.description||null}));if(!rows.length)return;const{data,error}=await supabase.from("actions").insert(rows).select("id,dossier_id,type,title,description,actor_name,priority,status,due_date,created_at,updated_at");if(error){setActionsError(error.message);return;}if(reload&&data?.length)setActions(current=>[...(data as Action[]),...current]);}
+  async function linkWatchToDossier(watchId:string,dossierId:string|null){if(!supabase)return;const previous=watch;setWatch(items=>items.map(item=>item.id===watchId?{...item,dossier_id:dossierId}:item));const{error}=await supabase.from("watch_items").update({dossier_id:dossierId}).eq("id",watchId);if(error){setWatch(previous);setSyncMessage(`Impossible de rattacher le texte : ${error.message}`);}}
+  async function findRelevantForDossier(dossier:Dossier){if(!supabase||searchingDossier)return;setSearchingDossier(dossier.id);setDossierMessages(m=>({...m,[dossier.id]:"Analyse de la veille en cours…"}));try{const candidates=watch.filter(w=>!w.dossier_id||w.dossier_id===dossier.id).slice(0,40);if(!candidates.length){setDossierMessages(m=>({...m,[dossier.id]:"Aucune évolution à analyser pour le moment."}));return;}const response=await fetch(new URL("/api/veille/assign",window.location.origin).toString(),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:candidates.map(w=>({id:w.id,title:w.title,nature:w.nature,source_url:w.source_url})),dossiers:[{id:dossier.id,title:dossier.title,objective:dossier.objective,context:dossier.context,watch_keywords:dossier.watch_keywords||[],watch_priority_phrases:dossier.watch_priority_phrases||[],watch_excluded_keywords:dossier.watch_excluded_keywords||[]}]})});const payload=await response.json();if(!response.ok)throw new Error(payload?.error||"Analyse impossible");const relevant=(payload.assignments||[]).filter((a:any)=>a.dossier_id===dossier.id&&Number(a.confidence)>=AUTO_LINK_THRESHOLD);let linked=0;const linkedIds=new Set<string>();for(const a of relevant){const{error}=await supabase.from("watch_items").update({dossier_id:dossier.id}).eq("id",a.watch_id);if(error)throw error;linkedIds.add(String(a.watch_id));linked++;}if(linkedIds.size)setWatch(items=>items.map(item=>linkedIds.has(item.id)?{...item,dossier_id:dossier.id}:item));setDossierMessages(m=>({...m,[dossier.id]:linked?`${linked} évolution(s) à 95 % ou plus trouvée(s) et rattachée(s).`:"Aucune évolution n’atteint le seuil automatique de 95 %."}));}catch(error:any){setDossierMessages(m=>({...m,[dossier.id]:error?.message||"Analyse impossible"}));}finally{setSearchingDossier(null);}}
   async function refreshWatchData(){if(!supabase||syncing)return;setSyncing(true);setSyncMessage("");try{await loadData();const{data:setting}=await supabase.from("veille_settings").select("last_run_at").eq("user_id",session.user.id).maybeSingle();const last=setting?.last_run_at?new Date(setting.last_run_at):null;const label=last&&Number.isFinite(last.getTime())?new Intl.DateTimeFormat("fr-FR",{hour:"2-digit",minute:"2-digit"}).format(last):"—";setSyncMessage(`Données actualisées. Dernier passage serveur : ${label}. Le pipeline tourne automatiquement toutes les 15 minutes.`);}catch(error:any){setSyncMessage(`Impossible d’actualiser les résultats : ${error?.message||"inconnue"}`);}finally{setSyncing(false);}}
   function updateDossier(updated:Dossier){setSelectedDossier(updated);setDossiers(current=>current.map(dossier=>dossier.id===updated.id?updated:dossier));}
   function persistModuleContext(next:ModuleContext){setModuleContext(next);try{sessionStorage.setItem(WORKFLOW_CONTEXT_KEY,JSON.stringify(next));}catch{}}
