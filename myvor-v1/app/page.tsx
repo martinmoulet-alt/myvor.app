@@ -7,16 +7,15 @@ import {isSupabaseConfigured,supabase} from "@/lib/supabase";
 import AuthScreen from "./AuthScreen";
 import DashboardCorporate,{type Action} from "./DashboardCorporate";
 
-const lazyOptions={ssr:false,loading:()=> <div className="muted" style={{padding:24}}>Chargement du module…</div>};
-const DossiersCorporate=dynamic(()=>import("./DossiersCorporate"),lazyOptions);
-const VeilleCorporate=dynamic(()=>import("./VeilleCorporate"),lazyOptions);
-const ChangesModule=dynamic(()=>import("./ChangesModule"),lazyOptions);
-const AlertsCorporate=dynamic(()=>import("./AlertsCorporate"),lazyOptions);
-const ImpactModule=dynamic(()=>import("./ImpactModule"),lazyOptions);
-const RadarModule=dynamic(()=>import("./RadarModule"),lazyOptions);
-const BuilderModule=dynamic(()=>import("./BuilderModule"),lazyOptions);
-const DossierDetail=dynamic(()=>import("./DossierDetail"),lazyOptions);
-const TeamWorkspace=dynamic(()=>import("./TeamWorkspace"),lazyOptions);
+const DossiersCorporate=dynamic(()=>import("./DossiersCorporate"),{ssr:false,loading:()=> <div className="muted" style={{padding:24}}>Chargement du module…</div>});
+const VeilleCorporate=dynamic(()=>import("./VeilleCorporate"),{ssr:false,loading:()=> <div className="muted" style={{padding:24}}>Chargement du module…</div>});
+const ChangesModule=dynamic(()=>import("./ChangesModule"),{ssr:false,loading:()=> <div className="muted" style={{padding:24}}>Chargement du module…</div>});
+const AlertsCorporate=dynamic(()=>import("./AlertsCorporate"),{ssr:false,loading:()=> <div className="muted" style={{padding:24}}>Chargement du module…</div>});
+const ImpactModule=dynamic(()=>import("./ImpactModule"),{ssr:false,loading:()=> <div className="muted" style={{padding:24}}>Chargement du module…</div>});
+const RadarModule=dynamic(()=>import("./RadarModule"),{ssr:false,loading:()=> <div className="muted" style={{padding:24}}>Chargement du module…</div>});
+const BuilderModule=dynamic(()=>import("./BuilderModule"),{ssr:false,loading:()=> <div className="muted" style={{padding:24}}>Chargement du module…</div>});
+const DossierDetail=dynamic(()=>import("./DossierDetail"),{ssr:false,loading:()=> <div className="muted" style={{padding:24}}>Chargement du module…</div>});
+const TeamWorkspace=dynamic(()=>import("./TeamWorkspace"),{ssr:false,loading:()=> <div className="muted" style={{padding:24}}>Chargement du module…</div>});
 
 type Tab="dashboard"|"dossiers"|"veille"|"changes"|"alerts"|"impact"|"radar"|"builder"|"team";
 type ModuleTarget="impact"|"radar"|"builder";
