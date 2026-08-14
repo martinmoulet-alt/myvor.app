@@ -16,12 +16,14 @@ type WatchItem={
 };
 type Score={score:number;matches:string[];reason:string};
 type Result={id:string;title:string;score:number;status:string;reason:string;change_type?:string|null;change_summary?:string|null};
+type PendingWrite={item:WatchItem;score:Score;status:string;reason:string;payload:Record<string,unknown>};
 
 const H={...corsHeaders,"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"};
-const PAGE_SIZE=400;
+const PAGE_SIZE=200;
+const SOURCE_EXCERPT_CHARS=24000;
 const AUTO_THRESHOLD=.58;
 const REVIEW_THRESHOLD=.36;
-const ENGINE_BASE="myvor-corpus-applicable-v7-secure-generic";
+const ENGINE_BASE="myvor-corpus-applicable-v7-secure-generic-batched";
 const RULE_PREFIX="Corpus applicable v7 —";
 const UUID_RE=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const WEAK=new Set([
@@ -50,7 +52,7 @@ async function fingerprint(d:Dossier){const raw=JSON.stringify({title:d.title,ob
 
 function scoreItem(item:WatchItem,sourceText:string,d:Dossier):Score{
   const title=norm(`${item.title} ${item.nature||""}`);
-  const full=norm(`${item.title} ${item.nature||""} ${sourceText.slice(0,24000)}`);
+  const full=norm(`${item.title} ${item.nature||""} ${sourceText.slice(0,SOURCE_EXCERPT_CHARS)}`);
   const blocked=list(d.watch_excluded_keywords).find(t=>contains(full,t));
   if(blocked)return{score:0,matches:[],reason:`Exclusion détectée : ${blocked}`};
 
@@ -101,7 +103,7 @@ function scoreItem(item:WatchItem,sourceText:string,d:Dossier):Score{
   return{score:0,matches:[],reason:"Aucun signal suffisamment discriminant"};
 }
 
-async function batches(tasks:Array<()=>Promise<void>>,size=12){for(let i=0;i<tasks.length;i+=size)await Promise.all(tasks.slice(i,i+size).map(t=>t()))}
+async function batches(tasks:Array<()=>Promise<void>>,size=10){for(let i=0;i<tasks.length;i+=size)await Promise.all(tasks.slice(i,i+size).map(t=>t()))}
 
 Deno.serve(async(req:Request)=>{
   if(req.method==="OPTIONS")return new Response("ok",{status:200,headers:H});
@@ -169,39 +171,45 @@ Deno.serve(async(req:Request)=>{
     const pending=items.filter(item=>String(existingMap.get(item.id)?.engine||"")!==engine&&!String(item.qualification_reason||"").startsWith("Ignoré manuellement"));
     if(pending.length){
       const ids=pending.map(i=>i.id);
-      const{data:contents,error:ce}=await admin.from("watch_item_content").select("watch_item_id,source_text").in("watch_item_id",ids);
+      const{data:contents,error:ce}=await admin.rpc("get_watch_content_excerpts",{p_organization_id:d.organization_id,p_watch_item_ids:ids,p_max_chars:SOURCE_EXCERPT_CHARS});
       if(ce)return json({error:`Lecture des contenus impossible : ${clip(ce.message,180)}`},500);
       const cm=new Map((contents||[]).map((r:any)=>[String(r.watch_item_id),String(r.source_text||"")]));
-      const writes:Array<()=>Promise<void>>=[];
+      const pageWrites:PendingWrite[]=[];
 
       for(const item of pending){
         if(item.organization_id!==d.organization_id)continue;
         processed++;
-        const s=scoreItem(item,cm.get(item.id)||"",d);
-        const reason=[s.reason,delta(item)].filter(Boolean).join(". ");
+        const score=scoreItem(item,cm.get(item.id)||"",d);
+        const reason=[score.reason,delta(item)].filter(Boolean).join(". ");
         const now=new Date().toISOString();
-        const status=s.score>=AUTO_THRESHOLD?"linked":s.score>=REVIEW_THRESHOLD?"suggested":"rejected";
+        const status=score.score>=AUTO_THRESHOLD?"linked":score.score>=REVIEW_THRESHOLD?"suggested":"rejected";
+        const payload={watch_item_id:item.id,dossier_id:d.id,organization_id:d.organization_id,score:Number(score.score.toFixed(3)),status,reason:clip(`${RULE_PREFIX}${status}. ${reason}. Signaux : ${score.matches.join(", ")}`,1000),engine,updated_at:now};
+        pageWrites.push({item,score,status,reason,payload});
         if(status!=="rejected"){
           relevant++;
           if(status==="linked")linked++;else suggested++;
-          results.push({id:item.id,title:item.title,score:s.score,status,reason,change_type:item.change_type,change_summary:item.change_summary});
+          results.push({id:item.id,title:item.title,score:score.score,status,reason,change_type:item.change_type,change_summary:item.change_summary});
         }
+      }
 
-        writes.push(async()=>{
-          const payload={watch_item_id:item.id,dossier_id:d.id,organization_id:d.organization_id,score:Number(s.score.toFixed(3)),status,reason:clip(`${RULE_PREFIX}${status}. ${reason}. Signaux : ${s.matches.join(", ")}`,1000),engine,updated_at:now};
-          const{error}=await admin.from("watch_item_dossier_links").upsert(payload,{onConflict:"watch_item_id,dossier_id"});
-          if(error)throw error;
+      if(pageWrites.length){
+        const{error:upsertError}=await admin.from("watch_item_dossier_links").upsert(pageWrites.map(w=>w.payload),{onConflict:"watch_item_id,dossier_id"});
+        if(upsertError)return json({error:`Écriture du corpus impossible : ${clip(upsertError.message,180)}`},500);
 
-          if(status==="linked"&&!item.dossier_id){
-            const{error:updateError}=await admin.from("watch_items").update({dossier_id:d.id,qualification_confidence:Number(s.score.toFixed(3)),qualification_reason:payload.reason,qualified_at:now}).eq("id",item.id).eq("organization_id",d.organization_id).is("dossier_id",null);
+        const updateTasks=pageWrites.filter(w=>w.status!=="rejected").map(w=>async()=>{
+          const now=String(w.payload.updated_at||new Date().toISOString());
+          const confidence=Number(w.payload.score)||0;
+          const qreason=String(w.payload.reason||"");
+          if(w.status==="linked"&&!w.item.dossier_id){
+            const{error:updateError}=await admin.from("watch_items").update({dossier_id:d.id,qualification_confidence:confidence,qualification_reason:qreason,qualified_at:now}).eq("id",w.item.id).eq("organization_id",d.organization_id).is("dossier_id",null);
             if(updateError)throw updateError;
-          }else if(status==="suggested"&&!item.dossier_id&&!item.suggested_dossier_id){
-            const{error:updateError}=await admin.from("watch_items").update({suggested_dossier_id:d.id,qualification_confidence:Number(s.score.toFixed(3)),qualification_reason:payload.reason,qualified_at:now}).eq("id",item.id).eq("organization_id",d.organization_id).is("dossier_id",null).is("suggested_dossier_id",null);
+          }else if(w.status==="suggested"&&!w.item.dossier_id&&!w.item.suggested_dossier_id){
+            const{error:updateError}=await admin.from("watch_items").update({suggested_dossier_id:d.id,qualification_confidence:confidence,qualification_reason:qreason,qualified_at:now}).eq("id",w.item.id).eq("organization_id",d.organization_id).is("dossier_id",null).is("suggested_dossier_id",null);
             if(updateError)throw updateError;
           }
         });
+        try{await batches(updateTasks)}catch(error:any){return json({error:`Qualification du corpus impossible : ${clip(error?.message||error,180)}`},500)}
       }
-      try{await batches(writes)}catch(error:any){return json({error:`Écriture du corpus impossible : ${clip(error?.message||error,180)}`},500)}
     }
 
     if(items.length<PAGE_SIZE)break;
