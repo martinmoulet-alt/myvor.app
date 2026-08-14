@@ -8,7 +8,7 @@ type ImportanceLevel="Critique"|"Majeur"|"Secondaire"|"Contexte";
 type CorpusItem={
   id:string;
   title:string;
-  nature?:string|null;
+  nature:string;
   source_url:string;
   dossier_id:string|null;
   urgency:string;
