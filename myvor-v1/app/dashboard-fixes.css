@@ -3,6 +3,8 @@
 
 /* Navigation principale : Radar & War Zone reste un module contextuel du workflow dossier. */
 .sidebar>.navbtn:nth-child(6),.mobile-menu-nav>button:nth-child(6){display:none}
+/* Score d’urgence reste toujours visible dans la navigation principale. */
+.sidebar>.navbtn:nth-child(5),.mobile-menu-nav>button:nth-child(5){display:flex!important}
 
 .corp-dashboard{gap:18px}
 .corp-head,.today-panel,.corp-kpis,.corp-dashboard-grid{width:100%}
