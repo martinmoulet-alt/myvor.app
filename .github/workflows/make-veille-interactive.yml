@@ -1,0 +1,105 @@
+name: Make veille interactive
+
+on:
+  push:
+    paths:
+      - '.github/workflows/make-veille-interactive.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: myvor-v1/package-lock.json
+      - name: Add interactive veille workflow
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          veille = Path('myvor-v1/app/VeilleCorporate.tsx')
+          text = veille.read_text()
+
+          replacements = [
+            (
+              'import {ArrowRight,Building2,CalendarDays,CheckCircle2,FileText,GitBranch,RefreshCw,Search} from "lucide-react";',
+              'import {AlertTriangle,ArrowRight,Building2,CalendarDays,CheckCircle2,Eye,FileText,GitBranch,Radar,RefreshCw,Search,Sparkles,X} from "lucide-react";'
+            ),
+            (
+              'export default function VeilleCorporate({items,dossiers,add,refresh,refreshing,refreshMessage,link}:{items:Watch[];dossiers:Dossier[];add:()=>void;refresh:()=>void;refreshing:boolean;refreshMessage:string;link:(watchId:string,dossierId:string|null)=>Promise<void>|void}){',
+              'export default function VeilleCorporate({items,dossiers,add,refresh,refreshing,refreshMessage,link,onOpenImpact,onOpenRadar,onOpenBuilder}:{items:Watch[];dossiers:Dossier[];add:()=>void;refresh:()=>void;refreshing:boolean;refreshMessage:string;link:(watchId:string,dossierId:string|null)=>Promise<void>|void;onOpenImpact?:(dossierId:string,watchIds:string[])=>void;onOpenRadar?:(dossierId:string,watchIds:string[])=>void;onOpenBuilder?:(dossierId:string,watchIds:string[])=>void}){'
+            ),
+            (
+              '  const[focusId,setFocusId]=useState<string|null>(null);',
+              '  const[focusId,setFocusId]=useState<string|null>(null);\n  const[selectedId,setSelectedId]=useState<string|null>(null);'
+            ),
+            (
+              '  function baselineItems(item:Watch){const ids=item.change_baseline_ids||[];return ids.map(id=>items.find(candidate=>candidate.id===id)).filter((candidate):candidate is Watch=>!!candidate);}\n',
+              '''  function baselineItems(item:Watch){const ids=item.change_baseline_ids||[];return ids.map(id=>items.find(candidate=>candidate.id===id)).filter((candidate):candidate is Watch=>!!candidate);}\n  function toggleDetail(item:Watch){setSelectedId(current=>current===item.id?null:item.id);}\n  function moduleActions(item:Watch){if(!item.dossier_id)return null;return <><button type="button" className="myvor-watch-link" onClick={()=>onOpenImpact?.(item.dossier_id!,[item.id])}><AlertTriangle size={14}/>Score d’urgence</button><button type="button" className="myvor-watch-link" onClick={()=>onOpenRadar?.(item.dossier_id!,[item.id])}><Radar size={14}/>Radar</button><button type="button" className="myvor-watch-link" onClick={()=>onOpenBuilder?.(item.dossier_id!,[item.id])}><Sparkles size={14}/>Note Builder</button></>;}\n  function detailPanel(item:Watch){if(selectedId!==item.id)return null;const dossier=dossiers.find(d=>d.id===(item.dossier_id||item.suggested_dossier_id));const baselines=baselineItems(item);return <div className="myvor-watch-detail"><div className="myvor-watch-detail-head"><div><small>Détail du signal</small><b>{dossier?`${dossier.client} — ${dossier.title}`:"Aucun dossier validé"}</b></div><button type="button" onClick={()=>setSelectedId(null)} aria-label="Fermer le détail"><X size={15}/></button></div><div className="myvor-watch-detail-grid"><div><small>Pourquoi Myvor le retient</small><p>{item.link_justification?.summary||item.qualification_reason||"Aucune justification détaillée disponible."}</p></div><div><small>Ce qui change</small><p>{item.change_summary||item.link_justification?.consequence||"Aucun changement consolidé pour ce texte."}</p></div><div><small>Chaîne normative</small><p>{baselines.length?`${baselines.length} texte(s) antérieur(s) relié(s) à cette évolution.`:"Aucun texte antérieur relié pour le moment."}</p></div><div><small>Source</small><p>{item.source_name||sourceLabel(item.source_url)} · {publicationDate(item)}</p></div></div><div className="myvor-watch-actions">{item.source_url&&<a className="myvor-watch-link" href={item.source_url} target="_blank" rel="noreferrer">Lire la source<ArrowRight size={14}/></a>}{moduleActions(item)}</div></div>;}\n'''
+            ),
+            (
+              '<div className="myvor-watch-actions">{suggestion&&<button className="myvor-watch-primary" onClick={()=>void acceptSuggestion(suggestion)}><CheckCircle2 size={15}/>Rattacher</button>}<label className="myvor-watch-dossier-select"><span>{suggestion?"Autre dossier":"Rattacher à"}</span><select defaultValue="" onChange={e=>{const value=e.target.value;if(value)void manualLink(item.id,value);}}><option value="">Sélectionner…</option>{dossiers.map(d=><option key={d.id} value={d.id}>{d.client} — {d.title}</option>)}</select></label><button className="myvor-watch-ignore" onClick={()=>void ignoreSuggestion(item.id)}>Ignorer</button>{sourceLink(item)}</div>\n    </article>;',
+              '<div className="myvor-watch-actions">{suggestion&&<button className="myvor-watch-primary" onClick={()=>void acceptSuggestion(suggestion)}><CheckCircle2 size={15}/>Rattacher</button>}<label className="myvor-watch-dossier-select"><span>{suggestion?"Autre dossier":"Rattacher à"}</span><select defaultValue="" onChange={e=>{const value=e.target.value;if(value)void manualLink(item.id,value);}}><option value="">Sélectionner…</option>{dossiers.map(d=><option key={d.id} value={d.id}>{d.client} — {d.title}</option>)}</select></label><button className="myvor-watch-ignore" onClick={()=>void ignoreSuggestion(item.id)}>Ignorer</button>{sourceLink(item)}<button type="button" className="myvor-watch-link" onClick={()=>toggleDetail(item)}><Eye size={14}/>{selectedId===item.id?"Fermer":"Détails"}</button></div>{detailPanel(item)}\n    </article>;'
+            ),
+            (
+              '<div className="myvor-watch-actions"><label className="myvor-watch-dossier-select"><span>Modifier le dossier</span><select value={item.dossier_id||""} onChange={e=>void manualLink(item.id,e.target.value||null)}><option value="">Non rattaché</option>{dossiers.map(d=><option key={d.id} value={d.id}>{d.client} — {d.title}</option>)}</select></label>{sourceLink(item,"Lire la source")}</div></article>;}',
+              '<div className="myvor-watch-actions"><label className="myvor-watch-dossier-select"><span>Modifier le dossier</span><select value={item.dossier_id||""} onChange={e=>void manualLink(item.id,e.target.value||null)}><option value="">Non rattaché</option>{dossiers.map(d=><option key={d.id} value={d.id}>{d.client} — {d.title}</option>)}</select></label>{sourceLink(item,"Lire la source")}{moduleActions(item)}<button type="button" className="myvor-watch-link" onClick={()=>toggleDetail(item)}><Eye size={14}/>{selectedId===item.id?"Fermer":"Détails"}</button></div>{detailPanel(item)}</article>;}'
+            ),
+            (
+              '<div className="myvor-watch-actions">{sourceLink(item,"Voir le texte")}</div></article>;}',
+              '<div className="myvor-watch-actions">{sourceLink(item,"Voir le texte")}{moduleActions(item)}<button type="button" className="myvor-watch-link" onClick={()=>toggleDetail(item)}><Eye size={14}/>{selectedId===item.id?"Fermer":"Détails"}</button></div>{detailPanel(item)}</article>;}'
+            ),
+            (
+              '<div className="myvor-watch-actions">{sourceLink(item,"Ouvrir le texte actuel")}</div></article>;}',
+              '<div className="myvor-watch-actions">{sourceLink(item,"Ouvrir le texte actuel")}{moduleActions(item)}<button type="button" className="myvor-watch-link" onClick={()=>toggleDetail(item)}><Eye size={14}/>{selectedId===item.id?"Fermer":"Détails"}</button></div>{detailPanel(item)}</article>;}'
+            ),
+            (
+              '<div className={styles.footer}>{item.source_url?<a className={styles.source} href={item.source_url} target="_blank" rel="noreferrer">Lire le texte original</a>:<span/>}<span className="myvor-source-footer"><span className={`myvor-source-tier myvor-source-tier-${tier}`} title={`Priorité ${tier} — ${sourceTierLabel(tier)}`}>P{tier}</span><span className={styles.count}>{sourceName}</span></span></div>\n    </article>;',
+              '<div className={styles.footer}>{item.source_url?<a className={styles.source} href={item.source_url} target="_blank" rel="noreferrer">Lire le texte original</a>:<span/>}<button type="button" className="myvor-watch-table-detail" onClick={()=>toggleDetail(item)}><Eye size={13}/>{selectedId===item.id?"Fermer":"Détails"}</button><span className="myvor-source-footer"><span className={`myvor-source-tier myvor-source-tier-${tier}`} title={`Priorité ${tier} — ${sourceTierLabel(tier)}`}>P{tier}</span><span className={styles.count}>{sourceName}</span></span></div>{detailPanel(item)}\n    </article>;'
+            ),
+            (
+              '.myvor-watch-chain-consequence{margin:0;color:#aebed0;font-size:11px;line-height:1.5}.myvor-source-legend',
+              '.myvor-watch-chain-consequence{margin:0;color:#aebed0;font-size:11px;line-height:1.5}.myvor-watch-detail{grid-column:1/-1;border:1px solid #29445f;background:#06172b;border-radius:11px;padding:12px;display:grid;gap:11px}.myvor-watch-detail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.myvor-watch-detail-head small,.myvor-watch-detail-grid small{display:block;text-transform:uppercase;letter-spacing:.06em;color:#8196ac;font-size:8px;font-weight:900}.myvor-watch-detail-head b{display:block;color:#eef4fb;font-size:11px;margin-top:3px}.myvor-watch-detail-head button{width:31px;height:31px;border:1px solid #29445f;border-radius:8px;background:#07192f;color:#c6d3e1;display:grid;place-items:center}.myvor-watch-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.myvor-watch-detail-grid>div{border:1px solid #183853;background:#071c33;border-radius:9px;padding:10px}.myvor-watch-detail-grid p{margin:4px 0 0;color:#b6c5d4;font-size:10px;line-height:1.45}.myvor-watch-table-detail{border:0;background:transparent;color:#8fb7ff;padding:0;font-size:10px;font-weight:850;display:inline-flex;align-items:center;gap:5px}.myvor-watch-table-detail:hover{color:#f3bd3e}.myvor-source-legend'
+            ),
+            (
+              '@media(max-width:850px){.myvor-watch-tabs',
+              '@media(max-width:850px){.myvor-watch-detail-grid{grid-template-columns:1fr}.myvor-watch-tabs'
+            )
+          ]
+
+          for old, new in replacements:
+            if old not in text:
+              raise SystemExit('Expected Veille pattern not found: ' + old[:140])
+            text = text.replace(old, new, 1)
+
+          veille.write_text(text)
+
+          page = Path('myvor-v1/app/page.tsx')
+          text = page.read_text()
+          old = 'tab==="veille"?<VeilleCorporate items={watch} dossiers={dossiers} add={()=>setModal("watch")} refresh={refreshWatchData} refreshing={syncing} refreshMessage={syncMessage} link={linkWatchToDossier}/>'
+          new = 'tab==="veille"?<VeilleCorporate items={watch} dossiers={dossiers} add={()=>setModal("watch")} refresh={refreshWatchData} refreshing={syncing} refreshMessage={syncMessage} link={linkWatchToDossier} onOpenImpact={(dossierId,watchIds)=>launchModule("impact",dossierId,watchIds)} onOpenRadar={(dossierId,watchIds)=>launchModule("radar",dossierId,watchIds)} onOpenBuilder={(dossierId,watchIds)=>launchModule("builder",dossierId,watchIds)}/>'
+          if old not in text:
+            raise SystemExit('Expected page Veille route not found')
+          page.write_text(text.replace(old,new,1))
+          PY
+      - name: Install dependencies
+        working-directory: myvor-v1
+        run: npm ci
+      - name: Build
+        working-directory: myvor-v1
+        run: npm run build
+      - name: Commit interactive veille
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add myvor-v1/app/VeilleCorporate.tsx myvor-v1/app/page.tsx
+          git commit -m 'Make veille workflow interactive'
+          git push
