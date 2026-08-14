@@ -1,4 +1,4 @@
 Force Netlify rebuild for Myvor production deployment.
-Source commit: 5461ac84fba01dbd3e3653a4a2a4d71a37eb8c76
-Triggered: 2026-08-14 14:49 Europe/Paris
-Reason: rebuild Myvor V1 after restoring the root Netlify base directory and Next.js build configuration.
+Source commit: aaab4e6dd1f0deb86dc27fff4900a4d26e51bf2a
+Triggered: 2026-08-14 15:37 Europe/Paris
+Reason: publish the corrected Dossiers clients cockpit so it reloads authoritative dossier data from Supabase instead of stale client state.
