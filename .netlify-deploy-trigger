@@ -1,4 +1,4 @@
 Force Netlify rebuild for Myvor production deployment.
-Source commit: e4926b32b787b2650a25b21c353e943fefddadee
-Triggered: 2026-08-14 10:45 Europe/Paris
-Reason: redeploy current Myvor main state with Score d’urgence restored in the primary sidebar.
+Source commit: 5461ac84fba01dbd3e3653a4a2a4d71a37eb8c76
+Triggered: 2026-08-14 14:49 Europe/Paris
+Reason: rebuild Myvor V1 after restoring the root Netlify base directory and Next.js build configuration.
