@@ -1,0 +1,36 @@
+name: Apply focused veille todo scope
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-veille-todo-scope.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Restrict A traiter to qualified dossier matches
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('myvor-v1/app/VeilleCorporate.tsx')
+          text = path.read_text()
+          old = '  const todoItems=useMemo(()=>items.filter(item=>!item.dossier_id&&!isIgnored(item)&&!ignored.includes(item.id)).sort((a,b)=>publicationTime(b)-publicationTime(a)),[items,ignored]);'
+          new = '  const todoItems=useMemo(()=>items.filter(item=>!item.dossier_id&&!!item.suggested_dossier_id&&dossiers.some(dossier=>dossier.id===item.suggested_dossier_id)&&Number(item.qualification_confidence)>=REVIEW_THRESHOLD&&Number(item.qualification_confidence)<AUTO_LINK_THRESHOLD&&!isIgnored(item)&&!ignored.includes(item.id)).sort((a,b)=>publicationTime(b)-publicationTime(a)),[items,dossiers,ignored]);'
+          if old not in text:
+              raise SystemExit('Expected todoItems definition not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Commit change
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add myvor-v1/app/VeilleCorporate.tsx
+          git commit -m 'Restrict veille A traiter to dossier matches'
+          git push
