@@ -12,6 +12,7 @@ type PyramidItem=Watch&{confidence:number;reason:string;linkedToCurrent:boolean;
 
 const RELEVANCE_THRESHOLD=.50;
 function publicationTime(item:Watch){const value=item.published_at||item.created_at;const timestamp=Date.parse(value);return Number.isFinite(timestamp)?timestamp:0;}
+function sourceLabel(url:string){try{const host=new URL(url).hostname.replace(/^www\./,"");if(host.includes("legifrance.gouv.fr"))return "Légifrance — Journal officiel";if(host.includes("eur-lex.europa.eu"))return "EUR-Lex";if(host.includes("assemblee-nationale.fr"))return "Assemblée nationale";if(host.includes("senat.fr"))return "Sénat";return host||"Source officielle";}catch{return "Source officielle";}}
 
 export default function VeilleCorporate({items,dossiers,refresh,refreshing,refreshMessage}:{items:Watch[];dossiers:Dossier[];add:()=>void;refresh:()=>void;refreshing:boolean;refreshMessage:string;link:(watchId:string,dossierId:string|null)=>Promise<void>|void}){
   const [selectedId,setSelectedId]=useState("");
@@ -40,7 +41,7 @@ export default function VeilleCorporate({items,dossiers,refresh,refreshing,refre
       const {data,error}=await supabase.functions.invoke("scan-dossier-history",{body:{dossier_id:dossierId}});
       if(error)throw error;
       const results=Array.isArray(data?.results)?data.results:[];
-      const next:Assignment[]=results.map((result:any)=>({id:String(result.id),score:Number(result.score)||0,reason:String(result.reason||"Correspondance détectée.")})).filter(result=>result.score>=RELEVANCE_THRESHOLD);
+      const next:Assignment[]=results.map((result:any)=>({id:String(result.id),score:Number(result.score)||0,reason:String(result.reason||"Correspondance détectée.")})).filter((result:Assignment)=>result.score>=RELEVANCE_THRESHOLD);
       setAssignments(next);
       setMessage(next.length?`${next.length} texte(s) priorisé(s) pour ce dossier.`:"Aucun texte applicable détecté pour ce dossier.");
     }catch(error:any){
@@ -59,7 +60,8 @@ export default function VeilleCorporate({items,dossiers,refresh,refreshing,refre
   const pyramidItems=useMemo(()=>assignments.map(result=>{
     const item=items.find(candidate=>candidate.id===result.id);
     if(!item)return null;
-    return {...item,confidence:result.score,reason:result.reason,linkedToCurrent:item.dossier_id===selectedId,linkedElsewhere:!!item.dossier_id&&item.dossier_id!==selectedId} as PyramidItem;
+    const sourceName=item.source_name||sourceLabel(item.source_url);
+    return {...item,source_name:sourceName,confidence:result.score,reason:result.reason,linkedToCurrent:item.dossier_id===selectedId,linkedElsewhere:!!item.dossier_id&&item.dossier_id!==selectedId} as PyramidItem;
   }).filter((item):item is PyramidItem=>!!item).sort((a,b)=>b.confidence-a.confidence||publicationTime(b)-publicationTime(a)),[assignments,items,selectedId]);
 
   function openWatch(item:Watch){
