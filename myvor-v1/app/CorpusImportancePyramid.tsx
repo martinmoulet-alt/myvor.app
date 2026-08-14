@@ -49,9 +49,9 @@ export function classifyCorpusImportance(item:CorpusItem):Pick<Classified,"impor
 }
 
 export default function CorpusImportancePyramid({items,onOpen}:{items:CorpusItem[];onOpen:(item:CorpusItem)=>void}){
-  const classified=useMemo(()=>items.map(item=>({...item,...classifyCorpusImportance(item)})).sort((a,b)=>b.rank-a.rank||b.confidence-a.confidence),[items]);
+  const classified=useMemo<Classified[]>(()=>items.map(item=>({...item,...classifyCorpusImportance(item)})).sort((a,b)=>b.rank-a.rank||b.confidence-a.confidence),[items]);
   const [open,setOpen]=useState<ImportanceLevel|null>("Critique");
-  const grouped=useMemo(()=>new Map(LEVELS.map(([level])=>[level,classified.filter(item=>item.importance===level)])),[classified]);
+  const grouped=useMemo<Map<ImportanceLevel,Classified[]>>(()=>new Map(LEVELS.map(([level])=>[level,classified.filter(item=>item.importance===level)] as [ImportanceLevel,Classified[]])),[classified]);
 
   return <div className="corpus-pyramid-wrap">
     <div className="corpus-pyramid" aria-label="Pyramide d’importance du corpus applicable">
