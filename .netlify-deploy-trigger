@@ -1,4 +1,4 @@
 Force Netlify rebuild for Myvor production deployment.
-Source commit: aaab4e6dd1f0deb86dc27fff4900a4d26e51bf2a
-Triggered: 2026-08-14 15:37 Europe/Paris
-Reason: publish the corrected Dossiers clients cockpit so it reloads authoritative dossier data from Supabase instead of stale client state.
+Source commit: eb8be2a72f755e1f749bd281ff8b527e7899f7d8
+Triggered: 2026-08-14 15:42 Europe/Paris
+Reason: publish the Myvor yellow-accent visibility polish for the Dossiers clients cockpit without changing data or functionality.
