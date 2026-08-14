@@ -9,9 +9,8 @@ function read(relative){
   return fs.readFileSync(path.join(root,relative),'utf8');
 }
 
-test('AI edge functions require authenticated quota checks',()=>{
+test('user-facing AI edge functions require authenticated quota checks',()=>{
   for(const file of [
-    'supabase/functions/dossier-profile/index.ts',
     'supabase/functions/impact-analysis/index.ts',
     'supabase/functions/note-builder/index.ts',
   ]){
@@ -22,9 +21,18 @@ test('AI edge functions require authenticated quota checks',()=>{
   }
 });
 
+test('dossier profile sync bridge stays authenticated and does not call OpenAI directly',()=>{
+  const file='supabase/functions/dossier-profile/index.ts';
+  const source=read(file);
+  assert.match(source,/authorization/i,`${file} must validate Authorization`);
+  assert.match(source,/auth\.getUser\s*\(/,`${file} must validate the authenticated user`);
+  assert.doesNotMatch(source,/api\.openai\.com/i,`${file} must remain a non-AI synchronization bridge`);
+  assert.doesNotMatch(source,/OPENAI_API_KEY/,`${file} must not consume OpenAI directly`);
+  assert.doesNotMatch(source,/SUPABASE_SERVICE_ROLE_KEY/,`${file} must not depend on a service role secret`);
+});
+
 test('OpenAI requests are configured not to persist prompts',()=>{
   for(const file of [
-    'supabase/functions/dossier-profile/index.ts',
     'supabase/functions/impact-analysis/index.ts',
     'supabase/functions/note-builder/index.ts',
   ]){
