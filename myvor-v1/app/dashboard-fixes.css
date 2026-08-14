@@ -1,10 +1,9 @@
 .topbar{padding-top:env(safe-area-inset-top);height:calc(68px + env(safe-area-inset-top));min-height:calc(68px + env(safe-area-inset-top))}
 .shell{min-height:calc(100vh - 68px - env(safe-area-inset-top))}
 
-/* Navigation principale : Radar & War Zone reste un module contextuel du workflow dossier. */
-.sidebar>.navbtn:nth-child(6),.mobile-menu-nav>button:nth-child(6){display:none}
-/* Score d’urgence reste toujours visible dans la navigation principale. */
-.sidebar>.navbtn:nth-child(5),.mobile-menu-nav>button:nth-child(5){display:flex!important}
+/* Navigation principale : Score d’urgence ET Radar & War Zone restent visibles. */
+.sidebar>.navbtn:nth-child(5),.mobile-menu-nav>button:nth-child(5),
+.sidebar>.navbtn:nth-child(6),.mobile-menu-nav>button:nth-child(6){display:flex!important}
 
 .corp-dashboard{gap:18px}
 .corp-head,.today-panel,.corp-kpis,.corp-dashboard-grid{width:100%}
