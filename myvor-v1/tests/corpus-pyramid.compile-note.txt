@@ -1,0 +1,1 @@
+La validation automatique est couverte par corpus-pyramid.test.cjs. Le diff final doit rester limité à DossierDetail.tsx, CorpusImportancePyramid.tsx et ce test.
