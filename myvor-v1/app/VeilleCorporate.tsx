@@ -11,6 +11,7 @@ type Assignment={id:string;score:number;reason:string};
 type PyramidItem=Watch&{confidence:number;reason:string;linkedToCurrent:boolean;linkedElsewhere:boolean};
 
 const RELEVANCE_THRESHOLD=.50;
+function publicationTime(item:Watch){const value=item.published_at||item.created_at;const timestamp=Date.parse(value);return Number.isFinite(timestamp)?timestamp:0;}
 
 export default function VeilleCorporate({items,dossiers,refresh,refreshing,refreshMessage}:{items:Watch[];dossiers:Dossier[];add:()=>void;refresh:()=>void;refreshing:boolean;refreshMessage:string;link:(watchId:string,dossierId:string|null)=>Promise<void>|void}){
   const [selectedId,setSelectedId]=useState("");
@@ -59,7 +60,7 @@ export default function VeilleCorporate({items,dossiers,refresh,refreshing,refre
     const item=items.find(candidate=>candidate.id===result.id);
     if(!item)return null;
     return {...item,confidence:result.score,reason:result.reason,linkedToCurrent:item.dossier_id===selectedId,linkedElsewhere:!!item.dossier_id&&item.dossier_id!==selectedId} as PyramidItem;
-  }).filter((item):item is PyramidItem=>!!item),[assignments,items,selectedId]);
+  }).filter((item):item is PyramidItem=>!!item).sort((a,b)=>b.confidence-a.confidence||publicationTime(b)-publicationTime(a)),[assignments,items,selectedId]);
 
   function openWatch(item:Watch){
     if(item.source_url){window.open(item.source_url,"_blank","noopener,noreferrer");return;}
