@@ -1,79 +1,15 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import {createClient} from "npm:@supabase/supabase-js@2.111.0";
 
-const corsHeaders={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type"};
-
-type Dossier={client:string;title:string;objective:string;context?:string;watch_keywords?:string[];watch_priority_phrases?:string[];watch_excluded_keywords?:string[]};
-type WatchItem={title:string;nature?:string;urgency?:string;source_url?:string};
-
-const PROFILE_SCHEMA={type:"object",additionalProperties:false,properties:{sector:{type:"string"},activity:{type:"string"},strategic_issues:{type:"array",items:{type:"string"}},risks_to_avoid:{type:"array",items:{type:"string"}},opportunities:{type:"array",items:{type:"string"}},client_position:{type:"string"},key_actors:{type:"array",items:{type:"string"}},watch_topics:{type:"array",items:{type:"string"}},watch_subtopics:{type:"array",items:{type:"string"}},reference_texts:{type:"array",items:{type:"string"}},key_deadlines:{type:"array",items:{type:"string"}},internal_notes:{type:"string"}},required:["sector","activity","strategic_issues","risks_to_avoid","opportunities","client_position","key_actors","watch_topics","watch_subtopics","reference_texts","key_deadlines","internal_notes"]};
-
-function json(body:unknown,status=200){return new Response(JSON.stringify(body),{status,headers:{...corsHeaders,"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}});}
-function clip(value:unknown,max:number){return String(value??"").normalize("NFKC").slice(0,max).trim();}
-function cleanList(value:any,max=12){return Array.isArray(value)?value.map((x:any)=>clip(x,260)).filter(Boolean).slice(0,max):[];}
-function cleanActors(value:any){const blocked=/^(juridique|marketing|data|rh|communication|conformité|conformite)$/i;return cleanList(value,10).map(item=>item.replace(/\s*,\s*/g," et ").replace(/\s+/g," ").trim()).filter(item=>item&&!blocked.test(item)&&!/^services internes?/i.test(item)).slice(0,8);}
-function outputText(payload:any){if(typeof payload?.output_text==="string")return payload.output_text;return(payload?.output||[]).flatMap((x:any)=>x?.content||[]).map((x:any)=>x?.text||"").join("");}
-function parseJsonObject(raw:unknown){let text=String(raw??"").trim();if(!text)return null;text=text.replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/i,"").trim();try{const parsed=JSON.parse(text);if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed))return parsed;}catch{}const first=text.indexOf("{"),last=text.lastIndexOf("}");if(first>=0&&last>first){try{const parsed=JSON.parse(text.slice(first,last+1));if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed))return parsed;}catch{}}return null;}
-
-async function requireAuthenticatedQuota(req:Request){
-  const authorization=req.headers.get("authorization")||"";
-  if(!authorization.toLowerCase().startsWith("bearer "))return json({error:"Session Myvor requise."},401);
-  const supabaseUrl=(Deno.env.get("SUPABASE_URL")||"").replace(/\/$/,"");
-  const anonKey=Deno.env.get("SUPABASE_ANON_KEY")||"";
-  if(!supabaseUrl||!anonKey)return json({error:"La sécurité Supabase de Myvor n’est pas configurée."},503);
-  try{
-    const userResponse=await fetch(`${supabaseUrl}/auth/v1/user`,{headers:{apikey:anonKey,Authorization:authorization}});
-    if(!userResponse.ok)return json({error:"Session Myvor invalide ou expirée."},401);
-    const user=await userResponse.json().catch(()=>null);
-    if(!user?.id)return json({error:"Session Myvor invalide ou expirée."},401);
-    const quotaResponse=await fetch(`${supabaseUrl}/rest/v1/rpc/consume_ai_quota`,{method:"POST",headers:{apikey:anonKey,Authorization:authorization,"Content-Type":"application/json"},body:JSON.stringify({p_feature:"dossier-profile"})});
-    if(!quotaResponse.ok)return json({error:"Impossible de vérifier le quota IA Myvor."},503);
-    const allowed=await quotaResponse.json().catch(()=>false);
-    if(allowed!==true)return json({error:"Trop de générations IA en peu de temps. Réessaie dans quelques minutes."},429);
-    return null;
-  }catch{return json({error:"Impossible de vérifier la session Myvor."},503);}
-}
-
-Deno.serve(async(req)=>{
-  if(req.method==="OPTIONS")return new Response("ok",{headers:corsHeaders});
-  if(req.method!=="POST")return json({error:"Méthode non autorisée."},405);
-  const authError=await requireAuthenticatedQuota(req);if(authError)return authError;
-
-  const body=await req.json().catch(()=>null);
-  const dossier:Dossier|null=body?.dossier||null;
-  const items:WatchItem[]=Array.isArray(body?.items)?body.items.slice(0,20):[];
-  if(!dossier?.title||!dossier?.objective)return json({error:"Le dossier doit avoir au moins un titre et un objectif."},400);
-
-  const apiKey=(Deno.env.get("OPENAI_API_KEY")||"").trim();
-  if(!apiKey)return json({error:"Le secret OPENAI_API_KEY n’est pas configuré dans Supabase."},503);
-
-  const instructions=[
-    "Tu es Myvor, assistant expert en affaires publiques françaises et européennes.",
-    "Pré-remplis la fiche stratégique du dossier client uniquement à partir des informations fournies.",
-    "Ne présente jamais comme certain un élément qui n'est pas établi par le dossier ou les titres de veille.",
-    "Tu peux proposer des catégories métier raisonnables, mais formule-les de manière générique et exploitable.",
-    "N'invente aucun nom de personne, aucune échéance précise, aucun texte juridique précis ni aucune position politique non fournie.",
-    "Pour key_actors, retourne uniquement des institutions, autorités, organisations ou catégories d'acteurs EXTERNES utiles à une stratégie d'affaires publiques.",
-    "Chaque élément de key_actors doit désigner UNE seule cible identifiable.",
-    "N'inclus jamais les services internes du client dans key_actors.",
-    "Les textes de référence et échéances restent vides si aucun élément fiable n'est fourni.",
-    "Tous les champs du format de sortie doivent être présents. Utilise une chaîne vide ou une liste vide si l'information manque.",
-    "Maximum 5 éléments par liste et une phrase courte par élément. Réponds en français."
-  ].join("\n");
-
-  const input=JSON.stringify({
-    dossier:{client:clip(dossier.client,300),title:clip(dossier.title,300),objective:clip(dossier.objective,1500),context:clip(dossier.context,2500),watch_keywords:cleanList(dossier.watch_keywords,30),watch_priority_phrases:cleanList(dossier.watch_priority_phrases,20),watch_excluded_keywords:cleanList(dossier.watch_excluded_keywords,20)},
-    textes_deja_lies:items.map(item=>({title:clip(item.title,500),nature:clip(item.nature,120),urgency:clip(item.urgency,80),source_url:clip(item.source_url,700)}))
-  });
-
-  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),35000);
-  try{
-    const model=Deno.env.get("OPENAI_DOSSIER_MODEL")||"gpt-5-mini";
-    const response=await fetch("https://api.openai.com/v1/responses",{method:"POST",signal:controller.signal,headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:JSON.stringify({model,store:false,instructions,input,reasoning:{effort:"low"},max_output_tokens:2600,text:{verbosity:"low",format:{type:"json_schema",name:"myvor_dossier_profile",strict:true,schema:PROFILE_SCHEMA}}})});
-    const raw=await response.text();let payload:any={};try{payload=raw?JSON.parse(raw):{};}catch{return json({error:"Réponse OpenAI illisible."},502);}
-    if(!response.ok)return json({error:`OpenAI ${response.status}: ${clip(payload?.error?.message||raw,300)}`},502);
-    if(payload?.status==="incomplete")return json({error:`Réponse OpenAI incomplète : ${clip(payload?.incomplete_details?.reason||"inconnue",160)}`},502);
-    const profile=parseJsonObject(outputText(payload));
-    if(!profile)return json({error:"La réponse OpenAI structurée n’était pas exploitable."},502);
-    return json({profile:{sector:clip(profile.sector,180),activity:clip(profile.activity,700),strategic_issues:cleanList(profile.strategic_issues),risks_to_avoid:cleanList(profile.risks_to_avoid),opportunities:cleanList(profile.opportunities),client_position:clip(profile.client_position,1200),key_actors:cleanActors(profile.key_actors),watch_topics:cleanList(profile.watch_topics),watch_subtopics:cleanList(profile.watch_subtopics),reference_texts:cleanList(profile.reference_texts),key_deadlines:cleanList(profile.key_deadlines),internal_notes:clip(profile.internal_notes,1600)},engine:"myvor-dossier-profile-ai-v7"});
-  }catch(error:any){if(error?.name==="AbortError")return json({error:"La génération a dépassé 35 secondes. Réessaie."},504);return json({error:`Erreur de génération : ${clip(error?.message||"inconnue",260)}`},500);}finally{clearTimeout(timer);}
-});
+const corsHeaders={"Access-Control-Allow-Origin":"*","Access-Control-Allow-Headers":"authorization, x-client-info, apikey, content-type","Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"};
+type DossierInput={client:string;title:string;objective:string;context?:string;watch_keywords?:string[];watch_priority_phrases?:string[];watch_excluded_keywords?:string[]};
+function json(body:unknown,status=200){return new Response(JSON.stringify(body),{status,headers:corsHeaders});}
+function clip(value:unknown,max:number){return String(value??"").normalize("NFKC").replace(/[\u0000-\u001f\u007f]/g," ").replace(/\s+/g," ").slice(0,max).trim();}
+function sleep(ms:number){return new Promise(resolve=>setTimeout(resolve,ms));}
+function cleanTerm(value:unknown){let text=clip(value,260).replace(/\\+/g,"").trim();text=text.replace(/^["'“”‘’«»]+|["'“”‘’«»]+$/g,"").trim();if(/^i act$/i.test(text))text="AI Act";return text;}
+function cleanList(value:any,max=12){return Array.isArray(value)?Array.from(new Set(value.map(cleanTerm).filter(Boolean))).slice(0,max):[];}
+function profileFromRow(row:any){return{sector:clip(row?.sector,180),activity:clip(row?.activity,700),strategic_issues:cleanList(row?.strategic_issues),risks_to_avoid:cleanList(row?.risks_to_avoid),opportunities:cleanList(row?.opportunities),client_position:clip(row?.client_position,1200),key_actors:cleanList(row?.key_actors,8),watch_topics:cleanList(row?.watch_topics),watch_subtopics:cleanList(row?.watch_subtopics),reference_texts:cleanList(row?.reference_texts),key_deadlines:cleanList(row?.key_deadlines),internal_notes:clip(row?.internal_notes,1600)};}
+function profileReady(row:any){const p=profileFromRow(row);return Boolean(p.sector&&p.activity&&p.risks_to_avoid.length&&p.opportunities.length&&p.key_actors.length&&p.watch_topics.length);}
+function sectorFor(text:string){const t=text.toLowerCase();if(/\b(ai act|intelligence artificielle|numérique|numerique|saas|logiciel|cloud)\b/.test(t))return "Technologie / Services numériques";if(/\b(pfas|pollution|environnement|déchet|dechet|eau|recyclage)\b/.test(t))return "Industrie / Environnement";if(/\b(énergie|energie|électricité|electricite|gaz)\b/.test(t))return "Énergie";if(/\b(logement|immobilier|loyer|bâtiment|batiment)\b/.test(t))return "Immobilier / Logement";if(/\b(médicament|medicament|pharma|santé|sante|hôpital|hopital)\b/.test(t))return "Santé";if(/\b(banque|fintech|paiement|assurance|financier)\b/.test(t))return "Services financiers";if(/\b(transport|mobilité|mobilite|ferroviaire|aviation)\b/.test(t))return "Transport / Mobilité";return "Affaires publiques / Réglementation sectorielle";}
+function fallbackProfile(d:DossierInput){const keywords=cleanList(d.watch_keywords,8),priority=cleanList(d.watch_priority_phrases,6);const all=`${clip(d.title,300)} ${clip(d.objective,1200)} ${clip(d.context,1600)} ${keywords.join(" ")} ${priority.join(" ")}`;const firstContext=clip(d.context,1200).split(/[.!?]\s/).map(x=>x.trim()).find(Boolean)||"";const topics=(priority.length?priority:keywords.length?keywords:[cleanTerm(d.title)]).slice(0,5);const subtopics=keywords.filter(x=>!topics.some(t=>t.toLowerCase()===x.toLowerCase())).slice(0,5);const refs=Array.from(all.matchAll(/\b(?:loi|décret|decret|directive|règlement|reglement|ordonnance)\s+(?:\(UE\)\s*)?(?:n[°o]\s*)?[A-Z0-9./-]*\d[A-Z0-9./-]*/gi)).map(m=>cleanTerm(m[0])).filter(Boolean).slice(0,5);return{sector:sectorFor(all),activity:firstContext||`Activité concernée par le dossier « ${clip(d.title,180)} »`,strategic_issues:[`Déterminer précisément le périmètre des règles applicables au dossier « ${clip(d.title,180)} ».`,"Identifier les obligations nouvelles ou modifiées susceptibles d'affecter l'activité du client.","Anticiper les textes d'application et les échéances de mise en conformité."],risks_to_avoid:["Manquer une évolution normative directement applicable au dossier.","Sous-estimer une obligation de mise en conformité ou son calendrier d'entrée en vigueur.","Fonder une décision sur une interprétation insuffisamment documentée."],opportunities:["Anticiper les évolutions pour adapter la stratégie avant leur entrée en vigueur.","Identifier les marges de contribution ou d'influence sur les textes d'application.","Transformer la conformité réglementaire en avantage opérationnel lorsque cela est pertinent."],client_position:clip(d.objective,1200),key_actors:/\b(ue|européen|europeen|ai act|règlement \(ue\))\b/i.test(all)?["Commission européenne","Autorités nationales de mise en œuvre","Autorité de régulation sectorielle"]:["Ministère ou administration compétente","Parlement et commissions compétentes","Autorité de régulation sectorielle"],watch_topics:topics,watch_subtopics:subtopics,reference_texts:refs,key_deadlines:[],internal_notes:"Pré-remplissage de secours généré à partir des informations du dossier. Les références juridiques précises doivent être consolidées par les sources officielles."};}
+Deno.serve(async(req)=>{if(req.method==="OPTIONS")return new Response("ok",{headers:corsHeaders});if(req.method!=="POST")return json({error:"Méthode non autorisée."},405);const authorization=req.headers.get("authorization")||"";if(!authorization.toLowerCase().startsWith("bearer "))return json({error:"Session Myvor requise."},401);const supabaseUrl=(Deno.env.get("SUPABASE_URL")||"").replace(/\/$/,""),anonKey=Deno.env.get("SUPABASE_ANON_KEY")||"";if(!supabaseUrl||!anonKey)return json({error:"Configuration Supabase incomplète."},503);const body=await req.json().catch(()=>null),dossier:DossierInput|null=body?.dossier||null;if(!dossier?.title||!dossier?.objective)return json({error:"Le dossier doit avoir au moins un titre et un objectif."},400);const supabase=createClient(supabaseUrl,anonKey,{auth:{persistSession:false,autoRefreshToken:false},global:{headers:{Authorization:authorization}}});const {data:userData,error:userError}=await supabase.auth.getUser();if(userError||!userData?.user?.id)return json({error:"Session Myvor invalide ou expirée."},401);async function fetchLatest(){let query=supabase.from("dossiers").select("*").eq("title",clip(dossier!.title,300)).order("created_at",{ascending:false}).limit(1);if(clip(dossier!.client,300))query=query.eq("client",clip(dossier!.client,300));const {data,error}=await query.maybeSingle();if(error)return null;return data;}for(let attempt=0;attempt<7;attempt++){const row=await fetchLatest();if(row&&profileReady(row)){const profile=profileFromRow(row);const cleanedWatchKeywords=cleanList(row.watch_keywords,80),cleanedPriority=cleanList(row.watch_priority_phrases,80),cleanedExcluded=cleanList(row.watch_excluded_keywords,80);const needsCleanup=JSON.stringify(cleanedWatchKeywords)!==JSON.stringify(row.watch_keywords||[])||JSON.stringify(cleanedPriority)!==JSON.stringify(row.watch_priority_phrases||[])||JSON.stringify(cleanedExcluded)!==JSON.stringify(row.watch_excluded_keywords||[])||JSON.stringify(profile.watch_topics)!==JSON.stringify(row.watch_topics||[])||JSON.stringify(profile.watch_subtopics)!==JSON.stringify(row.watch_subtopics||[]);if(needsCleanup){await supabase.from("dossiers").update({watch_keywords:cleanedWatchKeywords,watch_priority_phrases:cleanedPriority,watch_excluded_keywords:cleanedExcluded,watch_topics:profile.watch_topics,watch_subtopics:profile.watch_subtopics}).eq("id",row.id);}return json({profile,engine:"dossier-profile-sync-bridge-v2"});}if(attempt<6)await sleep(400);}return json({profile:fallbackProfile(dossier),engine:"dossier-profile-fallback-v2"});});
