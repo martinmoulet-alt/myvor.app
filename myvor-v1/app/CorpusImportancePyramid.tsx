@@ -9,9 +9,12 @@ type CorpusItem={
   id:string;
   title:string;
   nature?:string|null;
+  source_url:string;
+  dossier_id:string|null;
+  urgency:string;
   source_name?:string|null;
   published_at?:string|null;
-  created_at?:string|null;
+  created_at:string;
   confidence:number;
   reason:string;
   linkedToCurrent:boolean;
@@ -47,13 +50,13 @@ export function classifyCorpusImportance(item:CorpusItem):Pick<Classified,"impor
 
 export default function CorpusImportancePyramid({items,onOpen}:{items:CorpusItem[];onOpen:(item:CorpusItem)=>void}){
   const classified=useMemo(()=>items.map(item=>({...item,...classifyCorpusImportance(item)})).sort((a,b)=>b.rank-a.rank||b.confidence-a.confidence),[items]);
-  const [open,setOpen]=useState<ImportanceLevel>("Critique");
+  const [open,setOpen]=useState<ImportanceLevel|null>("Critique");
   const grouped=useMemo(()=>new Map(LEVELS.map(([level])=>[level,classified.filter(item=>item.importance===level)])),[classified]);
 
   return <div className="corpus-pyramid-wrap">
     <div className="corpus-pyramid" aria-label="Pyramide d’importance du corpus applicable">
       {LEVELS.map(([level,rank,description],index)=>{const rows=grouped.get(level)||[];const active=open===level;return <div key={level} className={`corpus-pyramid-tier tier-${rank} ${active?"active":""}`} style={{width:`${54+index*15}%`}}>
-        <button type="button" onClick={()=>setOpen(active?level:level)} aria-expanded={active}>
+        <button type="button" onClick={()=>setOpen(active?null:level)} aria-expanded={active}>
           <span><b>{level}</b><small>{description}</small></span><strong>{rows.length}</strong>{active?<ChevronUp size={16}/>:<ChevronDown size={16}/>} 
         </button>
         {active&&<div className="corpus-pyramid-items">{rows.length?rows.map(item=><article key={item.id}>
