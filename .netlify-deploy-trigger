@@ -1,3 +1,4 @@
 Force Netlify rebuild for Myvor production deployment.
-Source commit: 4cce6af0a3f16881ffa160c42aded1facae3f474
-Triggered: 2026-08-14 08:23 Europe/Paris
+Source commit: 8e2681d247ddd828ad3ba37c1b88a812a6ed71a0
+Triggered: 2026-08-14 08:34 Europe/Paris
+Reason: deploy current Myvor production state after automatic strategic profile fix.
