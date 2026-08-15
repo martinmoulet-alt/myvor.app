@@ -27,6 +27,7 @@ function evidenceLabel(index:number,watch:WarZoneWatch[]){const item=evidenceFor
 function contentOf(production:Production|null){return (production?.content||{}) as WarZoneProductionContent;}
 function sameIds(a:string[],b:string[]){if(a.length!==b.length)return false;const set=new Set(a);return b.every(id=>set.has(id));}
 function versionLabel(item:Production,index:number,total:number){const date=new Date(item.created_at);const when=Number.isNaN(date.getTime())?"":date.toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});return `V${total-index}${when?` · ${when}`:""}`;}
+function matchesContext(content:WarZoneProductionContent,watchIds:string[],actorIds:string[]){return Boolean(content.strategy&&Array.isArray(content.watch_ids)&&Array.isArray(content.actor_ids)&&sameIds(content.watch_ids,watchIds)&&sameIds(content.actor_ids,actorIds));}
 
 async function postStrategy<T>(body:StrategyRequest):Promise<T>{
   if(!supabase)throw new Error("La connexion Supabase de Myvor n’est pas configurée.");
@@ -46,13 +47,19 @@ export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions,
   const [saved,setSaved]=useState(false);
   const [versions,setVersions]=useState<Production[]>([]);
   const [productionId,setProductionId]=useState<string|null>(null);
-  const index=useMemo(()=>strategicIndex(actors,watch),[actors,watch]);
+
+  const strategyActors=useMemo(()=>[...actors].sort((a,b)=>score(b)-score(a)).slice(0,4),[actors]);
+  const strategyWatch=useMemo(()=>watch.slice(0,8),[watch]);
+  const index=useMemo(()=>strategicIndex(strategyActors,strategyWatch),[strategyActors,strategyWatch]);
   const actorMap=useMemo(()=>new Map(actors.map(actor=>[actor.id,actor])),[actors]);
   const currentProduction=useMemo(()=>versions.find(item=>item.id===productionId)||null,[versions,productionId]);
   const currentContent=contentOf(currentProduction);
-  const currentWatchIds=useMemo(()=>watch.map(item=>item.id),[watch]);
-  const hasNewSignals=Boolean(strategy&&currentContent.watch_ids&&!sameIds(currentContent.watch_ids,currentWatchIds));
-  const executionStatus=currentContent.status==="plan_added"?"Plan ajouté aux actions":"Stratégie prête";
+  const currentWatchIds=useMemo(()=>strategyWatch.map(item=>item.id),[strategyWatch]);
+  const currentActorIds=useMemo(()=>strategyActors.map(actor=>actor.id),[strategyActors]);
+  const currentContextMatches=Boolean(currentProduction&&matchesContext(currentContent,currentWatchIds,currentActorIds));
+  const contextChanged=Boolean(strategy&&!currentContextMatches);
+  const executionStatus=currentContent.status==="plan_added"?"Plan ajouté aux actions":currentContextMatches?"Stratégie prête":"Contexte différent";
+  const contextKey=useMemo(()=>`${dossier?.id||""}|${[...currentWatchIds].sort().join(",")}|${[...currentActorIds].sort().join(",")}`,[dossier?.id,currentWatchIds,currentActorIds]);
 
   useEffect(()=>{
     let active=true;
@@ -62,26 +69,28 @@ export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions,
       if(!active)return;
       const history=data.filter(item=>item.type==="warzone");
       setVersions(history);
-      const latest=history[0]||null;
-      if(latest){const content=contentOf(latest);if(content.strategy)setStrategy(content.strategy);setProductionId(latest.id);setSaved(content.status==="plan_added");}
+      const compatible=history.find(item=>matchesContext(contentOf(item),currentWatchIds,currentActorIds))||null;
+      if(compatible){const content=contentOf(compatible);setStrategy(content.strategy||null);setProductionId(compatible.id);setSaved(content.status==="plan_added");}
     }).catch(()=>undefined);
     return()=>{active=false;};
-  },[dossier?.id]);
+  },[contextKey]);
 
   function selectVersion(id:string){
+    if(!id){setProductionId(null);setStrategy(null);setSaved(false);setError("");return;}
     const selected=versions.find(item=>item.id===id)||null;
     const content=contentOf(selected);
     setProductionId(id);setStrategy(content.strategy||null);setSaved(content.status==="plan_added");setError("");
   }
 
   async function generate(){
-    if(!dossier||!actors.length)return;
+    if(!dossier||!strategyActors.length)return;
+    if(!strategyWatch.length){setError("La War Zone a besoin d’au moins un signal de veille pour produire une stratégie documentée.");return;}
     setLoading(true);setError("");setSaved(false);
     try{
-      const payload=await postStrategy<StrategyPayload>({dossier,actors,watch});
+      const payload=await postStrategy<StrategyPayload>({dossier,actors:strategyActors,watch:strategyWatch});
       if(!payload.strategy)throw new Error("La War Zone n’a pas retourné de stratégie exploitable.");
       const generatedAt=new Date().toISOString();
-      const content:WarZoneProductionContent={strategy:payload.strategy,watch_ids:currentWatchIds,actor_ids:actors.map(actor=>actor.id),status:"draft",engine:payload.engine||null,model:payload.model||null,generated_at:generatedAt};
+      const content:WarZoneProductionContent={strategy:payload.strategy,watch_ids:currentWatchIds,actor_ids:currentActorIds,status:"draft",engine:payload.engine||null,model:payload.model||null,generated_at:generatedAt};
       const result=await saveProduction({dossier_id:dossier.id,type:"warzone",title:`War Zone — ${dossier.title}`,content:content as unknown as Record<string,unknown>});
       if(result.error)throw result.error;
       setStrategy(payload.strategy);
@@ -92,6 +101,7 @@ export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions,
 
   async function addPlan(){
     if(!dossier||!strategy||!onActions)return;
+    if(!currentContextMatches){setError("Cette version de War Zone ne correspond plus au Radar et à la veille actuels. Recalcule la stratégie avant de l’ajouter aux actions.");return;}
     setSaving(true);setSaved(false);
     try{
       const drafts:WarZoneActionDraft[]=strategy.sequence.map(step=>({
@@ -114,32 +124,32 @@ export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions,
   }
 
   if(!dossier)return <Empty icon={<Target size={38}/>} title="Sélectionnez un dossier" text="La War Zone construit sa stratégie à partir de l’objectif, du Radar et de la veille."/>;
-  if(!actors.length)return <Empty icon={<Users size={38}/>} title="Générez d’abord le Radar" text="La War Zone a besoin d’acteurs qualifiés avant de construire un ciblage institutionnel exploitable."/>;
+  if(!strategyActors.length)return <Empty icon={<Users size={38}/>} title="Générez d’abord le Radar" text="La War Zone a besoin d’acteurs qualifiés avant de construire un ciblage institutionnel exploitable."/>;
 
   return <div className={styles.page}>
     <section className={styles.objectiveCard}>
       <div><span className={styles.eyebrow}>Objectif stratégique</span><h2>{dossier.objective||dossier.title}</h2><p>{dossier.context||"Contexte du dossier à préciser."}</p></div>
-      <div className={styles.indexBox}><span>Préparation du dossier</span><div><strong>{index}</strong><em>/100</em></div><small>{actors.length} acteur(s) Radar · {watch.length} évolution(s) liée(s)</small></div>
+      <div className={styles.indexBox}><span>Préparation du dossier</span><div><strong>{index}</strong><em>/100</em></div><small>{strategyActors.length} acteur(s) prioritaire(s) · {strategyWatch.length} signal(aux) utilisé(s)</small></div>
     </section>
 
     {versions.length>0&&<section style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",padding:"12px 14px",border:"1px solid #28425f",borderRadius:14,background:"#081b31",color:"#dce8f5"}}>
       <b style={{fontSize:12}}>Versions War Zone · {versions.length}</b>
-      <select aria-label="Version de la War Zone" value={productionId||""} onChange={event=>selectVersion(event.target.value)} style={{minHeight:36,borderRadius:10,border:"1px solid #34506f",background:"#0b2541",color:"#fff",padding:"0 10px"}}>{versions.map((item,versionIndex)=><option key={item.id} value={item.id}>{versionLabel(item,versionIndex,versions.length)}</option>)}</select>
-      <span style={{fontSize:11,fontWeight:800,color:currentContent.status==="plan_added"?"#6fd6a0":"#a9bdd3"}}>{executionStatus}</span>
-      {hasNewSignals&&<span style={{marginLeft:"auto",fontSize:11,fontWeight:900,color:"#f3bd3e"}}>Nouveaux signaux de veille · recalcul recommandé</span>}
+      <select aria-label="Version de la War Zone" value={productionId||""} onChange={event=>selectVersion(event.target.value)} style={{minHeight:36,borderRadius:10,border:"1px solid #34506f",background:"#0b2541",color:"#fff",padding:"0 10px"}}><option value="">Contexte actuel — nouvelle stratégie</option>{versions.map((item,versionIndex)=><option key={item.id} value={item.id}>{versionLabel(item,versionIndex,versions.length)}</option>)}</select>
+      <span style={{fontSize:11,fontWeight:800,color:currentContent.status==="plan_added"&&currentContextMatches?"#6fd6a0":"#a9bdd3"}}>{executionStatus}</span>
+      {contextChanged&&<span style={{marginLeft:"auto",fontSize:11,fontWeight:900,color:"#f3bd3e"}}>Radar ou veille modifié · recalcul requis avant exécution</span>}
     </section>}
 
     {!strategy?<section className={styles.launchCard}>
       <Sparkles size={31}/><h3>Construire le plan de ciblage opérationnel</h3>
-      <p>Myvor va déterminer précisément les cibles institutionnelles, le sujet à traiter avec chacune, la raison du ciblage, le canal recommandé, les moyens documentaires, le timing, les preuves à mobiliser et le signal de réussite.</p>
+      <p>Myvor utilise les quatre acteurs Radar les plus prioritaires et jusqu’à huit signaux de veille du contexte courant pour déterminer les cibles, le sujet précis, le canal, le livrable, le timing, les preuves et le signal de réussite.</p>
       {error&&<div className={styles.error}>{error}</div>}
-      <button onClick={()=>void generate()} disabled={loading}>{loading?<RefreshCw size={16} className={styles.spin}/>:<Sparkles size={16}/>} {loading?"Analyse stratégique…":"Générer la stratégie détaillée"}</button>
+      <button onClick={()=>void generate()} disabled={loading||!strategyWatch.length}>{loading?<RefreshCw size={16} className={styles.spin}/>:<Sparkles size={16}/>} {loading?"Analyse stratégique…":"Générer la stratégie détaillée"}</button>
     </section>:<>
       <div className={styles.topActions}>
-        <button className={styles.secondary} onClick={()=>void generate()} disabled={loading}><RefreshCw size={14} className={loading?styles.spin:""}/>{hasNewSignals?"Recalculer avec la nouvelle veille":"Recalculer"}</button>
+        <button className={styles.secondary} onClick={()=>void generate()} disabled={loading}><RefreshCw size={14} className={loading?styles.spin:""}/>{contextChanged?"Recalculer avec le contexte actuel":"Recalculer"}</button>
         {onOpenBuilder&&<button className={styles.secondary} onClick={()=>onOpenBuilder(dossier.id)}><FileText size={14}/>Créer un livrable</button>}
         {onOpenActions&&<button className={styles.secondary} onClick={onOpenActions}><ArrowRight size={14}/>Voir les actions</button>}
-        <button className={styles.primary} onClick={()=>void addPlan()} disabled={!onActions||saving}>{saved?<CheckCircle2 size={14}/>:<Plus size={14}/>} {saving?"Ajout…":saved?"Plan ajouté":"Ajouter le plan aux actions"}</button>
+        <button className={styles.primary} onClick={()=>void addPlan()} disabled={!onActions||saving||!currentContextMatches}>{saved&&currentContextMatches?<CheckCircle2 size={14}/>:<Plus size={14}/>} {saving?"Ajout…":saved&&currentContextMatches?"Plan ajouté":contextChanged?"Recalcul requis":"Ajouter le plan aux actions"}</button>
       </div>
       {error&&<div className={styles.error}>{error}</div>}
 
@@ -168,7 +178,7 @@ export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions,
             </div>
             <div className={styles.twoCols}>
               <div className={styles.subCard}><span>Angles factuels à porter</span><ul>{target.factual_angles.map((angle,i)=><li key={i}>{angle}</li>)}</ul></div>
-              <div className={styles.subCard}><span>Preuves à mobiliser</span>{target.evidence_indexes.length?<ul>{target.evidence_indexes.map(sourceIndex=><li key={sourceIndex}>{evidenceLabel(sourceIndex,watch)}</li>)}</ul>:<p>Aucune source directe suffisante : commencer par consolider la preuve.</p>}</div>
+              <div className={styles.subCard}><span>Preuves à mobiliser</span>{target.evidence_indexes.length?<ul>{target.evidence_indexes.map(sourceIndex=><li key={sourceIndex}>{evidenceLabel(sourceIndex,strategyWatch)}</li>)}</ul>:<p>Aucune source directe suffisante : commencer par consolider la preuve.</p>}</div>
             </div>
             <div className={styles.outcomes}><div><CheckCircle2 size={14}/><span><b>Signal de réussite</b>{target.success_signal}</span></div><div><ArrowRight size={14}/><span><b>Fallback</b>{target.fallback}</span></div><div><AlertTriangle size={14}/><span><b>Ne pas supposer</b>{target.do_not_assume}</span></div></div>
           </article>;})}</div>
@@ -182,7 +192,7 @@ export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions,
               <div className={styles.stepHead}><div><span>Mouvement {step.order}</span><h4>{step.title}</h4>{step.target_name&&<p>Cible : {step.target_name}</p>}</div><em>{step.timing}</em></div>
               <div className={styles.stepGrid}><TargetField label="Objectif" value={step.objective}/><TargetField label="Pourquoi maintenant" value={step.why_now}/><TargetField label="Livrable" value={step.deliverable}/><TargetField label="Dépendance" value={step.dependency}/></div>
               <div className={styles.twoCols}><div className={styles.subCard}><span>Moyens</span><ul>{step.means.map((mean,i)=><li key={i}>{mean}</li>)}</ul></div><div className={styles.subCard}><span>Cadre du message</span><p>{step.message_frame}</p></div></div>
-              {step.evidence_indexes.length>0&&<div className={styles.evidenceLine}><FileText size={14}/><span>{step.evidence_indexes.map(sourceIndex=>evidenceLabel(sourceIndex,watch)).join(" · ")}</span></div>}
+              {step.evidence_indexes.length>0&&<div className={styles.evidenceLine}><FileText size={14}/><span>{step.evidence_indexes.map(sourceIndex=>evidenceLabel(sourceIndex,strategyWatch)).join(" · ")}</span></div>}
               <div className={styles.outcomes}><div><CheckCircle2 size={14}/><span><b>Réussite</b>{step.success_signal}</span></div><div><ArrowRight size={14}/><span><b>Si ça ne marche pas</b>{step.fallback}</span></div><div><AlertTriangle size={14}/><span><b>Risque</b>{step.risk}</span></div></div>
               {actor&&<button className={styles.actorLink} onClick={()=>onOpenActor(actor)}>Ouvrir la fiche de {actor.name} <ExternalLink size={12}/></button>}
             </div>
