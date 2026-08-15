@@ -12,12 +12,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: fix/m2m-dossier-veille
+      - name: Reassemble and verify patch
+        run: |
+          cat .m2m.part.00 .m2m.part.01 .m2m.part.02 .m2m.part.03 > /tmp/m2m.patch.gz.b64
+          echo "c3437ddf5a4b4e00b8357c10ad67cb1fcf0e39aa8084a988973ee837d9ffe1e7  /tmp/m2m.patch.gz.b64" | sha256sum -c -
+          base64 -d /tmp/m2m.patch.gz.b64 | gunzip > /tmp/m2m.patch
+          echo "5676006cdfa909827fc868b69f1b61fda8e87293116b212dd13e377cf1a218d7  /tmp/m2m.patch" | sha256sum -c -
       - name: Apply patch
         run: |
-          test -f .m2m.patch.gz.b64
-          base64 -d .m2m.patch.gz.b64 | gunzip > /tmp/m2m.patch
           patch -p1 < /tmp/m2m.patch
-          git rm .m2m.patch.gz.b64 .github/workflows/source-snapshot-m2m.yml .github/workflows/apply-m2m-patch.yml
+          git rm -f .m2m.patch.gz.b64 .m2m.part.00 .m2m.part.01 .m2m.part.02 .m2m.part.03 .github/workflows/source-snapshot-m2m.yml .github/workflows/apply-m2m-patch.yml
       - name: Commit patched frontend
         run: |
           git config user.name "github-actions[bot]"
