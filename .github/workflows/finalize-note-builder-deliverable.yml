@@ -1,0 +1,67 @@
+name: Finalize Note Builder Deliverable
+
+on:
+  push:
+    paths:
+      - .github/workflows/finalize-note-builder-deliverable.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  upgrade-builder:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Upgrade Note Builder presentation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("myvor-v1/app/BuilderModule.tsx")
+          text = path.read_text()
+
+          old_helpers = '''function stripBoldMarkers(value:unknown){return String(value??"").replace(/\\*\\*([^*\\n]+)\\*\\*/g,"$1");}\nfunction contentParagraphs(content:string){return String(content||"").split(/\\n+/).map(line=>line.trim()).filter(Boolean);}\nfunction sanitizeDocument(document:BuiltDocument):BuiltDocument{const title=presentableText(document?.title)||"Document généré";return{title,subject:presentableText(document?.subject)||title,content:filterPresentableLines(document?.content),key_points:filterPresentableStrings(document?.key_points),sources:(Array.isArray(document?.sources)?document.sources:[]).map(source=>({title:presentableText(source?.title),url:String(source?.url||"").trim()})).filter(source=>source.title)};}\nfunction documentBodyHtml(content:string){return contentParagraphs(content).map(line=>{const bullet=/^[-•]\\s+/.test(line);const heading=!bullet&&line.length<=90&&/:$/.test(line);const text=richInlineHtml(line.replace(/^[-•]\\s+/,""));if(bullet)return `<div class="bullet" style="display:grid;grid-template-columns:12px 1fr;gap:6px;margin:0 0 10px"><span>•</span><p style="margin:0">${text}</p></div>`;if(heading)return `<h2 style="font-size:13px;line-height:1.35;margin:22px 0 8px;color:#071936">${text.replace(/:$/,"")}</h2>`;return `<p style="margin:0 0 14px">${text}</p>`;}).join("");}\n'''
+
+          new_helpers = '''function stripBoldMarkers(value:unknown){return String(value??"").replace(/\\*\\*([^*\\n]+)\\*\\*/g,"$1");}\nconst PROFESSIONAL_SECTION_LABELS=["Synthèse exécutive","Situation","Message clé","Ce qui change","Faits et signaux essentiels","Faits essentiels","Enjeu institutionnel","Convergences/divergences entre sources","Convergences et divergences","Implications pour le client","Impact pour le client","Risques et opportunités","Risques / opportunités","Niveau d’urgence","Urgence","Recommandation","Recommandations","Actions à engager","Actions prioritaires","Acteurs à mobiliser","Échéance","Échéances","Calendrier","Points de vigilance","Prochaine action","Conclusion"];\nfunction normalizeProfessionalContent(value:unknown){let text=String(value??"").replace(/\\r/g," ").replace(/[\\t ]+/g," ").trim();if(!text)return"";const labels=PROFESSIONAL_SECTION_LABELS.map(label=>label.replace(/[.*+?^${}()|[\\]\\\\]/g,"\\\\$&")).join("|");text=text.replace(new RegExp(`\\\\s*(${labels})\\\\s*:\\s*`,"gi"),"\\n\\n$1:\\n");text=text.replace(/\\s+-\\s+(?=[A-ZÀ-ÖØ-Þ0-9])/g,"\\n• ");text=text.replace(/\\n{3,}/g,"\\n\\n");return text.trim();}\nfunction contentParagraphs(content:string){return normalizeProfessionalContent(content).split(/\\n+/).map(line=>line.trim()).filter(Boolean);}\nfunction sanitizeDocument(document:BuiltDocument):BuiltDocument{const title=presentableText(document?.title)||"Document généré";return{title,subject:presentableText(document?.subject)||title,content:normalizeProfessionalContent(filterPresentableLines(document?.content)),key_points:filterPresentableStrings(document?.key_points),sources:(Array.isArray(document?.sources)?document.sources:[]).map(source=>({title:presentableText(source?.title),url:String(source?.url||"").trim()})).filter(source=>source.title)};}\nfunction documentBodyHtml(content:string){const lines=contentParagraphs(content);let html="",sectionOpen=false;for(const line of lines){const bullet=/^[-•]\\s+/.test(line),heading=!bullet&&line.length<=100&&/:$/.test(line),text=richInlineHtml(line.replace(/^[-•]\\s+/,""));if(heading){if(sectionOpen)html+="</section>";html+=`<section style="margin:0 0 24px;padding:0 0 20px;border-bottom:1px solid #e8edf3"><h2 style="margin:0 0 10px;font-size:11px;line-height:1.3;letter-spacing:.08em;text-transform:uppercase;color:#9a741c;font-weight:900">${text.replace(/:$/,"" )}</h2>`;sectionOpen=true;continue}if(bullet){if(!sectionOpen){html+='<section style="margin:0 0 24px">';sectionOpen=true}html+=`<div style="display:grid;grid-template-columns:14px 1fr;gap:7px;margin:0 0 8px"><span style="color:#b88719;font-weight:900">•</span><p style="margin:0;color:#26354d;line-height:1.68">${text}</p></div>`;continue}if(!sectionOpen){html+='<section style="margin:0 0 24px">';sectionOpen=true}html+=`<p style="margin:0 0 12px;color:#26354d;line-height:1.72">${text}</p>`}if(sectionOpen)html+="</section>";return html;}\nfunction formatLabel(value:string){return formats.find(([id])=>id===value)?.[1]||"Document opérationnel";}\nfunction ProfessionalDocumentPreview({document,dossier,format,reviewStatus}:{document:BuiltDocument;dossier:Dossier|null;format:string;reviewStatus:ReviewStatus}){const date=new Date().toLocaleDateString("fr-FR",{day:"2-digit",month:"long",year:"numeric"});return <div style={{background:"#edf1f5",padding:"28px 18px 34px",borderRadius:14}}><article style={{maxWidth:820,margin:"0 auto",background:"#fff",border:"1px solid #dfe5ec",boxShadow:"0 18px 42px rgba(7,25,54,.12)",padding:"48px 54px 42px",color:"#172942"}}><header style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:18,paddingBottom:16,borderBottom:"2px solid #d0a740"}}><div style={{display:"flex",alignItems:"center",gap:11}}><div style={{width:34,height:34,borderRadius:10,display:"grid",placeItems:"center",background:"#d0a740",color:"#071426",fontWeight:950,fontSize:17}}>M</div><div><div style={{fontWeight:950,fontSize:16,color:"#071936"}}>MYVOR</div><div style={{fontSize:10,textTransform:"uppercase",letterSpacing:".1em",color:"#8b99aa",marginTop:2}}>{formatLabel(format)}</div></div></div><div style={{textAlign:"right",fontSize:10.5,lineHeight:1.55,color:"#718097"}}><strong style={{display:"block",fontSize:11.5,color:"#253850"}}>{dossier?.client||"Client"}</strong><span>{date}</span></div></header><div style={{paddingTop:28}}><div style={{fontSize:10,fontWeight:900,letterSpacing:".13em",textTransform:"uppercase",color:"#9a741c",marginBottom:8}}>Document opérationnel</div><h1 style={{fontSize:28,lineHeight:1.2,letterSpacing:"-.025em",margin:"0 0 18px",color:"#071936"}}>{stripBoldMarkers(document.title)}</h1><div style={{display:"grid",gridTemplateColumns:"68px 1fr",gap:12,alignItems:"start",padding:"13px 15px",background:"#f7f8fa",borderLeft:"3px solid #d0a740",marginBottom:24}}><span style={{fontSize:10,fontWeight:900,letterSpacing:".08em",color:"#8d6b1c"}}>OBJET</span><strong style={{fontSize:13px,lineHeight:1.5,color:"#26354d"}}>{stripBoldMarkers(document.subject)}</strong></div>{!!document.key_points?.length&&<section style={{marginBottom:28,padding:"16px 18px",background:"#fff9e9",border:"1px solid #ead79b"}}><div style={{fontSize:10,fontWeight:900,letterSpacing:".1em",textTransform:"uppercase",color:"#8f6911",marginBottom:9}}>À retenir</div><div style={{display:"grid",gap:7}}>{document.key_points.slice(0,4).map((point,index)=><div key={index} style={{display:"grid",gridTemplateColumns:"18px 1fr",gap:7,fontSize:12.5,lineHeight:1.55,color:"#26354d"}}><b style={{color:"#b88719"}}>0{index+1}</b><span dangerouslySetInnerHTML={{__html:richInlineHtml(point)}}/></div>)}</div></section>}<div style={{fontSize:13.2}} dangerouslySetInnerHTML={{__html:documentBodyHtml(document.content)}}/>{!!document.sources?.length&&<footer style={{marginTop:34,paddingTop:18,borderTop:"1px solid #dfe5ec"}}><div style={{fontSize:10,fontWeight:900,letterSpacing:".09em",textTransform:"uppercase",color:"#718097",marginBottom:8}}>Sources</div><div style={{display:"grid",gap:5}}>{document.sources.map((source,index)=><div key={`${source.url}-${index}`} style={{fontSize:9.8,lineHeight:1.45,color:"#6b788b"}}><b style={{color:"#394c65"}}>[{index+1}]</b> {source.title}</div>)}</div></footer>}<div style={{marginTop:24,paddingTop:12,borderTop:"1px solid #edf0f4",display:"flex",justifyContent:"space-between",gap:12,fontSize:9.5,color:"#8a96a6"}}><span>Analyse assistée par Myvor · validation humaine requise avant diffusion</span><span>{reviewLabel(reviewStatus)}</span></div></div></article></div>}\n'''
+
+          if old_helpers not in text:
+              raise SystemExit("Helper insertion point not found")
+          text = text.replace(old_helpers, new_helpers)
+
+          start_marker = ':<div className={styles.editorFields}>\n'
+          end_marker = '          </div>}\n        </section>'
+          start = text.index(start_marker) + len(start_marker)
+          end = text.index(end_marker, start)
+          new_inner = '''            <ProfessionalDocumentPreview document={document} dossier={dossier} format={format} reviewStatus={reviewStatus}/>
+            <details style={{marginTop:18,border:"1px solid #dfe5ed",borderRadius:12,background:"#f8fafc",overflow:"hidden"}}>
+              <summary style={{cursor:"pointer",padding:"14px 18px",fontSize:12,fontWeight:850,color:"#31445e",listStyle:"none"}}>Modifier le livrable</summary>
+              <div style={{padding:"0 20px 22px"}}>
+                <label style={{display:"block",fontSize:9,fontWeight:900,letterSpacing:".08em",textTransform:"uppercase",color:"#8a96a6",margin:"6px 0 7px"}}>Titre</label>
+                <textarea ref={titleRef} rows={1} className={styles.titleInput} value={document.title} onChange={e=>{patchDocument({title:e.target.value});resizeTitle();}}/>
+                <label style={{display:"block",fontSize:9,fontWeight:900,letterSpacing:".08em",textTransform:"uppercase",color:"#8a96a6",margin:"16px 0 7px"}}>Objet</label>
+                <input className={styles.subjectInput} value={document.subject} onChange={e=>patchDocument({subject:e.target.value})} placeholder="Objet du document"/>
+                <div className={styles.aiEditBar}><div><Sparkles size={14}/><span>{selection.text?`${selection.text.length} caractères sélectionnés`:"Sélectionnez un passage pour le retravailler avec Myvor"}</span></div><div>{editActions.map(({id,label,icon:Icon})=><button key={id} type="button" onMouseDown={e=>e.preventDefault()} onClick={()=>applyEdit(id)} disabled={!!editing||!selection.text}><Icon size={13}/>{editing===id?"Traitement…":label}</button>)}</div></div>
+                <textarea ref={contentRef} className={styles.contentEditor} value={document.content} onSelect={captureSelection} onKeyUp={captureSelection} onMouseUp={captureSelection} onChange={e=>{patchDocument({content:e.target.value});resizeEditor();window.setTimeout(captureSelection,0);}}/>
+                {!!document.sources?.length&&<div className={styles.sourceBanner}><span><FileText size={14}/>{document.sources.length} sources vérifiables mobilisées</span><div>{document.sources.slice(0,3).map((source,index)=><a key={`${source.url}-${index}`} href={source.url||undefined} target={source.url?"_blank":undefined} rel="noreferrer">[{index+1}] {source.title}</a>)}</div></div>}
+              </div>
+            </details>
+'''
+          text = text[:start] + new_inner + text[end:]
+          text = text.replace('<span className={styles.eyebrow}>Éditeur</span>','<span className={styles.eyebrow}>Livrable</span>')
+          path.write_text(text)
+          PY
+
+      - name: Commit upgrade
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add myvor-v1/app/BuilderModule.tsx
+          if git diff --cached --quiet; then
+            echo "Note Builder already upgraded"
+          else
+            git commit -m "Upgrade Note Builder to professional deliverable"
+            git push
+          fi
