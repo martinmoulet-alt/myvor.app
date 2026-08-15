@@ -1,0 +1,4 @@
+Force Netlify production deploy from inside the configured base directory.
+Target: current main / professional Note Builder.
+Reason: the previous retry changed only a file outside myvor-v1, allowing Netlify's base-directory change detection to cancel the deploy.
+Triggered: 2026-08-15 16:53 Europe/Paris.
