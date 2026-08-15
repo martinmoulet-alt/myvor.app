@@ -1,4 +1,4 @@
 Force Myvor V1 Netlify production rebuild.
-Source commit: 1d8f4f578f75e7fa05eb81ce1049e48089e0829a
-Triggered: 2026-08-15 08:18 Europe/Paris
-Reason: publish the sidebar fix removing the legacy CSS that masked Radar & War Zone as a duplicate Score d’urgence entry.
+Source commit: d2516691c0733dff1ec06032c85b8fe8cb13a68a
+Triggered: 2026-08-15 08:38 Europe/Paris
+Reason: publish War Zone resilient v7 UI, semantic priority colors, degraded-mode visibility, and current Radar/War Zone workflow.
