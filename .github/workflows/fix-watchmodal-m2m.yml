@@ -1,0 +1,34 @@
+name: Finalize manual watch m2m
+on:
+  push:
+    branches:
+      - fix/m2m-dossier-veille
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/m2m-dossier-veille
+      - name: Patch WatchModal
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('myvor-v1/app/page.tsx')
+          s=p.read_text()
+          old='const{error}=await supabase.from("watch_items").insert({...f,dossier_id:f.dossier_id||null});if(error)setErr(error.message);else done();'
+          new='const{data:item,error}=await supabase.from("watch_items").insert({...f,dossier_id:null}).select("id,organization_id").single();if(error){setErr(error.message);return;}if(f.dossier_id&&item?.id){const{error:linkError}=await supabase.from("watch_item_dossier_links").upsert({watch_item_id:item.id,dossier_id:f.dossier_id,organization_id:item.organization_id,status:"linked",score:1,reason:"Rattachement manuel confirmé dans Myvor.",engine:"manual-watch-create-m2m-v1",updated_at:new Date().toISOString()},{onConflict:"watch_item_id,dossier_id"});if(linkError){setErr(linkError.message);return;}}done();'
+          if s.count(old)!=1: raise SystemExit(f'expected one WatchModal legacy write, found {s.count(old)}')
+          p.write_text(s.replace(old,new))
+          PY
+          git diff --check
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/fix-watchmodal-m2m.yml
+          git add myvor-v1/app/page.tsx
+          git commit -m "fix: write manual watch membership through m2m"
+          git push origin HEAD:fix/m2m-dossier-veille
