@@ -17,7 +17,7 @@ async function requireAuthenticatedQuota(req:Request){const authorization=req.he
 
 type OpenAIResult={detail:any|null;model:string;webSearch:boolean;error:string};
 async function requestActorDetail(apiKey:string,model:string,prompt:string,webSearch:boolean,maxOutputTokens:number):Promise<OpenAIResult>{
-  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),webSearch?42000:30000);
+  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),webSearch?26000:18000);
   try{
     const body:any={model,input:prompt,max_output_tokens:maxOutputTokens,store:false,text:{format:{type:"json_schema",name:"myvor_actor_detail_v3",strict:true,schema:OUTPUT_SCHEMA}}};
     if(webSearch)body.tools=[{type:"web_search"}];
