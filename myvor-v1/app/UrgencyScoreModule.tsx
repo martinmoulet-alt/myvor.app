@@ -27,7 +27,7 @@ type Watch={id:string;title:string;nature:string;source_url?:string;dossier_id:s
 type ActionDraft={dossier_id:string;type:string;title:string;description?:string;priority:string;due_date?:string|null};
 type CriterionResult={score:number;max:number;justification:string;evidence:string[]};
 type UrgencySource={title:string;url:string;status:string};
-type UrgencyResult={score:number;level:string;decision:string;action_needed:boolean;summary:string;criteria:Record<CriterionKey,CriterionResult>;workstreams:string[];next_actions:string[];uncertainties:string[];sources:UrgencySource[];mode?:string;engine?:string;model?:string;execution_ms?:number};
+type UrgencyResult={score:number;level:string;decision:string;action_needed:boolean;summary:string;criteria:Record<CriterionKey,CriterionResult>;workstreams:string[];next_actions:string[];uncertainties:string[];sources:UrgencySource[];watch_ids?:string[];mode?:string;engine?:string;model?:string;execution_ms?:number};
 type ProductionRow={id:string;dossier_id:string;title:string;content:Record<string,unknown>;created_at:string};
 
 const MODE="deep" as const;
@@ -63,6 +63,7 @@ function readContent(row:ProductionRow|null):UrgencyResult|null{
     next_actions:Array.isArray(raw?.next_actions)?raw.next_actions.map(String):[],
     uncertainties:Array.isArray(raw?.uncertainties)?raw.uncertainties.map(String):[],
     sources:Array.isArray(raw?.sources)?raw.sources.filter((source:any)=>source&&typeof source==="object").map((source:any)=>({title:String(source.title||"Source"),url:String(source.url||""),status:String(source.status||"source")})):[],
+    watch_ids:Array.isArray(raw?.watch_ids)?raw.watch_ids.map(String).filter(Boolean):[],
     mode:String(raw?.mode||"deep"),
     engine:String(raw?.engine||""),
     model:String(raw?.model||""),
@@ -139,6 +140,7 @@ export default function UrgencyScoreModule({
         band:score===null?null:scoreBand(score),
         attached:watch.filter(row=>row.dossier_id===item.id).length,
         summary:saved?.summary||"",
+        watchIds:saved?.watch_ids?.length?saved.watch_ids:watch.filter(row=>row.dossier_id===item.id).sort((a,b)=>dateValue(b)-dateValue(a)).slice(0,MAX_ITEMS).map(row=>row.id),
       };
     }).filter(row=>{
       const haystack=`${row.dossier.client} ${row.dossier.title}`.toLowerCase();
@@ -220,7 +222,7 @@ export default function UrgencyScoreModule({
       const next=payload?.result as UrgencyResult|undefined;
       if(!next||!Number.isFinite(Number(next.score)))throw new Error("Le Score d’urgence n’a pas été retourné.");
       const sources=sourceList(selected);
-      const completeResult={...next,sources} as UrgencyResult;
+      const completeResult={...next,sources,watch_ids:selected.map(item=>item.id)} as UrgencyResult;
       setResult(completeResult);
       const title=`Score d’urgence — ${dossier.title}`;
       const saved=await saveProduction({
@@ -291,7 +293,8 @@ export default function UrgencyScoreModule({
   const criteriaTotal=activeResult?CRITERIA.reduce((sum,item)=>sum+Number(activeResult.criteria?.[item.key]?.score||0),0):0;
   const radarIds=selected.map(item=>item.id);
   const currentBand=activeResult?scoreBand(activeResult.score):null;
-  const currentSources=activeResult?.sources?.length?activeResult.sources:sourceList(selected);
+  const sourceWatchIds=new Set(activeResult?.watch_ids||[]);
+  const currentSources=activeResult?.sources?.length?activeResult.sources:sourceList(sourceWatchIds.size?watch.filter(item=>sourceWatchIds.has(item.id)):result?selected:[]);
 
   return <div className={styles.page}>
     <header className={styles.head}>
@@ -350,7 +353,7 @@ export default function UrgencyScoreModule({
           <div className={styles.queueActions}>
             <button type="button" onClick={()=>chooseDossier(item.dossier.id,"analysis")}>Voir l’analyse<ArrowRight size={14}/></button>
             {onOpenDossier&&<button type="button" className={styles.secondaryButton} onClick={()=>onOpenDossier(item.dossier.id)}><BriefcaseBusiness size={14}/>Dossier</button>}
-            {onOpenRadar&&item.score!==null&&<button type="button" className={styles.secondaryButton} onClick={()=>onOpenRadar(item.dossier.id,watch.filter(row=>row.dossier_id===item.dossier.id).slice(0,MAX_ITEMS).map(row=>row.id))}><Radar size={14}/>Radar / War Zone</button>}
+            {onOpenRadar&&item.score!==null&&<button type="button" className={styles.secondaryButton} onClick={()=>onOpenRadar(item.dossier.id,item.watchIds)}><Radar size={14}/>Radar / War Zone</button>}
           </div>
         </article>;
       })}</div>:<div className={styles.empty}><Search size={26}/><b>Aucun dossier correspondant</b><span>Modifie la recherche ou le filtre d’urgence.</span></div>}
