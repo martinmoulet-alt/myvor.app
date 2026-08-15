@@ -8,7 +8,8 @@ export default function DossierRealtimeRefresh(){
   const scanned=useRef(new Set<string>());
 
   useEffect(()=>{
-    if(!supabase)return;
+    const client=supabase;
+    if(!client)return;
 
     const refresh=()=>{
       if(timer.current)clearTimeout(timer.current);
@@ -19,10 +20,10 @@ export default function DossierRealtimeRefresh(){
       const dossierId=String(payload?.new?.id||"");
       if(!dossierId||scanned.current.has(dossierId))return;
       scanned.current.add(dossierId);
-      void supabase.functions.invoke("scan-dossier-history",{body:{dossier_id:dossierId}}).then(()=>refresh()).catch(()=>{});
+      void client.functions.invoke("scan-dossier-history",{body:{dossier_id:dossierId}}).then(()=>refresh()).catch(()=>{});
     };
 
-    const channel=supabase
+    const channel=client
       .channel("myvor:dossiers-refresh")
       .on("postgres_changes",{event:"*",schema:"public",table:"dossiers"},refresh)
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"dossiers"},buildCorpus)
@@ -30,7 +31,7 @@ export default function DossierRealtimeRefresh(){
 
     return()=>{
       if(timer.current)clearTimeout(timer.current);
-      void supabase.removeChannel(channel);
+      void client.removeChannel(channel);
     };
   },[]);
 
