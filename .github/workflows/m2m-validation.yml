@@ -1,0 +1,27 @@
+name: M2M dossier veille validation
+on:
+  push:
+    branches:
+      - fix/m2m-dossier-veille
+permissions:
+  contents: read
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: myvor-v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: myvor-v1/package-lock.json
+      - run: npm ci
+      - run: npm audit --omit=dev --audit-level=high
+      - name: Lint tests and Next build
+        run: npm run check
+      - run: npx playwright install --with-deps chromium
+      - name: Browser smoke test
+        run: npm run test:e2e -- --project=desktop-chromium
