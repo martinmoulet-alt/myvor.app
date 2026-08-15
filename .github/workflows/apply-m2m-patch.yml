@@ -12,6 +12,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: fix/m2m-dossier-veille
+      - name: Verify patch fragments
+        run: |
+          wc -c .m2m.part.00 .m2m.part.01 .m2m.part.02 .m2m.part.03
+          sha256sum .m2m.part.00 .m2m.part.01 .m2m.part.02 .m2m.part.03
+          echo "2eb66cd714fd57ed753a9c7d0fcc3ef24fa39113a58d763e7df0941bcce5321e  .m2m.part.00" | sha256sum -c -
+          echo "097c5bbc38eb41732417330cd92504ca95f62bb0495f9616375877e9696133aa  .m2m.part.01" | sha256sum -c -
+          echo "e61e167c3bf63cdf55e72d209fd4cc29899793ed876575a80bdeee4bb81dd221  .m2m.part.02" | sha256sum -c -
+          echo "11353a170b34af11b0e759038de04c395da55c0c9e87c8c0f8364066dfc22fd1  .m2m.part.03" | sha256sum -c -
       - name: Reassemble and verify patch
         run: |
           cat .m2m.part.00 .m2m.part.01 .m2m.part.02 .m2m.part.03 > /tmp/m2m.patch.gz.b64
