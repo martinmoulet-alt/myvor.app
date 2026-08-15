@@ -30,6 +30,12 @@ function soften(configs){
 export default defineConfig([
   ...soften(nextVitals),
   ...soften(nextTs),
+  {
+    files:["supabase/functions/**/*.ts"],
+    rules:{
+      "prefer-const":"off",
+    },
+  },
   globalIgnores([
     ".next/**",
     "out/**",
