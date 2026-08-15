@@ -1,4 +1,4 @@
 Force Netlify rebuild for Myvor production deployment.
-Source commit: 3c260d1c46c626d208879e1fd971da703362e87d
-Triggered: 2026-08-15 23:44 Europe/Paris
-Reason: deploy the latest Myvor production state after canonical France + EU corpus integration, Supabase cleanup, and scan-dossier-history v11 reliability fixes.
+Source commit: 60fe02fb1411236d8168254c576e5ece705131b7
+Triggered: 2026-08-15 Europe/Paris
+Reason: redeploy after the production Next build passed successfully; includes the realtime Supabase nullability fix, resilient Decision Engine test, canonical France + EU corpus, and CI Edge Function lint correction.
