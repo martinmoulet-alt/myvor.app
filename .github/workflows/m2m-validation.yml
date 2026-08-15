@@ -25,3 +25,5 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Browser smoke test
         run: npm run test:e2e -- --project=desktop-chromium
+      - name: Validation marker
+        run: echo "Final M2M membership path validated"
