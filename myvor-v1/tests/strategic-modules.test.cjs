@@ -25,7 +25,8 @@ test("War Zone strategies are versioned and reconnect to operations",()=>{
   assert.match(source,/type:\s*["']warzone["']/);
   assert.match(source,/listProductions/);
   assert.match(source,/updateProductionContent/);
-  assert.match(source,/Nouveaux signaux de veille/);
+  assert.match(source,/Radar ou veille modifié/);
+  assert.match(source,/recalcul requis/);
   assert.match(source,/Créer un livrable/);
   assert.match(source,/Voir les actions/);
 });
