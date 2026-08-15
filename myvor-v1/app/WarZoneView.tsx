@@ -14,11 +14,11 @@ export type WarZoneActionDraft={dossier_id:string;type:string;title:string;descr
 type StrategyTarget={actor_id:string;name:string;role:string;institution:string;priority:number;why_this_target:string;institutional_goal:string;precise_subject:string;recommended_channel:string;recommended_format:string;factual_angles:string[];evidence_indexes:number[];timing:string;success_signal:string;fallback:string;do_not_assume:string};
 type StrategyStep={order:number;title:string;target_actor_id:string;target_name:string;objective:string;why_now:string;means:string[];deliverable:string;message_frame:string;evidence_indexes:number[];timing:string;dependency:string;success_signal:string;fallback:string;risk:string};
 type DetailedStrategy={diagnosis:{objective:string;decision_point:string;current_constraint:string;opportunity_window:string;recommended_path:string};targets:StrategyTarget[];sequence:StrategyStep[];evidence_gaps:string[];stop_rules:string[];review_trigger:string};
-type StrategyPayload={strategy?:DetailedStrategy;engine?:string;model?:string;watch_items_used?:number;actors_used?:number;degraded?:boolean;warning?:string;specificity_gate?:string};
+type StrategyPayload={strategy?:DetailedStrategy;engine?:string;model?:string;watch_items_used?:number;actors_used?:number;degraded?:boolean;warning?:string;specificity_gate?:string;premium_status?:"premium"|"premium_repaired"|"continuity"};
 type StrategyRequest={dossier:WarZoneDossier;actors:WarZoneActor[];watch:WarZoneWatch[]};
 type Props={dossier:WarZoneDossier|null;actors:WarZoneActor[];watch:WarZoneWatch[];onOpenActor:(actor:WarZoneActor)=>void;onActions?:(drafts:WarZoneActionDraft[])=>Promise<void>|void;onOpenBuilder?:(dossierId:string)=>void;onOpenActions?:()=>void};
 
-type WarZoneProductionContent={strategy?:DetailedStrategy;watch_ids?:string[];actor_ids?:string[];status?:"draft"|"plan_added";engine?:string|null;model?:string|null;generated_at?:string;plan_added_at?:string;degraded?:boolean;warning?:string|null;specificity_gate?:string|null};
+type WarZoneProductionContent={strategy?:DetailedStrategy;watch_ids?:string[];actor_ids?:string[];status?:"draft"|"plan_added";engine?:string|null;model?:string|null;generated_at?:string;plan_added_at?:string;degraded?:boolean;warning?:string|null;specificity_gate?:string|null;premium_status?:"premium"|"premium_repaired"|"continuity"|null};
 
 function score(actor:WarZoneActor){const raw=Number(actor.influence_score);return Number.isFinite(raw)?Math.max(0,Math.min(100,Math.round(raw))):Math.max(20,Math.min(100,Math.round((actor.influence||1)*20)));}
 function strategicIndex(actors:WarZoneActor[],watch:WarZoneWatch[]){if(!actors.length)return 20;const actorBase=actors.reduce((sum,actor)=>sum+score(actor),0)/actors.length;const evidence=Math.min(16,watch.length*1.5);return Math.max(18,Math.min(92,Math.round(actorBase*.76+evidence)));}
@@ -60,7 +60,7 @@ export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions,
   const currentActorIds=useMemo(()=>strategyActors.map(actor=>actor.id),[strategyActors]);
   const currentContextMatches=Boolean(currentProduction&&matchesContext(currentContent,currentWatchIds,currentActorIds));
   const contextChanged=Boolean(strategy&&!currentContextMatches);
-  const executionStatus=currentContent.status==="plan_added"?"Plan ajouté aux actions":currentContextMatches?"Stratégie prête":"Contexte différent";
+  const executionStatus=currentContent.status==="plan_added"?"Plan ajouté aux actions":currentContextMatches&&currentContent.degraded?"Plan de continuité":currentContextMatches?"Stratégie premium prête":"Contexte différent";
   const contextKey=useMemo(()=>`${dossier?.id||""}|${[...currentWatchIds].sort().join(",")}|${[...currentActorIds].sort().join(",")}`,[dossier?.id,currentWatchIds,currentActorIds]);
 
   useEffect(()=>{
@@ -92,7 +92,7 @@ export default function WarZoneView({dossier,actors,watch,onOpenActor,onActions,
       const payload=await postStrategy<StrategyPayload>({dossier,actors:strategyActors,watch:strategyWatch});
       if(!payload.strategy)throw new Error("La War Zone n’a pas retourné de stratégie exploitable.");
       const generatedAt=new Date().toISOString();
-      const content:WarZoneProductionContent={strategy:payload.strategy,watch_ids:currentWatchIds,actor_ids:currentActorIds,status:"draft",engine:payload.engine||null,model:payload.model||null,generated_at:generatedAt,degraded:Boolean(payload.degraded),warning:payload.warning||null,specificity_gate:payload.specificity_gate||null};
+      const content:WarZoneProductionContent={strategy:payload.strategy,watch_ids:currentWatchIds,actor_ids:currentActorIds,status:"draft",engine:payload.engine||null,model:payload.model||null,generated_at:generatedAt,degraded:Boolean(payload.degraded),warning:payload.warning||null,specificity_gate:payload.specificity_gate||null,premium_status:payload.premium_status||null};
       const result=await saveProduction({dossier_id:dossier.id,type:"warzone",title:`War Zone — ${dossier.title}`,content:content as unknown as Record<string,unknown>});
       if(result.error)throw result.error;
       setStrategy(payload.strategy);
