@@ -5,15 +5,27 @@ import {supabase} from "@/lib/supabase";
 
 export default function DossierRealtimeRefresh(){
   const timer=useRef<ReturnType<typeof setTimeout>|null>(null);
+  const scanned=useRef(new Set<string>());
 
   useEffect(()=>{
     if(!supabase)return;
+
+    const refresh=()=>{
+      if(timer.current)clearTimeout(timer.current);
+      timer.current=setTimeout(()=>window.dispatchEvent(new Event("pageshow")),180);
+    };
+
+    const buildCorpus=(payload:any)=>{
+      const dossierId=String(payload?.new?.id||"");
+      if(!dossierId||scanned.current.has(dossierId))return;
+      scanned.current.add(dossierId);
+      void supabase.functions.invoke("scan-dossier-history",{body:{dossier_id:dossierId}}).then(()=>refresh()).catch(()=>{});
+    };
+
     const channel=supabase
       .channel("myvor:dossiers-refresh")
-      .on("postgres_changes",{event:"*",schema:"public",table:"dossiers"},()=>{
-        if(timer.current)clearTimeout(timer.current);
-        timer.current=setTimeout(()=>window.dispatchEvent(new Event("pageshow")),180);
-      })
+      .on("postgres_changes",{event:"*",schema:"public",table:"dossiers"},refresh)
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"dossiers"},buildCorpus)
       .subscribe();
 
     return()=>{
