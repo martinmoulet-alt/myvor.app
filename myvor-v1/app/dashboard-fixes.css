@@ -1,12 +1,7 @@
 .topbar{padding-top:env(safe-area-inset-top);height:calc(68px + env(safe-area-inset-top));min-height:calc(68px + env(safe-area-inset-top))}
 .shell{min-height:calc(100vh - 68px - env(safe-area-inset-top))}
 
-/* Navigation principale : Score d’urgence ET Radar & War Zone restent visibles. */
-.sidebar>.navbtn:nth-child(5),.mobile-menu-nav>button:nth-child(5),
-.sidebar>.navbtn:nth-child(6),.mobile-menu-nav>button:nth-child(6){display:flex!important}
-/* Le 5e bouton est toujours le module Score d’urgence, quel que soit un ancien libellé mis en cache. */
-.sidebar>.navbtn:nth-child(5),.mobile-menu-nav>button:nth-child(5){font-size:0}
-.sidebar>.navbtn:nth-child(5)::after,.mobile-menu-nav>button:nth-child(5)::after{content:"Score d’urgence";font-size:16px}
+/* La navigation est pilotée exclusivement par app/page.tsx : aucun libellé n'est réécrit par CSS. */
 
 .corp-dashboard{gap:18px}
 .corp-head,.today-panel,.corp-kpis,.corp-dashboard-grid{width:100%}
