@@ -1,4 +1,4 @@
 Force Myvor V1 Netlify production rebuild.
-Source commit: d2516691c0733dff1ec06032c85b8fe8cb13a68a
-Triggered: 2026-08-15 08:38 Europe/Paris
-Reason: publish War Zone resilient v7 UI, semantic priority colors, degraded-mode visibility, and current Radar/War Zone workflow.
+Source commit: 77cd3fb6043b157ee33dac51300b5fac618e3b3c
+Triggered: 2026-08-15 17:09 Europe/Paris
+Reason: publish the definitive Myvor Decision Engine wiring: automatic execution after each saved urgency score, grounded server-side reload of verified dossier and full source texts, deterministic decision rules, explainability metrics, evidence traceability, dedicated decision_engine production, and Note Builder bridge.
