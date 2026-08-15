@@ -6,11 +6,12 @@ import {listProductions,saveProduction,updateProductionContent} from "@/lib/prod
 import {presentableText} from "@/lib/presentation";
 import {fetchJsonWithRetry} from "@/lib/reliability";
 import {supabase} from "@/lib/supabase";
+import {belongsToDossier} from "@/lib/watchMembership";
 import WarZoneView,{type WarZoneActor,type WarZoneActionDraft} from "./WarZoneView";
 import styles from "./RadarCorporate.module.css";
 
 type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string;key_actors?:string[];key_deadlines?:string[]};
-type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string;source_name?:string|null;published_at?:string|null};
+type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;dossier_ids?:string[]|null;urgency:string;created_at:string;source_name?:string|null;published_at?:string|null};
 type ActorEvidence={source_index:number;source_title:string;source_url:string;excerpt:string;confidence:number;verified:boolean};
 type ActorSignal={title:string;nature:string;date:string;url:string;source_name?:string;urgency?:string};
 type ScoreBreakdown={institutional_power:number;dossier_relevance:number;timing:number;accessibility:number};
@@ -85,7 +86,7 @@ export default function RadarModule({dossiers,watch,onActions,onOpenBuilder,onOp
   useEffect(()=>{if(workflowContext?.dossierId&&dossiers.some(item=>item.id===workflowContext.dossierId))setDossierId(workflowContext.dossierId);},[workflowContext?.dossierId,dossiers]);
 
   const dossier=dossiers.find(d=>d.id===dossierId)||null;
-  const relatedAll=useMemo(()=>watch.filter(w=>w.dossier_id===dossierId),[watch,dossierId]);
+  const relatedAll=useMemo(()=>watch.filter(w=>belongsToDossier(w,dossierId)),[watch,dossierId]);
   const workflowIds=useMemo(()=>workflowContext?.dossierId===dossierId&&workflowContext.watchIds.length?new Set(workflowContext.watchIds):null,[workflowContext,dossierId]);
   const related=useMemo(()=>workflowIds?relatedAll.filter(item=>workflowIds.has(item.id)):relatedAll,[relatedAll,workflowIds]);
   const relatedIds=useMemo(()=>related.map(item=>item.id),[related]);

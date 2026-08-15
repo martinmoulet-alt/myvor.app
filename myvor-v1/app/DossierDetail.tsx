@@ -4,6 +4,7 @@ import {useEffect,useMemo,useRef,useState} from "react";
 import {AlertTriangle,ArrowLeft,BookOpen,CalendarDays,FileText,Search,Sparkles,Target,TrendingUp,Users,ShieldAlert} from "lucide-react";
 import type {Action} from "./DashboardCorporate";
 import {supabase} from "@/lib/supabase";
+import {belongsToDossier,dossierIds} from "@/lib/watchMembership";
 
 type Dossier={
   id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string;
@@ -13,8 +14,8 @@ type Dossier={
   reference_texts?:string[];key_deadlines?:string[];internal_notes?:string|null;
 };
 type LinkJustification={summary?:string;objective_link?:string;evidence?:string[];consequence?:string;status?:string};
-type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string;published_at?:string|null;source_name?:string|null;link_justification?:LinkJustification|null;link_justification_engine?:string|null;link_justified_at?:string|null};
-type Assignment={watch_id:string;dossier_id:string|null;confidence:number;reason:string};
+type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;dossier_ids?:string[]|null;urgency:string;created_at:string;published_at?:string|null;source_name?:string|null;link_justification?:LinkJustification|null;link_justification_engine?:string|null;link_justified_at?:string|null};
+type Assignment={watch_id:string;dossier_id:string|null;dossier_ids?:string[]|null;confidence:number;reason:string};
 type RelevantEvolution=Watch&{confidence:number;reason:string;linkedToCurrent:boolean;linkedElsewhere:boolean};
 type Tab="dashboard"|"dossiers"|"veille"|"impact"|"radar"|"builder";
 
@@ -26,7 +27,7 @@ function watchDate(item:Watch){const date=new Date(item.published_at||item.creat
 function causalLinkReason(value:string){const reason=String(value||"").trim();if(!reason)return "Raison précise indisponible.";if(/^ce texte (a été|est) rattaché/i.test(reason))return reason;const lowered=reason.charAt(0).toLocaleLowerCase("fr-FR")+reason.slice(1).replace(/[.\s]+$/g,"");return `Ce texte a été rattaché à ce dossier car ${lowered}.`;}
 
 export default function DossierDetail({dossier,watch,actions,back,go,onUpdate}:{dossier:Dossier;watch:Watch[];actions:Action[];back:()=>void;go:(tab:Tab)=>void;onUpdate?:(dossier:Dossier)=>void}){
-  const related=useMemo(()=>watch.filter(w=>w.dossier_id===dossier.id),[watch,dossier.id]);
+  const related=useMemo(()=>watch.filter(w=>belongsToDossier(w,dossier.id)),[watch,dossier.id]);
   const openActions=useMemo(()=>actions.filter(a=>a.dossier_id===dossier.id&&a.status!=="termine"),[actions,dossier.id]);
   const urgent=related.filter(w=>["fort","absolument urgent"].includes(w.urgency));
   const latestEvent=[...related].sort((a,b)=>watchTime(b)-watchTime(a))[0]||null;
@@ -48,7 +49,7 @@ export default function DossierDetail({dossier,watch,actions,back,go,onUpdate}:{
   const [excludedKeywords,setExcludedKeywords]=useState((dossier.watch_excluded_keywords||[]).join("\n"));
   const [strategy,setStrategy]=useState({sector:dossier.sector||"",activity:dossier.activity||"",strategic_issues:(dossier.strategic_issues||[]).join("\n"),risks_to_avoid:(dossier.risks_to_avoid||[]).join("\n"),opportunities:(dossier.opportunities||[]).join("\n"),client_position:dossier.client_position||"",key_actors:(dossier.key_actors||[]).join("\n"),watch_topics:(dossier.watch_topics||[]).join("\n"),watch_subtopics:(dossier.watch_subtopics||[]).join("\n"),reference_texts:(dossier.reference_texts||[]).join("\n"),key_deadlines:(dossier.key_deadlines||[]).join("\n"),internal_notes:dossier.internal_notes||""});
   const relevanceKey=`${dossier.id}|${watch.length}|${(dossier.watch_keywords||[]).join("|")}|${(dossier.watch_priority_phrases||[]).join("|")}|${(dossier.watch_excluded_keywords||[]).join("|")}`;
-  const relevantEvolutions=useMemo(()=>relevance.map(result=>{const item=watch.find(candidate=>candidate.id===result.watch_id);if(!item)return null;return{...item,confidence:Number(result.confidence)||0,reason:result.reason||"Correspondance détectée.",linkedToCurrent:item.dossier_id===dossier.id,linkedElsewhere:!!item.dossier_id&&item.dossier_id!==dossier.id} as RelevantEvolution;}).filter((item):item is RelevantEvolution=>!!item).sort((a,b)=>b.confidence-a.confidence||watchTime(b)-watchTime(a)),[relevance,watch,dossier.id]);
+  const relevantEvolutions=useMemo(()=>relevance.map(result=>{const item=watch.find(candidate=>candidate.id===result.watch_id);if(!item)return null;return{...item,confidence:Number(result.confidence)||0,reason:result.reason||"Correspondance détectée.",linkedToCurrent:belongsToDossier(item,dossier.id),linkedElsewhere:dossierIds(item).some(id=>id!==dossier.id)} as RelevantEvolution;}).filter((item):item is RelevantEvolution=>!!item).sort((a,b)=>b.confidence-a.confidence||watchTime(b)-watchTime(a)),[relevance,watch,dossier.id]);
 
   useEffect(()=>{setWatchKeywords((dossier.watch_keywords||[]).join("\n"));setPriorityPhrases((dossier.watch_priority_phrases||[]).join("\n"));setExcludedKeywords((dossier.watch_excluded_keywords||[]).join("\n"));setWatchMessage("");setEditingWatch(false);setStrategy({sector:dossier.sector||"",activity:dossier.activity||"",strategic_issues:(dossier.strategic_issues||[]).join("\n"),risks_to_avoid:(dossier.risks_to_avoid||[]).join("\n"),opportunities:(dossier.opportunities||[]).join("\n"),client_position:dossier.client_position||"",key_actors:(dossier.key_actors||[]).join("\n"),watch_topics:(dossier.watch_topics||[]).join("\n"),watch_subtopics:(dossier.watch_subtopics||[]).join("\n"),reference_texts:(dossier.reference_texts||[]).join("\n"),key_deadlines:(dossier.key_deadlines||[]).join("\n"),internal_notes:dossier.internal_notes||""});setStrategyMessage("");setEditingStrategy(false);setRelevance([]);setRelevanceMessage("");},[dossier.id]);
   useEffect(()=>{if(!profileIsEmpty(dossier)||autoGeneratedFor.current===dossier.id||generatingStrategy)return;autoGeneratedFor.current=dossier.id;const timer=setTimeout(()=>{void generateStrategy(true);},450);return()=>clearTimeout(timer);},[dossier.id,related.length]);

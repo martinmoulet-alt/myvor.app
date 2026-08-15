@@ -17,13 +17,14 @@ import {
 } from "lucide-react";
 import {saveProduction} from "@/lib/productions";
 import {supabase} from "@/lib/supabase";
+import {belongsToDossier} from "@/lib/watchMembership";
 import styles from "./UrgencyScoreModule.module.css";
 
 type CriterionKey="juridique"|"reglementaire"|"operationnel"|"reputationnel"|"fenetre_action"|"risque_inaction";
 type TabKey="queue"|"analysis"|"justification"|"history";
 type UrgencyBand="faible"|"moyen"|"fort"|"absolument urgent";
 type Dossier={id:string;client:string;title:string;objective:string;context?:string;sector?:string|null;activity?:string|null;strategic_issues?:string[];risks_to_avoid?:string[];opportunities?:string[];client_position?:string|null;key_actors?:string[];key_deadlines?:string[];internal_notes?:string|null};
-type Watch={id:string;title:string;nature:string;source_url?:string;dossier_id:string|null;urgency?:string;source_name?:string|null;published_at?:string|null;created_at?:string;qualification_reason?:string|null};
+type Watch={id:string;title:string;nature:string;source_url?:string;dossier_id:string|null;dossier_ids?:string[]|null;urgency?:string;source_name?:string|null;published_at?:string|null;created_at?:string;qualification_reason?:string|null};
 type ActionDraft={dossier_id:string;type:string;title:string;description?:string;priority:string;due_date?:string|null};
 type CriterionResult={score:number;max:number;justification:string;evidence:string[]};
 type UrgencySource={title:string;url:string;status:string};
@@ -113,7 +114,7 @@ export default function UrgencyScoreModule({
   const[bandFilter,setBandFilter]=useState<"all"|UrgencyBand>("all");
 
   const dossier=dossiers.find(item=>item.id===dossierId)||null;
-  const related=useMemo(()=>watch.filter(item=>item.dossier_id===dossierId).sort((a,b)=>dateValue(b)-dateValue(a)),[watch,dossierId]);
+  const related=useMemo(()=>watch.filter(item=>belongsToDossier(item,dossierId)).sort((a,b)=>dateValue(b)-dateValue(a)),[watch,dossierId]);
   const focusForDossier=useMemo(()=>new Set(focusWatchIds.filter(id=>related.some(item=>item.id===id))),[focusWatchIds,related]);
   const defaultIds=useMemo(()=>focusForDossier.size?[...focusForDossier].slice(0,MAX_ITEMS):related.slice(0,MAX_ITEMS).map(item=>item.id),[focusForDossier,related]);
   const effectiveIds=selectedIds??defaultIds;
@@ -138,9 +139,9 @@ export default function UrgencyScoreModule({
         production,
         score,
         band:score===null?null:scoreBand(score),
-        attached:watch.filter(row=>row.dossier_id===item.id).length,
+        attached:watch.filter(row=>belongsToDossier(row,item.id)).length,
         summary:saved?.summary||"",
-        watchIds:saved?.watch_ids?.length?saved.watch_ids:watch.filter(row=>row.dossier_id===item.id).sort((a,b)=>dateValue(b)-dateValue(a)).slice(0,MAX_ITEMS).map(row=>row.id),
+        watchIds:saved?.watch_ids?.length?saved.watch_ids:watch.filter(row=>belongsToDossier(row,item.id)).sort((a,b)=>dateValue(b)-dateValue(a)).slice(0,MAX_ITEMS).map(row=>row.id),
       };
     }).filter(row=>{
       const haystack=`${row.dossier.client} ${row.dossier.title}`.toLowerCase();

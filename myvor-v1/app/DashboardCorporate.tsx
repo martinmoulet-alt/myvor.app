@@ -4,10 +4,11 @@ import {useEffect,useMemo,useState} from "react";
 import {ArrowRight,Bell,BriefcaseBusiness,CalendarDays,FileSearch,Search,ShieldCheck,Sparkles,Target} from "lucide-react";
 import {supabase} from "@/lib/supabase";
 import {useSemanticWatchFeed} from "@/lib/useSemanticWatchFeed";
+import {belongsToDossier} from "@/lib/watchMembership";
 
 type Tab="dashboard"|"dossiers"|"veille"|"impact"|"radar"|"builder";
 type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string};
-type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string;source_name?:string|null;published_at?:string|null};
+type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;dossier_ids?:string[]|null;urgency:string;created_at:string;source_name?:string|null;published_at?:string|null};
 export type Action={id:string;dossier_id:string|null;type:string;title:string;description:string|null;actor_name:string|null;priority:string;status:string;due_date:string|null;created_at:string;updated_at:string};
 type UserProfile={job_type:string|null;topics:string[]|null;institutions:string[]|null;alert_level:string|null};
 type SearchResult={key:string;kind:"Dossier"|"Veille"|"Action";title:string;meta:string;target:"dossier"|"watch"|"action";id:string};
@@ -73,7 +74,7 @@ export default function DashboardCorporate({dossiers,watch,actions,actionsLoadin
   const dossierPriorities=useMemo<DossierPriority[]>(()=>{
     const now=Date.now();
     return dossiers.map(dossier=>{
-      const linkedWatch=watch.filter(item=>item.dossier_id===dossier.id);
+      const linkedWatch=watch.filter(item=>belongsToDossier(item,dossier.id));
       const linkedActions=openActions.filter(action=>action.dossier_id===dossier.id);
       const watchRank=Math.max(0,...linkedWatch.map(item=>rank(item.urgency)));
       const actionRank=Math.max(0,...linkedActions.map(action=>rank(action.priority)));
@@ -174,7 +175,7 @@ export default function DashboardCorporate({dossiers,watch,actions,actionsLoadin
     </section>
 
     <section className="pd-grid">
-      <article className="pd-panel"><div className="pd-panel-head"><h3><Bell size={15}/> Ce qui a changé</h3><button className="pd-link" type="button" onClick={()=>go("veille")}>Toute la veille <ArrowRight size={13}/></button></div><div className="pd-body"><div className="pd-list">{relevantWatch.length?relevantWatch.map(item=><button className="pd-item" type="button" key={item.id} onClick={()=>openExactWatch(item.id)}><span><b>{item.title}</b><small>{[item.source_name||item.nature,semanticFeed.status==="ready"?semanticFeed.metaById.get(item.id)?.reason:null,priorityDossier&&item.dossier_id===priorityDossier.id?"Dossier prioritaire":null].filter(Boolean).join(" · ")}</small></span><span className={`pd-urgency ${item.urgency.replaceAll(" ","-")}`}>{item.urgency}</span></button>):<div className="pd-empty">Aucune évolution prioritaire pour le moment. Votre veille reste centrée sur les sujets et institutions choisis pendant l’onboarding.</div>}</div></div></article>
+      <article className="pd-panel"><div className="pd-panel-head"><h3><Bell size={15}/> Ce qui a changé</h3><button className="pd-link" type="button" onClick={()=>go("veille")}>Toute la veille <ArrowRight size={13}/></button></div><div className="pd-body"><div className="pd-list">{relevantWatch.length?relevantWatch.map(item=><button className="pd-item" type="button" key={item.id} onClick={()=>openExactWatch(item.id)}><span><b>{item.title}</b><small>{[item.source_name||item.nature,semanticFeed.status==="ready"?semanticFeed.metaById.get(item.id)?.reason:null,priorityDossier&&belongsToDossier(item,priorityDossier.id)?"Dossier prioritaire":null].filter(Boolean).join(" · ")}</small></span><span className={`pd-urgency ${item.urgency.replaceAll(" ","-")}`}>{item.urgency}</span></button>):<div className="pd-empty">Aucune évolution prioritaire pour le moment. Votre veille reste centrée sur les sujets et institutions choisis pendant l’onboarding.</div>}</div></div></article>
 
       <article className="pd-panel"><div className="pd-panel-head"><h3><Sparkles size={15}/> Prochaine action</h3><span className="pd-pill gold">Recommandée</span></div><div className="pd-body">{urgentAction?<><div className="pd-action-title">{urgentAction.title}</div><div className="pd-action-context">{urgentAction.description||`Action rattachée à ${dossierName(urgentAction.dossier_id)}.`}</div><div className="pd-action-meta"><span><BriefcaseBusiness size={14}/>{dossierName(urgentAction.dossier_id)}</span>{urgentAction.due_date&&<span><CalendarDays size={14}/>Échéance {shortDate(urgentAction.due_date)}</span>}</div><button className="pd-primary" type="button" onClick={()=>openExactAction(urgentAction)}>{actionCta(urgentAction.type)}<ArrowRight size={15}/></button></>:priorityWatch?<><div className="pd-action-title">Analyser l’évolution prioritaire</div><div className="pd-action-context">{priorityWatch.title}</div><button className="pd-primary" type="button" onClick={()=>openExactWatch(priorityWatch.id)}>Analyser maintenant <ArrowRight size={15}/></button></>:priorityDossier?<><div className="pd-action-title">Configurer la veille du dossier</div><div className="pd-action-context">Commencez par rattacher les évolutions pertinentes à {priorityDossier.title}.</div><button className="pd-primary" type="button" onClick={()=>go("veille")}>Configurer la veille <ArrowRight size={15}/></button></>:<div className="pd-empty">Votre prochaine action apparaîtra dès qu’un dossier est créé.</div>}</div></article>
 
