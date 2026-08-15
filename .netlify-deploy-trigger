@@ -1,4 +1,4 @@
 Force Netlify rebuild for Myvor production deployment.
-Source commit: eb8be2a72f755e1f749bd281ff8b527e7899f7d8
-Triggered: 2026-08-14 15:42 Europe/Paris
-Reason: publish the Myvor yellow-accent visibility polish for the Dossiers clients cockpit without changing data or functionality.
+Source commit: ac001e20ad649a8d27cc137bf4b40e50b0d28ec9
+Triggered: 2026-08-15 08:08 Europe/Paris
+Reason: publish the current Myvor navigation and production modules, including Radar & War Zone in the sidebar, after GitHub CI validation.
