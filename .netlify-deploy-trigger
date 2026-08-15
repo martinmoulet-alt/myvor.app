@@ -1,4 +1,4 @@
 Force Netlify rebuild for Myvor production deployment.
-Source commit: cff874ce64dc6c2e28589fe6383cdbcd0f573083
-Triggered: 2026-08-15 16:32 Europe/Paris
-Reason: deploy the finalized Myvor Note Builder with mandatory Objet, separated sections, rich bold rendering, Decision Engine context preservation, and the validated War Zone quota fix.
+Source commit: d10990312b2ac276f863a9bbba463306fc5de570
+Triggered: 2026-08-15 Europe/Paris
+Reason: deploy the rebuilt professional Note Builder deliverable with A4-style document preview, prominent Objet, separated professional sections, key takeaways, rich bold emphasis, sources footer, collapsed editing panel, and validated Word/PDF rendering.
