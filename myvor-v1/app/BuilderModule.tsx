@@ -6,10 +6,11 @@ import {listProductions,saveProduction} from "@/lib/productions";
 import {filterPresentableLines,filterPresentableStrings,presentableText} from "@/lib/presentation";
 import {clearBuilderDraft,readBuilderDraft,writeBuilderDraft} from "@/lib/builderDraft";
 import {supabase} from "@/lib/supabase";
+import {belongsToDossier} from "@/lib/watchMembership";
 import styles from "./BuilderCorporate.module.css";
 
 type Dossier={id:string;client:string;title:string;objective:string;context:string;status:string;created_at:string};
-type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;urgency:string;created_at:string};
+type Watch={id:string;title:string;nature:string;source_url:string;dossier_id:string|null;dossier_ids?:string[]|null;urgency:string;created_at:string};
 type BuiltDocument={title:string;subject:string;content:string;key_points:string[];sources:{title:string;url:string}[]};
 type EditAction="reformulate"|"shorten"|"strengthen"|"diplomatic";
 type ReviewStatus="generated"|"reviewed"|"validated";
@@ -143,7 +144,7 @@ export default function BuilderModule({dossiers,watch}:{dossiers:Dossier[];watch
   const titleRef=useRef<HTMLTextAreaElement|null>(null);
   const contentRef=useRef<HTMLTextAreaElement|null>(null);
   const dossier=dossiers.find(d=>d.id===dossierId)||null;
-  const related=useMemo(()=>watch.filter(w=>w.dossier_id===dossierId),[watch,dossierId]);
+  const related=useMemo(()=>watch.filter(w=>belongsToDossier(w,dossierId)),[watch,dossierId]);
 
   function resizeTitle(){const el=titleRef.current;if(!el)return;el.style.height="auto";el.style.height=`${Math.max(el.scrollHeight,42)}px`;}
   function resizeEditor(){const el=contentRef.current;if(!el)return;el.style.height="auto";el.style.height=`${Math.max(el.scrollHeight,430)}px`;}

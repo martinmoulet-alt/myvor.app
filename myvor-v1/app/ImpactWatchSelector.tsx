@@ -4,6 +4,7 @@ import {useEffect,useMemo} from "react";
 import {AlertTriangle,RefreshCw} from "lucide-react";
 import type {DossierForImpact,WatchForImpact} from "@/lib/impactTypes";
 import styles from "./ImpactCorporate.module.css";
+import {belongsToDossier} from "@/lib/watchMembership";
 
 export type ImpactAssignment={watch_id:string;dossier_id:string|null;confidence:number;reason:string};
 export type ImpactCandidate={item:WatchForImpact;confidence:number|null;reason:string;linked:boolean;source:"linked"|"live"|"persisted";dossierId:string};
@@ -19,10 +20,10 @@ function publishWorkflowContext(dossierId:string,watchIds:string[]){if(typeof wi
 export function buildImpactCandidates(allWatch:WatchForImpact[],dossierId:string,assignments:ImpactAssignment[]){
   const live=new Map(assignments.filter(result=>result.dossier_id===dossierId&&Number(result.confidence)>=RELEVANCE_THRESHOLD).map(result=>[result.watch_id,result]));
   return allWatch.map(item=>{
-    const linked=item.dossier_id===dossierId;
-    if(item.dossier_id&&item.dossier_id!==dossierId)return null;
+    const linked=belongsToDossier(item,dossierId);
+
     const liveMatch=live.get(item.id);
-    const persisted=!item.dossier_id&&item.suggested_dossier_id===dossierId&&Number(item.qualification_confidence)>=RELEVANCE_THRESHOLD;
+    const persisted=!linked&&item.suggested_dossier_id===dossierId&&Number(item.qualification_confidence)>=RELEVANCE_THRESHOLD;
     if(!linked&&!liveMatch&&!persisted)return null;
     const confidence=liveMatch?Number(liveMatch.confidence):persisted?Number(item.qualification_confidence):null;
     const reason=liveMatch?.reason||item.qualification_reason||(linked?"Évolution déjà rattachée à ce dossier.":"Correspondance détectée par Myvor.");
@@ -45,7 +46,7 @@ export function useImpactRelevance({dossier,allWatch,onResults,onLoading,onMessa
     publishWorkflowContext(dossier.id,[]);
     let cancelled=false;
     const timer=setTimeout(async()=>{
-      const candidates=[...allWatch].filter(item=>!item.dossier_id||item.dossier_id===dossier.id).sort((a,b)=>watchTime(b)-watchTime(a)).slice(0,40);
+      const candidates=[...allWatch].filter(item=>!belongsToDossier(item,dossier.id)).sort((a,b)=>watchTime(b)-watchTime(a)).slice(0,40);
       if(!candidates.length){if(!cancelled){onResults([]);onMessage("Aucune publication disponible à comparer avec ce dossier.");onLoading(false);}return;}
       onLoading(true);onMessage("Myvor recherche les évolutions réellement pertinentes pour ce dossier…");
       try{

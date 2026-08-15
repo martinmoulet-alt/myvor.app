@@ -3,6 +3,7 @@
 import {useEffect,useMemo,useState} from "react";
 import {AlertTriangle,ArrowRight,CheckCircle2,ChevronDown,ChevronUp,ExternalLink,FileText,RefreshCw,Scale,ShieldCheck,Target} from "lucide-react";
 import {supabase} from "@/lib/supabase";
+import {belongsToDossier} from "@/lib/watchMembership";
 
 type Dossier={
   id:string;client:string;title:string;objective?:string|null;context?:string|null;
@@ -13,7 +14,7 @@ type ChainStatus="complete"|"partial"|"no_explicit_reference"|"unresolved";
 type HistoricalStatus="resolved"|"partial"|"no_history"|"unresolved";
 type ChangeView="evolution"|"filiation"|"fondements";
 type Watch={
-  id:string;title:string;nature:string;source_url:string;dossier_id:string|null;created_at:string;
+  id:string;title:string;nature:string;source_url:string;dossier_id:string|null;dossier_ids?:string[]|null;created_at:string;
   source_name?:string|null;published_at?:string|null;urgency?:string|null;change_type?:string|null;change_summary?:string|null;
   change_baseline_ids?:string[]|null;link_justification?:LinkJustification|null;
   normative_chain_ids?:string[]|null;normative_chain_status?:ChainStatus|null;normative_unresolved_references?:number|null;
@@ -121,7 +122,7 @@ export default function ChangesModuleV4({dossiers,watch,onOpenImpact}:{dossiers:
 
   const corpusScore=useMemo(()=>new Map(corpusResults.map(r=>[r.id,r.score])),[corpusResults]);
   const corpusReason=useMemo(()=>new Map(corpusResults.map(r=>[r.id,r.reason||""])),[corpusResults]);
-  const directIds=useMemo(()=>watch.filter(w=>w.dossier_id===selectedDossierId).map(w=>w.id),[watch,selectedDossierId]);
+  const directIds=useMemo(()=>watch.filter(w=>belongsToDossier(w,selectedDossierId)).map(w=>w.id),[watch,selectedDossierId]);
   const seedIds=useMemo(()=>new Set([...directIds,...corpusResults.filter(r=>r.score>=CORPUS_THRESHOLD).map(r=>r.id)]),[directIds,corpusResults]);
   const legalCorpus=useMemo(()=>{
     const ids=new Set(seedIds);let changed=true,depth=0;
@@ -202,7 +203,7 @@ export default function ChangesModuleV4({dossiers,watch,onOpenImpact}:{dossiers:
     {actionItem&&<section className="actionStrip"><div className="actionIcon"><Target size={16}/></div><div><small>À traiter maintenant · {urgencyLabel(actionItem.urgency)}</small><strong>{actionItem.title}</strong><p>{cut(actionItem.link_justification?.consequence||actionItem.change_summary||"Vérifier la portée de cet acte sur le dossier.",230)}</p></div><div className="actionBtns"><button className="textBtn" onClick={()=>setSelectedChangeId(actionItem.id)}>Ouvrir l’analyse</button>{onOpenImpact&&<button className="impactBtn" onClick={()=>onOpenImpact(selectedDossierId,[actionItem.id])}>Évaluer l’urgence</button>}</div></section>}
 
     <section><div className="sectionHead"><div><h3>Chronologie juridique du dossier</h3><p>Tous les actes applicables détectés dans le corpus Myvor, plus récent d’abord. Cliquez sur une ligne pour ouvrir le comparatif.</p></div><span>{filtered.length} acte{filtered.length>1?"s":""} affiché{filtered.length>1?"s":""}</span></div>
-      {filtered.length?<div className="actTable">{filtered.map(w=>{const active=w.id===item?.id,b=roleBadge(w),score=corpusScore.get(w.id),reason=corpusReason.get(w.id)||"";return <article key={w.id} className={`actRow ${active?"active":""}`} onClick={()=>setSelectedChangeId(w.id)}><div className="actDate"><small>{dateLabel(w.published_at||w.created_at)}</small><strong>{normKind(w)}</strong></div><div className="actTitle"><strong>{w.title}</strong><small>{w.source_name||"Source institutionnelle"}{score!=null?` · pertinence ${Math.round(score*100)} %`:w.dossier_id===selectedDossierId?" · rattaché au dossier":" · filiation normative"}</small></div><div className="actRole"><span className="role" style={{color:b.color}}>{b.label}</span></div><div className="actText">{cut(w.change_summary||reason||"Acte pertinent identifié dans le corpus juridique.",170)}</div><div className="actImpact">{cut(w.link_justification?.consequence||"Incidence dossier à qualifier.",140)}</div><ExternalLink className="actSource" size={13}/></article>})}</div>:<div className="empty">{corpusLoading?"Myvor construit le corpus juridique du dossier…":"Aucun acte juridique ne correspond encore à ce dossier et à ce filtre."}</div>}
+      {filtered.length?<div className="actTable">{filtered.map(w=>{const active=w.id===item?.id,b=roleBadge(w),score=corpusScore.get(w.id),reason=corpusReason.get(w.id)||"";return <article key={w.id} className={`actRow ${active?"active":""}`} onClick={()=>setSelectedChangeId(w.id)}><div className="actDate"><small>{dateLabel(w.published_at||w.created_at)}</small><strong>{normKind(w)}</strong></div><div className="actTitle"><strong>{w.title}</strong><small>{w.source_name||"Source institutionnelle"}{score!=null?` · pertinence ${Math.round(score*100)} %`:belongsToDossier(w,selectedDossierId)?" · rattaché au dossier":" · filiation normative"}</small></div><div className="actRole"><span className="role" style={{color:b.color}}>{b.label}</span></div><div className="actText">{cut(w.change_summary||reason||"Acte pertinent identifié dans le corpus juridique.",170)}</div><div className="actImpact">{cut(w.link_justification?.consequence||"Incidence dossier à qualifier.",140)}</div><ExternalLink className="actSource" size={13}/></article>})}</div>:<div className="empty">{corpusLoading?"Myvor construit le corpus juridique du dossier…":"Aucun acte juridique ne correspond encore à ce dossier et à ce filtre."}</div>}
     </section>
 
     {item&&<section className="workspace"><div className="changeHead"><div><div className="meta">Analyse sélectionnée · {item.source_name||item.nature} · {dateLabel(item.published_at||item.created_at)}</div><h2 className="shortTitle">{item.title}</h2></div><span className="badge" style={{color:badge.color}}>{badge.label}</span></div>
