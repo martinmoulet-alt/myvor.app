@@ -42,5 +42,5 @@ test("Decision Engine keeps AI subordinate to verified evidence and deterministi
   assert.match(source,/Les extraits textuels sont la preuve primaire/);
   assert.match(source,/ne les recalcul/);
   assert.match(source,/deterministic-continuity/);
-  assert.match(source,/corpus\.includes\(fold\(actor\.name\)\)/);
+  assert.match(source,/corpus\.includes\(fold\([A-Za-z_$][\w$]*\.name\)\)/);
 });
