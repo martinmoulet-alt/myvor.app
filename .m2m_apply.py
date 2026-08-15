@@ -2,8 +2,8 @@ from pathlib import Path
 import base64,zlib,json,hashlib,sys
 
 ROOT=Path("myvor-v1")
-data="".join(Path(f".m2m.data.{i:02d}").read_text() for i in range(3))
-payload=json.loads(zlib.decompress(base64.b85decode(data.encode())).decode())
+data="".join(Path(f".m2m.b64.{i:02d}").read_text() for i in range(5))
+payload=json.loads(zlib.decompress(base64.b64decode(data.encode())).decode())
 for rel,ops in payload["ops"].items():
     p=ROOT/rel
     text=p.read_text() if p.exists() else ""
