@@ -33,7 +33,8 @@ test("Decision Engine persists both its own production and the urgency bridge",(
   const productions=read("lib/productions.ts");
   assert.match(productions,/"decision_engine"/);
   assert.match(productions,/functions\.invoke\("decision-engine"/);
-  assert.match(productions,/production\.type==="urgency_score"/);
+  assert.match(productions,/production\.type!=="urgency_score"/);
+  assert.match(productions,/production\?\.type==="urgency_score"/);
 });
 
 test("Decision Engine keeps AI subordinate to verified evidence and deterministic rules",()=>{
