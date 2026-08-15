@@ -2,231 +2,49 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import {createClient} from "npm:@supabase/supabase-js@2.111.0";
 import {corsHeaders} from "npm:@supabase/supabase-js@2.111.0/cors";
 
-type Dossier={
-  id:string;user_id:string;organization_id:string;title:string;objective:string;context?:string|null;
-  sector?:string|null;activity?:string|null;strategic_issues?:string[]|null;risks_to_avoid?:string[]|null;
-  opportunities?:string[]|null;client_position?:string|null;key_actors?:string[]|null;
-  watch_keywords?:string[]|null;watch_priority_phrases?:string[]|null;watch_excluded_keywords?:string[]|null;
-  watch_topics?:string[]|null;watch_subtopics?:string[]|null;reference_texts?:string[]|null;
-};
-type WatchItem={
-  id:string;user_id:string;organization_id:string;title:string;nature:string;source_url:string;
-  dossier_id:string|null;suggested_dossier_id:string|null;qualification_reason:string|null;
-  published_at?:string|null;created_at?:string|null;change_type?:string|null;change_summary?:string|null;
-};
+type Dossier={id:string;user_id:string;organization_id:string;title:string;objective:string;context?:string|null;sector?:string|null;activity?:string|null;strategic_issues?:string[]|null;risks_to_avoid?:string[]|null;opportunities?:string[]|null;client_position?:string|null;key_actors?:string[]|null;watch_keywords?:string[]|null;watch_priority_phrases?:string[]|null;watch_excluded_keywords?:string[]|null;watch_topics?:string[]|null;watch_subtopics?:string[]|null;reference_texts?:string[]|null};
+type WatchItem={id:string;organization_id:string;title:string;nature:string;source_url:string;dossier_id:string|null;suggested_dossier_id:string|null;qualification_confidence?:number|null;qualification_reason?:string|null;published_at?:string|null;created_at?:string|null;change_type?:string|null;change_summary?:string|null};
+type EurlexDoc={celex:string;title:string;nature:string;source_url:string;published_at:string|null;source_text:string;depth:number;parent:string|null;root:boolean};
 type Score={score:number;matches:string[];reason:string};
-type Result={id:string;title:string;score:number;status:string;reason:string;change_type?:string|null;change_summary?:string|null};
-type PendingWrite={item:WatchItem;score:Score;status:string;reason:string;payload:Record<string,unknown>};
 
 const H={...corsHeaders,"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"};
-const PAGE_SIZE=200;
-const SOURCE_EXCERPT_CHARS=24000;
-const AUTO_THRESHOLD=.58;
-const REVIEW_THRESHOLD=.36;
-const ENGINE_BASE="myvor-corpus-applicable-v7-secure-generic-batched";
-const RULE_PREFIX="Corpus applicable v7 —";
+const CELLAR="https://publications.europa.eu",PAGE_SIZE=200,MAX_SOURCE=24000,AUTO=.58,REVIEW=.36;
+const ENGINE_BASE="myvor-corpus-applicable-v10-named-eu-acts";
 const UUID_RE=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const WEAK=new Set([
-  "article","articles","loi","lois","decret","decrets","arrete","arretes","code","journal","officiel","publication",
-  "gouvernement","ministere","ministre","assemblee","nationale","senat","france","europe","europeen","commission","conseil",
-  "entreprise","entreprises","public","publique","service","services","nouveau","nouvelle","application","applicable","relatif",
-  "relative","concernant","texte","textes","objectif","dossier","veille","reforme","reglementation","reglementaire","mise","conformite"
-]);
-const STOP=new Set(["de","du","des","la","le","les","un","une","et","ou","a","au","aux","en","dans","sur","pour","par","avec","sans","vers","l","d","relative","relatif","concernant"]);
-const CHANGE_LABELS:Record<string,string>={socle_initial:"Socle initial",nouveau:"Nouveau",modification:"Modification",precision:"Précision",application:"Application",abrogation:"Abrogation",aucun_changement:"Aucun changement",indetermine:"À préciser"};
+const WEAK=new Set(["article","articles","loi","lois","decret","decrets","arrete","arretes","code","journal","officiel","publication","gouvernement","ministere","ministre","assemblee","nationale","senat","france","europe","europeen","commission","conseil","entreprise","entreprises","public","publique","service","services","nouveau","nouvelle","application","applicable","relatif","relative","concernant","texte","textes","objectif","dossier","veille","reforme","reglementation","reglementaire","mise","conformite"]);
+const ALIASES:[RegExp,string][]=[
+  [/\bdigital omnibus\b/i,"52025PC0837"],[/\b(?:rgpd|gdpr)\b/i,"32016R0679"],[/\bdata act\b|\breglement sur les donnees\b/i,"32023R2854"],[/\bnis\s*2\b|\bnis2\b|\bsri\s*2\b/i,"32022L2555"],[/\beprivacy\b|\bvie privee et communications electroniques\b/i,"32002L0058"],[/\bdata governance act\b|\breglement sur la gouvernance des donnees\b/i,"32022R0868"],[/\bcer directive\b|\bresilience des entites critiques\b/i,"32022L2557"],[/\bopen data directive\b|\bdirective donnees ouvertes\b/i,"32019L1024"],[/\bfree flow of non personal data\b|\blibre circulation des donnees a caractere non personnel\b/i,"32018R1807"],[/\bp2b regulation\b|\bplatform to business\b/i,"32019R1150"],[/\bai act\b|\breglement sur l intelligence artificielle\b/i,"32024R1689"],[/\bdigital services act\b|\bdsa\b/i,"32022R2065"],[/\bdigital markets act\b|\bdma\b/i,"32022R1925"]
+];
 
-function json(body:unknown,status=200){return new Response(JSON.stringify(body),{status,headers:H})}
-function clip(v:unknown,max:number){return String(v??"").normalize("NFKC").replace(/[\u0000-\u001f\u007f]/g,"").slice(0,max).trim()}
-function adminKey(){const modern=Deno.env.get("SUPABASE_SECRET_KEYS");if(modern){try{const keys=JSON.parse(modern);const v=keys?.default||Object.values(keys||{})[0];if(typeof v==="string"&&v)return v}catch{}}return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")||""}
-function norm(v:unknown){return String(v??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").replace(/\s+/g," ").trim()}
-function list(v:unknown):string[]{return Array.isArray(v)?[...new Set(v.map(x=>String(x||"").trim()).filter(Boolean))]:[]}
-function contains(text:string,phrase:string){const n=norm(phrase);return !!n&&` ${text} `.includes(` ${n} `)}
-function words(v:unknown){return[...new Set(norm(v).split(" ").filter(w=>w.length>=5&&!WEAK.has(w)&&!/^\d+$/.test(w)))]}
-function allProfileText(d:Dossier){return [d.title,d.objective,d.context||"",d.sector||"",d.activity||"",d.client_position||"",...list(d.strategic_issues),...list(d.risks_to_avoid),...list(d.opportunities),...list(d.key_actors),...list(d.watch_keywords),...list(d.watch_priority_phrases),...list(d.watch_topics),...list(d.watch_subtopics),...list(d.reference_texts)].join(" ")}
-function legalRefs(v:unknown){const n=norm(v),out:string[]=[];for(const m of n.matchAll(/\b20\d{2}[ -]\d{2,}\b/g))out.push(m[0]);for(const m of n.matchAll(/\b[lr]\s*\d{2,}(?:\s*\d+)*\b/g))out.push(m[0]);for(const m of n.matchAll(/\bjorftext\s*\d{8,}\b/g))out.push(m[0]);for(const m of n.matchAll(/\blegiarti\s*\d{8,}\b/g))out.push(m[0]);for(const m of n.matchAll(/\bcelex\s*[0-9a-z]{6,}\b/g))out.push(m[0]);return[...new Set(out)]}
-function phraseCandidates(v:unknown,max=30){const tokens=norm(v).split(" ").filter(Boolean);const out:string[]=[];for(let n=2;n<=4;n++){for(let i=0;i+n<=tokens.length;i++){const chunk=tokens.slice(i,i+n);const meaningful=chunk.filter(t=>!STOP.has(t));if(meaningful.length<2)continue;const phrase=chunk.join(" ");if(phrase.length>=5)out.push(phrase)}}return[...new Set(out)].sort((a,b)=>b.length-a.length).slice(0,max)}
-function strongTerm(v:string){const n=norm(v);return !!n&&n.length>=4&&(/\b20\d{2}[ -]\d{2,}\b/.test(n)||/\b[lr]\s*\d{2,}/.test(n)||phraseCandidates(n,2).length>0||words(n).length>0)}
-function delta(item:WatchItem){if(!item.change_type||!item.change_summary)return"";if(item.change_type==="socle_initial")return`Socle de référence — ${clip(item.change_summary,520)}`;return`Ce qui change — ${CHANGE_LABELS[item.change_type]||"Évolution"} : ${clip(item.change_summary,520)}`}
-function profileStrength(d:Dossier){let n=2;if(clip(d.context,20))n++;if(list(d.watch_keywords).length)n++;if(list(d.watch_topics).length||list(d.watch_subtopics).length)n++;if(list(d.reference_texts).length)n++;if(clip(d.sector,2)||clip(d.activity,2))n++;if(list(d.strategic_issues).length||list(d.key_actors).length)n++;return Math.min(8,n)}
-async function fingerprint(d:Dossier){const raw=JSON.stringify({title:d.title,objective:d.objective,context:d.context||"",sector:d.sector||"",activity:d.activity||"",issues:list(d.strategic_issues),risks:list(d.risks_to_avoid),opportunities:list(d.opportunities),position:d.client_position||"",actors:list(d.key_actors),keywords:list(d.watch_keywords),priority:list(d.watch_priority_phrases),excluded:list(d.watch_excluded_keywords),topics:list(d.watch_topics),subtopics:list(d.watch_subtopics),refs:list(d.reference_texts)});const bytes=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(raw));return Array.from(new Uint8Array(bytes)).slice(0,8).map(x=>x.toString(16).padStart(2,"0")).join("")}
+function json(body:unknown,status=200){return new Response(JSON.stringify(body),{status,headers:H});}
+function clip(v:unknown,max:number){return String(v??"").normalize("NFKC").replace(/[\u0000-\u001f\u007f]/g," ").replace(/\s+/g," ").slice(0,max).trim();}
+function norm(v:unknown){return String(v??"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").replace(/\s+/g," ").trim();}
+function list(v:unknown):string[]{return Array.isArray(v)?[...new Set(v.map(x=>String(x||"").trim()).filter(Boolean))]:[];}
+function words(v:unknown){return[...new Set(norm(v).split(" ").filter(w=>w.length>=5&&!WEAK.has(w)&&!/^\d+$/.test(w)))];}
+function contains(text:string,phrase:string){const n=norm(phrase);return !!n&&` ${text} `.includes(` ${n} `);}
+function adminKey(){const modern=Deno.env.get("SUPABASE_SECRET_KEYS");if(modern){try{const keys=JSON.parse(modern),v=keys?.default||Object.values(keys||{})[0];if(typeof v==="string"&&v)return v;}catch{}}return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")||"";}
+function allProfileText(d:Dossier){return[d.title,d.objective,d.context||"",d.sector||"",d.activity||"",d.client_position||"",...list(d.strategic_issues),...list(d.risks_to_avoid),...list(d.opportunities),...list(d.key_actors),...list(d.watch_keywords),...list(d.watch_priority_phrases),...list(d.watch_topics),...list(d.watch_subtopics),...list(d.reference_texts)].join(" ");}
+async function fingerprint(d:Dossier){const raw=JSON.stringify({title:d.title,objective:d.objective,context:d.context||"",keywords:list(d.watch_keywords),priority:list(d.watch_priority_phrases),excluded:list(d.watch_excluded_keywords),topics:list(d.watch_topics),subtopics:list(d.watch_subtopics),refs:list(d.reference_texts)});const bytes=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(raw));return Array.from(new Uint8Array(bytes)).slice(0,8).map(x=>x.toString(16).padStart(2,"0")).join("");}
+function entities(x:string){const m:Record<string,string>={amp:"&",lt:"<",gt:">",quot:'"',apos:"'",nbsp:" ",laquo:"«",raquo:"»",ndash:"–",mdash:"—",hellip:"…",eacute:"é",egrave:"è",ecirc:"ê",agrave:"à",ccedil:"ç",ugrave:"ù",rsquo:"’",ldquo:"“",rdquo:"”"};return x.replace(/&#(x[0-9a-f]+|\d+);?/gi,(_,r)=>{const n=String(r).toLowerCase().startsWith("x")?parseInt(String(r).slice(1),16):parseInt(String(r),10);try{return Number.isFinite(n)?String.fromCodePoint(n):_;}catch{return _;}}).replace(/&([a-z][a-z0-9]+);/gi,(a,n)=>m[String(n).toLowerCase()]??a);}
+function cleanHtml(x:string){return clip(entities(x.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,"$1").replace(/<script\b[\s\S]*?<\/script>/gi," ").replace(/<style\b[\s\S]*?<\/style>/gi," ").replace(/<noscript\b[\s\S]*?<\/noscript>/gi," ").replace(/<svg\b[\s\S]*?<\/svg>/gi," ").replace(/<nav\b[\s\S]*?<\/nav>/gi," ").replace(/<header\b[\s\S]*?<\/header>/gi," ").replace(/<footer\b[\s\S]*?<\/footer>/gi," ").replace(/<[^>]+>/g," ")),40000);}
+function safeDate(raw:string|null|undefined){if(!raw)return null;const t=Date.parse(String(raw));return Number.isFinite(t)&&t<=Date.now()+36*3600000&&t>Date.UTC(1900,0,1)?new Date(t).toISOString():null;}
+function titleFromHtml(html:string,celex:string){const xs=[html.match(/<meta[^>]+(?:name|property)=["'](?:DC\.title|dcterms\.title|og:title)["'][^>]+content=["']([^"']+)["']/i)?.[1],html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1],html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]].map(x=>x?clip(entities(String(x).replace(/<[^>]+>/g," ")),900):"").filter(Boolean);return xs.find(x=>x.length>=12&&!/publications office|eur-lex|access to european union law/i.test(x.toLowerCase()))||xs[0]||`Document de l’Union européenne — ${celex}`;}
+function publishedFromHtml(html:string){for(const p of [/<meta[^>]+(?:name|property)=["'](?:DC\.date|dcterms\.date|date|article:published_time)["'][^>]+content=["']([^"']+)["']/i,/<meta[^>]+content=["']([^"']+)["'][^>]+(?:name|property)=["'](?:DC\.date|dcterms\.date|date|article:published_time)["']/i,/"datePublished"\s*:\s*"([^"]+)"/i]){const d=safeDate(html.match(p)?.[1]);if(d)return d;}return null;}
+function natureFromCelex(celex:string,title:string){if(celex.startsWith("5"))return"Document préparatoire de l’Union européenne";if(celex.startsWith("6"))return"Jurisprudence de l’Union européenne";const t=norm(title);if(t.includes("directive"))return"Directive de l’Union européenne";if(t.includes("reglement")||t.includes("regulation"))return"Règlement de l’Union européenne";if(t.includes("decision"))return"Décision de l’Union européenne";return"Acte de l’Union européenne";}
+function actRefs(raw:unknown){const text=String(raw||""),out=new Set<string>();for(const m of text.matchAll(/\bCELEX\s*:?\s*([0-9][0-9A-Z()_.-]{5,70})\b/gi))out.add(String(m[1]).toUpperCase());for(const m of text.matchAll(/\bCOM\s*\(\s*(20\d{2})\s*\)\s*(\d{1,4})\b/gi))out.add(`5${m[1]}PC${String(m[2]).padStart(4,"0")}`);const typed=(kind:string,letter:string)=>{const re=new RegExp(`\\b(?:${kind})s?\\b([\\s\\S]{0,520}?)(?=\\b(?:(?:Regulation|Reglement|Règlement|Directive|Decision|Décision)s?)\\b|[.;\\n]|$)`,"gi");for(const m of text.matchAll(re)){for(const n of String(m[1]||"").matchAll(/\b(20\d{2})\s*\/\s*(\d{1,5})\b/g))out.add(`3${n[1]}${letter}${String(n[2]).padStart(4,"0")}`);}};typed("Regulation|Règlement|Reglement","R");typed("Directive","L");typed("Decision|Décision","D");return[...out].filter(x=>/^[356][0-9A-Z()_.-]{5,70}$/i.test(x)).slice(0,40);}
+function namedSeeds(d:Dossier){const text=norm(allProfileText(d)),out=new Set<string>();for(const [re,celex] of ALIASES)if(re.test(text))out.add(celex);for(const celex of actRefs(allProfileText(d)))out.add(celex);return[...out].slice(0,20);}
+async function resolveEurlex(celex:string,depth:number,parent:string|null,root:boolean):Promise<EurlexDoc>{const c=new AbortController(),timer=setTimeout(()=>c.abort(),15000);try{const r=await fetch(`${CELLAR}/resource/celex/${encodeURIComponent(celex)}`,{redirect:"follow",cache:"no-store",signal:c.signal,headers:{"User-Agent":"Myvor-Dossier-Corpus/2.0","Accept":"application/xhtml+xml","Accept-Language":"fra"}});if(!r.ok)throw new Error(`Cellar HTTP ${r.status}`);const html=await r.text();if(html.length>2_500_000)throw new Error("Réponse Cellar trop volumineuse");const source_text=cleanHtml(html);if(source_text.length<120)throw new Error("Contenu Cellar insuffisant");const title=titleFromHtml(html,celex);return{celex,title,nature:natureFromCelex(celex,title),source_url:`https://eur-lex.europa.eu/legal-content/FR/TXT/?uri=CELEX:${encodeURIComponent(celex)}`,published_at:publishedFromHtml(html),source_text,depth,parent,root};}finally{clearTimeout(timer);}}
+async function discoverAndStore(admin:any,d:Dossier,createdBy:string){const seeds=namedSeeds(d);const queue=seeds.map(celex=>({celex,depth:0,parent:null as string|null,root:true})),seen=new Set<string>(),docs:EurlexDoc[]=[];let errors=0,relations=0;while(queue.length&&seen.size<32){const q=queue.shift()!;if(seen.has(q.celex))continue;seen.add(q.celex);try{const doc=await resolveEurlex(q.celex,q.depth,q.parent,q.root);docs.push(doc);if(q.depth===0){for(const child of actRefs(doc.source_text)){if(child===q.celex||seen.has(child)||queue.some(x=>x.celex===child))continue;if(seen.size+queue.length>=32)break;queue.push({celex:child,depth:1,parent:q.celex,root:false});relations++;}}}catch{errors++;}}
+  if(!docs.length)return{seeds:seeds.length,resolved:0,inserted:0,relations,errors,docs:[] as EurlexDoc[]};let inserted=0;for(let p=0;p<docs.length;p+=20){const batch=docs.slice(p,p+20),rows=batch.map(i=>({user_id:d.user_id,organization_id:d.organization_id,created_by:createdBy,dossier_id:null,title:i.title,nature:i.nature,source_url:i.source_url,source_name:"EUR-Lex / Cellar",published_at:i.published_at,urgency:"moyen"}));const{data:newRows,error:up}=await admin.from("watch_items").upsert(rows,{onConflict:"organization_id,source_url",ignoreDuplicates:true}).select("id");if(up)throw up;inserted+=(newRows||[]).length;const urls=batch.map(i=>i.source_url),{data:known,error:read}=await admin.from("watch_items").select("id,source_url").eq("organization_id",d.organization_id).in("source_url",urls);if(read)throw read;const ids=new Map((known||[]).map((r:any)=>[String(r.source_url),String(r.id)])),now=new Date().toISOString(),content=batch.map(i=>{const id=ids.get(i.source_url);return id?{watch_item_id:id,organization_id:d.organization_id,source_text:i.source_text,source_text_chars:i.source_text.length,fetched_at:now,updated_at:now}:null;}).filter(Boolean);if(content.length){const{error:ce}=await admin.from("watch_item_content").upsert(content,{onConflict:"watch_item_id"});if(ce)throw ce;}}
+  return{seeds:seeds.length,resolved:docs.length,inserted,relations,errors,docs};}
+function lexicalScore(item:WatchItem,sourceText:string,d:Dossier):Score{const title=norm(`${item.title} ${item.nature||""}`),full=norm(`${item.title} ${item.nature||""} ${sourceText.slice(0,MAX_SOURCE)}`);const blocked=list(d.watch_excluded_keywords).find(t=>contains(full,t));if(blocked)return{score:0,matches:[],reason:`Exclusion détectée : ${blocked}`};const priority=[...list(d.watch_priority_phrases),...list(d.reference_texts)].filter(Boolean),strategic=[...list(d.watch_keywords),...list(d.watch_topics),...list(d.watch_subtopics)].filter(Boolean);const pt=priority.filter(t=>contains(title,t));if(pt.length)return{score:.99,matches:pt.slice(0,6),reason:`Expression prioritaire dans le titre : ${pt[0]}`};const pb=priority.filter(t=>contains(full,t));if(pb.length>=2)return{score:.96,matches:pb.slice(0,6),reason:"Plusieurs expressions prioritaires dans le texte"};if(pb.length===1)return{score:.91,matches:pb,reason:`Expression prioritaire dans le texte : ${pb[0]}`};const st=strategic.filter(t=>contains(title,t));if(st.length>=2)return{score:.94,matches:st.slice(0,6),reason:"Plusieurs signaux métier dans le titre"};if(st.length===1)return{score:.86,matches:st,reason:`Signal métier dans le titre : ${st[0]}`};const sb=strategic.filter(t=>contains(full,t));if(sb.length>=3)return{score:.86,matches:sb.slice(0,8),reason:"Plusieurs signaux métier dans le texte"};if(sb.length===2)return{score:.76,matches:sb,reason:"Deux signaux métier dans le texte"};if(sb.length===1)return{score:.61,matches:sb,reason:`Signal métier détecté : ${sb[0]}`};const core=[...new Set([...words(d.title),...words(d.objective)])],support=[...new Set([...words(d.context||""),...words(d.sector||""),...words(d.activity||""),...list(d.strategic_issues).flatMap(words),...list(d.watch_topics).flatMap(words),...list(d.watch_subtopics).flatMap(words)])],tw=new Set(words(title)),fw=new Set(words(full)),coreTitle=core.filter(w=>tw.has(w)),coreFull=core.filter(w=>fw.has(w)),total=[...new Set([...coreFull,...support.filter(w=>fw.has(w))])];if(coreTitle.length>=2&&total.length>=3)return{score:.84,matches:total.slice(0,8),reason:"Correspondance forte au cœur du dossier"};if(coreFull.length>=3&&total.length>=5)return{score:.70,matches:total.slice(0,8),reason:"Correspondance thématique forte dans le texte"};if(total.length>=5)return{score:.60,matches:total.slice(0,8),reason:"Correspondance thématique étendue"};if(coreFull.length>=2&&total.length>=3)return{score:.43,matches:total.slice(0,8),reason:"Correspondance thématique à valider"};return{score:0,matches:[],reason:"Aucun signal suffisamment discriminant"};}
+function automatedReject(item:WatchItem){const c=Number(item.qualification_confidence);return item.dossier_id&&Number.isFinite(c)&&c<REVIEW&&/rejet|prefiltre|préfiltre|corpus applicable|regles dossier|règles dossier|filtre ia|revalidation legacy/i.test(String(item.qualification_reason||""));}
 
-function scoreItem(item:WatchItem,sourceText:string,d:Dossier):Score{
-  const title=norm(`${item.title} ${item.nature||""}`);
-  const full=norm(`${item.title} ${item.nature||""} ${sourceText.slice(0,SOURCE_EXCERPT_CHARS)}`);
-  const blocked=list(d.watch_excluded_keywords).find(t=>contains(full,t));
-  if(blocked)return{score:0,matches:[],reason:`Exclusion détectée : ${blocked}`};
-
-  const references=list(d.reference_texts).filter(strongTerm);
-  const priorities=list([...list(d.watch_priority_phrases),...references]).filter(strongTerm);
-  const strategic=list([...list(d.watch_keywords),...list(d.watch_topics),...list(d.watch_subtopics),...list(d.strategic_issues),...list(d.key_actors),d.sector||"",d.activity||""]).filter(strongTerm);
-  const profile=allProfileText(d);
-  const refs=legalRefs(profile);
-  const refMatches=refs.filter(r=>contains(full,r));
-  if(refMatches.length)return{score:.995,matches:refMatches.slice(0,8),reason:`Référence juridique exacte : ${refMatches.slice(0,3).join(", ")}`};
-
-  const priorityTitle=priorities.filter(t=>contains(title,t));
-  if(priorityTitle.length)return{score:.99,matches:priorityTitle.slice(0,6),reason:`Expression prioritaire dans le titre : ${priorityTitle[0]}`};
-  const priorityBody=priorities.filter(t=>contains(full,t));
-  if(priorityBody.length>=2)return{score:.97,matches:priorityBody.slice(0,6),reason:"Plusieurs expressions prioritaires dans le texte"};
-  if(priorityBody.length===1)return{score:.94,matches:priorityBody,reason:`Expression prioritaire dans le texte : ${priorityBody[0]}`};
-
-  const dossierPhrases=[...phraseCandidates(d.title,24),...phraseCandidates(d.objective,24)].filter(p=>p.length>=5);
-  const phraseTitle=dossierPhrases.filter(p=>contains(title,p));
-  if(phraseTitle.length>=2)return{score:.96,matches:phraseTitle.slice(0,6),reason:"Plusieurs expressions propres au dossier dans le titre"};
-  if(phraseTitle.length===1)return{score:.91,matches:phraseTitle,reason:`Expression propre au dossier dans le titre : ${phraseTitle[0]}`};
-  const phraseBody=dossierPhrases.filter(p=>contains(full,p));
-  if(phraseBody.length>=2)return{score:.88,matches:phraseBody.slice(0,6),reason:"Plusieurs expressions propres au dossier dans le texte"};
-  if(phraseBody.length===1&&phraseBody[0].split(" ").length>=3)return{score:.76,matches:phraseBody,reason:`Expression propre au dossier dans le texte : ${phraseBody[0]}`};
-
-  const strategicTitle=strategic.filter(t=>contains(title,t));
-  if(strategicTitle.length>=2)return{score:.95,matches:strategicTitle.slice(0,6),reason:"Plusieurs signaux métier exacts dans le titre"};
-  if(strategicTitle.length===1)return{score:.88,matches:strategicTitle,reason:`Signal métier exact dans le titre : ${strategicTitle[0]}`};
-  const strategicBody=strategic.filter(t=>contains(full,t));
-  if(strategicBody.length>=3)return{score:.88,matches:strategicBody.slice(0,8),reason:"Plusieurs signaux métier exacts dans le texte"};
-  if(strategicBody.length===2)return{score:.80,matches:strategicBody,reason:"Deux signaux métier exacts dans le texte"};
-  if(strategicBody.length===1)return{score:.67,matches:strategicBody,reason:`Signal métier détecté : ${strategicBody[0]}`};
-
-  const core=[...new Set([...words(d.title),...words(d.objective)])];
-  const support=[...new Set([...words(d.context||""),...words(d.sector||""),...words(d.activity||""),...list(d.strategic_issues).flatMap(words),...list(d.watch_topics).flatMap(words),...list(d.watch_subtopics).flatMap(words)])];
-  const titleWords=new Set(words(title));
-  const fullWords=new Set(words(full));
-  const coreTitle=core.filter(w=>titleWords.has(w));
-  const coreFull=core.filter(w=>fullWords.has(w));
-  const supportFull=support.filter(w=>fullWords.has(w));
-  const total=[...new Set([...coreFull,...supportFull])];
-  if(coreTitle.length>=2&&total.length>=3)return{score:.86,matches:total.slice(0,8),reason:`Correspondance forte au cœur du dossier : ${total.slice(0,5).join(", ")}`};
-  if(coreTitle.length>=1&&total.length>=4)return{score:.76,matches:total.slice(0,8),reason:"Correspondance dossier forte avec signal dans le titre"};
-  if(coreFull.length>=3&&total.length>=5)return{score:.72,matches:total.slice(0,8),reason:"Correspondance thématique forte dans le texte"};
-  if(total.length>=5)return{score:.62,matches:total.slice(0,8),reason:"Correspondance thématique étendue"};
-  if(coreFull.length>=2&&total.length>=3)return{score:.47,matches:total.slice(0,8),reason:"Correspondance thématique à valider"};
-  if(coreFull.length>=1&&total.length>=3&&profileStrength(d)>=4)return{score:.39,matches:total.slice(0,8),reason:"Correspondance partielle à valider"};
-  return{score:0,matches:[],reason:"Aucun signal suffisamment discriminant"};
-}
-
-async function batches(tasks:Array<()=>Promise<void>>,size=10){for(let i=0;i<tasks.length;i+=size)await Promise.all(tasks.slice(i,i+size).map(t=>t()))}
-
-Deno.serve(async(req:Request)=>{
-  if(req.method==="OPTIONS")return new Response("ok",{status:200,headers:H});
-  if(req.method!=="POST")return json({error:"Méthode non autorisée"},405);
-  const contentLength=Number(req.headers.get("content-length")||"0");
-  if(Number.isFinite(contentLength)&&contentLength>4096)return json({error:"Requête trop volumineuse"},413);
-
-  const url=Deno.env.get("SUPABASE_URL")||"";
-  const key=adminKey();
-  const authorization=req.headers.get("Authorization")||"";
-  if(!url||!key)return json({error:"Configuration serveur incomplète"},503);
-  if(!authorization.startsWith("Bearer "))return json({error:"Authentification requise"},401);
-
-  const admin=createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false}});
-  const token=authorization.replace(/^Bearer\s+/i,"").trim();
-  const{data:authData,error:authError}=await admin.auth.getUser(token);
-  const user=authData?.user;
-  if(authError||!user)return json({error:"Session invalide"},401);
-
-  const{data:quota,error:quotaError}=await admin.rpc("consume_changes_corpus_quota_for_user",{p_user_id:user.id});
-  if(quotaError)return json({error:"Contrôle de fréquence indisponible"},503);
-  if(quota!==true)return json({error:"Trop de reconstructions du corpus. Réessayez dans quelques minutes."},429);
-
-  const body=await req.json().catch(()=>null);
-  const dossierId=clip(body?.dossier_id,80);
-  if(!UUID_RE.test(dossierId))return json({error:"dossier_id invalide"},400);
-
-  const{data:drow,error:de}=await admin.from("dossiers").select("id,user_id,organization_id,title,objective,context,sector,activity,strategic_issues,risks_to_avoid,opportunities,client_position,key_actors,watch_keywords,watch_priority_phrases,watch_excluded_keywords,watch_topics,watch_subtopics,reference_texts").eq("id",dossierId).maybeSingle();
-  if(de||!drow)return json({error:"Dossier introuvable"},404);
-  const d=drow as Dossier;
-  if(!d.organization_id)return json({error:"Dossier sans organisation"},409);
-
-  const{data:membership,error:membershipError}=await admin.from("organization_members").select("user_id").eq("organization_id",d.organization_id).eq("user_id",user.id).maybeSingle();
-  if(membershipError)return json({error:"Vérification des droits impossible"},503);
-  const authorized=d.user_id===user.id||!!membership;
-  if(!authorized)return json({error:"Accès interdit"},403);
-
-  const profileHash=await fingerprint(d);
-  const engine=`${ENGINE_BASE}-${profileHash}`;
-  const{data:existing,error:existingError}=await admin.from("watch_item_dossier_links").select("watch_item_id,status,score,reason,engine").eq("dossier_id",d.id).eq("organization_id",d.organization_id);
-  if(existingError)return json({error:"Impossible de charger l'état du corpus applicable"},500);
-  const existingMap=new Map((existing||[]).map((x:any)=>[String(x.watch_item_id),x]));
-
-  const results:Result[]=[];
-  let linked=0,suggested=0,relevant=0,reused=0,processed=0,scanned=0;
-  for(const row of existing||[]){
-    if(String((row as any).engine)!==engine)continue;
-    const status=String((row as any).status),score=Number((row as any).score)||0;
-    if(status!=="rejected"){
-      relevant++;
-      if(status==="linked")linked++;else if(status==="suggested")suggested++;
-      results.push({id:String((row as any).watch_item_id),title:"",score,status:"cached",reason:String((row as any).reason||"")});
-    }
-    reused++;
-  }
-
-  let offset=0;
-  while(true){
-    const{data:rows,error:we}=await admin.from("watch_items").select("id,user_id,organization_id,title,nature,source_url,dossier_id,suggested_dossier_id,qualification_reason,published_at,created_at,change_type,change_summary").eq("organization_id",d.organization_id).order("created_at",{ascending:true}).range(offset,offset+PAGE_SIZE-1);
-    if(we)return json({error:`Lecture du corpus impossible : ${clip(we.message,180)}`},500);
-    const items=(rows||[]) as WatchItem[];
-    if(!items.length)break;
-    scanned+=items.length;
-
-    const pending=items.filter(item=>String(existingMap.get(item.id)?.engine||"")!==engine&&!String(item.qualification_reason||"").startsWith("Ignoré manuellement"));
-    if(pending.length){
-      const ids=pending.map(i=>i.id);
-      const{data:contents,error:ce}=await admin.rpc("get_watch_content_excerpts",{p_organization_id:d.organization_id,p_watch_item_ids:ids,p_max_chars:SOURCE_EXCERPT_CHARS});
-      if(ce)return json({error:`Lecture des contenus impossible : ${clip(ce.message,180)}`},500);
-      const cm=new Map((contents||[]).map((r:any)=>[String(r.watch_item_id),String(r.source_text||"")]));
-      const pageWrites:PendingWrite[]=[];
-
-      for(const item of pending){
-        if(item.organization_id!==d.organization_id)continue;
-        processed++;
-        const score=scoreItem(item,cm.get(item.id)||"",d);
-        const reason=[score.reason,delta(item)].filter(Boolean).join(". ");
-        const now=new Date().toISOString();
-        const status=score.score>=AUTO_THRESHOLD?"linked":score.score>=REVIEW_THRESHOLD?"suggested":"rejected";
-        const payload={watch_item_id:item.id,dossier_id:d.id,organization_id:d.organization_id,score:Number(score.score.toFixed(3)),status,reason:clip(`${RULE_PREFIX}${status}. ${reason}. Signaux : ${score.matches.join(", ")}`,1000),engine,updated_at:now};
-        pageWrites.push({item,score,status,reason,payload});
-        if(status!=="rejected"){
-          relevant++;
-          if(status==="linked")linked++;else suggested++;
-          results.push({id:item.id,title:item.title,score:score.score,status,reason,change_type:item.change_type,change_summary:item.change_summary});
-        }
-      }
-
-      if(pageWrites.length){
-        const{error:upsertError}=await admin.from("watch_item_dossier_links").upsert(pageWrites.map(w=>w.payload),{onConflict:"watch_item_id,dossier_id"});
-        if(upsertError)return json({error:`Écriture du corpus impossible : ${clip(upsertError.message,180)}`},500);
-
-        const updateTasks=pageWrites.filter(w=>w.status!=="rejected").map(w=>async()=>{
-          const now=String(w.payload.updated_at||new Date().toISOString());
-          const confidence=Number(w.payload.score)||0;
-          const qreason=String(w.payload.reason||"");
-          if(w.status==="linked"&&!w.item.dossier_id){
-            const{error:updateError}=await admin.from("watch_items").update({dossier_id:d.id,qualification_confidence:confidence,qualification_reason:qreason,qualified_at:now}).eq("id",w.item.id).eq("organization_id",d.organization_id).is("dossier_id",null);
-            if(updateError)throw updateError;
-          }else if(w.status==="suggested"&&!w.item.dossier_id&&!w.item.suggested_dossier_id){
-            const{error:updateError}=await admin.from("watch_items").update({suggested_dossier_id:d.id,qualification_confidence:confidence,qualification_reason:qreason,qualified_at:now}).eq("id",w.item.id).eq("organization_id",d.organization_id).is("dossier_id",null).is("suggested_dossier_id",null);
-            if(updateError)throw updateError;
-          }
-        });
-        try{await batches(updateTasks)}catch(error:any){return json({error:`Qualification du corpus impossible : ${clip(error?.message||error,180)}`},500)}
-      }
-    }
-
-    if(items.length<PAGE_SIZE)break;
-    offset+=PAGE_SIZE;
-  }
-
-  const missingTitles=results.filter(r=>!r.title).map(r=>r.id);
-  if(missingTitles.length){
-    const{data:titleRows}=await admin.from("watch_items").select("id,title,change_type,change_summary").eq("organization_id",d.organization_id).in("id",missingTitles.slice(0,250));
-    const tm=new Map((titleRows||[]).map((r:any)=>[String(r.id),r]));
-    for(const r of results){if(r.title)continue;const row=tm.get(r.id);if(row){r.title=String(row.title||"");r.change_type=row.change_type;r.change_summary=row.change_summary}}
-  }
-
-  results.sort((a,b)=>b.score-a.score);
-  return json({
-    ok:true,engine,dossier_id:d.id,profile_strength:profileStrength(d),scanned,processed,reused,relevant,linked,suggested,
-    auto_link_threshold:AUTO_THRESHOLD,review_threshold:REVIEW_THRESHOLD,results:results.slice(0,250),
-    message:`${scanned} texte(s) vérifiés · ${processed} recalculé(s) · ${reused} résultat(s) réutilisé(s) · ${linked} rattaché(s) · ${suggested} à valider.`
-  });
+Deno.serve(async(req:Request)=>{if(req.method==="OPTIONS")return new Response("ok",{headers:H});if(req.method!=="POST")return json({error:"Méthode non autorisée"},405);const url=Deno.env.get("SUPABASE_URL")||"",key=adminKey(),authorization=req.headers.get("Authorization")||"";if(!url||!key)return json({error:"Configuration serveur incomplète"},503);if(!authorization.startsWith("Bearer "))return json({error:"Authentification requise"},401);const admin=createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false}}),token=authorization.replace(/^Bearer\s+/i,"").trim();const{data:authData,error:authError}=await admin.auth.getUser(token),user=authData?.user;if(authError||!user)return json({error:"Session invalide"},401);const body=await req.json().catch(()=>null),dossierId=clip(body?.dossier_id,80);if(!UUID_RE.test(dossierId))return json({error:"dossier_id invalide"},400);const{data:drow,error:de}=await admin.from("dossiers").select("id,user_id,organization_id,title,objective,context,sector,activity,strategic_issues,risks_to_avoid,opportunities,client_position,key_actors,watch_keywords,watch_priority_phrases,watch_excluded_keywords,watch_topics,watch_subtopics,reference_texts").eq("id",dossierId).maybeSingle();if(de||!drow)return json({error:"Dossier introuvable"},404);const d=drow as Dossier;const{data:membership,error:me}=await admin.from("organization_members").select("user_id").eq("organization_id",d.organization_id).eq("user_id",user.id).maybeSingle();if(me)return json({error:"Vérification des droits impossible"},503);if(!(d.user_id===user.id||!!membership))return json({error:"Accès interdit"},403);const{data:quota,error:qe}=await admin.rpc("consume_changes_corpus_quota_for_user",{p_user_id:user.id});if(qe)return json({error:"Contrôle de fréquence indisponible"},503);if(quota!==true)return json({error:"Trop de reconstructions du corpus. Réessayez dans quelques minutes."},429);
+  let discovery:{seeds:number;resolved:number;inserted:number;relations:number;errors:number;docs:EurlexDoc[]}={seeds:0,resolved:0,inserted:0,relations:0,errors:0,docs:[]};try{discovery=await discoverAndStore(admin,d,user.id);}catch(e:any){console.error("eurlex-discovery-v10",clip(e?.message||e,220));}
+  const relationByUrl=new Map<string,EurlexDoc>(discovery.docs.map(doc=>[doc.source_url,doc])),profileHash=await fingerprint(d),engine=`${ENGINE_BASE}-${profileHash}`;const results:any[]=[];let scanned=0,processed=0,linked=0,suggested=0,rejected=0,unlinked=0,offset=0;
+  while(true){const{data:rows,error:we}=await admin.from("watch_items").select("id,organization_id,title,nature,source_url,dossier_id,suggested_dossier_id,qualification_confidence,qualification_reason,published_at,created_at,change_type,change_summary").eq("organization_id",d.organization_id).order("created_at",{ascending:true}).range(offset,offset+PAGE_SIZE-1);if(we)return json({error:`Lecture du corpus impossible : ${clip(we.message,180)}`},500);const items=(rows||[]) as WatchItem[];if(!items.length)break;scanned+=items.length;const ids=items.map(i=>i.id),{data:contents,error:ce}=await admin.rpc("get_watch_content_excerpts",{p_organization_id:d.organization_id,p_watch_item_ids:ids,p_max_chars:MAX_SOURCE});if(ce)return json({error:`Lecture des contenus impossible : ${clip(ce.message,180)}`},500);const cm=new Map((contents||[]).map((r:any)=>[String(r.watch_item_id),String(r.source_text||"")]));const linkRows:any[]=[];for(const item of items){processed++;const discovered=relationByUrl.get(item.source_url);let score:Score;if(discovered?.root)score={score:.997,matches:[discovered.celex],reason:`Texte européen identifié directement depuis le dossier (${discovered.celex})`};else if(discovered?.parent)score={score:.985,matches:[discovered.celex,discovered.parent],reason:`Texte explicitement cité par le texte européen ${discovered.parent}`};else score=lexicalScore(item,cm.get(item.id)||"",d);const status=score.score>=AUTO?"linked":score.score>=REVIEW?"suggested":"rejected",now=new Date().toISOString(),reason=clip(`Corpus applicable v10 — ${status}. ${score.reason}. Signaux : ${score.matches.join(", ")}`,1000);linkRows.push({watch_item_id:item.id,dossier_id:d.id,organization_id:d.organization_id,score:Number(score.score.toFixed(3)),status,reason,engine,updated_at:now});if(status==="linked"){linked++;if(!item.dossier_id){await admin.from("watch_items").update({dossier_id:d.id,suggested_dossier_id:null,qualification_confidence:score.score,qualification_reason:reason,qualified_at:now}).eq("id",item.id).eq("organization_id",d.organization_id).is("dossier_id",null);}}else if(status==="suggested"){suggested++;if(!item.dossier_id&&!item.suggested_dossier_id){await admin.from("watch_items").update({suggested_dossier_id:d.id,qualification_confidence:score.score,qualification_reason:reason,qualified_at:now}).eq("id",item.id).eq("organization_id",d.organization_id).is("dossier_id",null).is("suggested_dossier_id",null);}}else{rejected++;if(item.dossier_id===d.id&&automatedReject(item)){await admin.from("watch_items").update({dossier_id:null,qualification_confidence:score.score,qualification_reason:reason,qualified_at:now}).eq("id",item.id).eq("organization_id",d.organization_id).eq("dossier_id",d.id);unlinked++;}}
+      if(status!=="rejected")results.push({id:item.id,title:item.title,score:score.score,status,reason,change_type:item.change_type,change_summary:item.change_summary});}
+    if(linkRows.length){const{error:le}=await admin.from("watch_item_dossier_links").upsert(linkRows,{onConflict:"watch_item_id,dossier_id"});if(le)return json({error:`Écriture du corpus impossible : ${clip(le.message,180)}`},500);}if(items.length<PAGE_SIZE)break;offset+=PAGE_SIZE;}
+  results.sort((a,b)=>b.score-a.score);return json({ok:true,engine,dossier_id:d.id,discovery:{seeds:discovery.seeds,resolved:discovery.resolved,inserted:discovery.inserted,relations:discovery.relations,errors:discovery.errors,celexes:discovery.docs.map(x=>x.celex)},scanned,processed,linked,suggested,rejected,unlinked,auto_link_threshold:AUTO,review_threshold:REVIEW,results:results.slice(0,250),message:`EUR-Lex : ${discovery.resolved} texte(s) résolu(s), ${discovery.relations} relation(s) juridique(s) suivie(s) · ${linked} rattaché(s) · ${suggested} à valider · ${unlinked} faux rattachement(s) retiré(s).`});
 });
