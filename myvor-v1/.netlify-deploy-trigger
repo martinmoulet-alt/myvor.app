@@ -1,1 +1,4 @@
-Deploy premium authentication screen — 2026-08-04.
+Force Myvor V1 Netlify production rebuild.
+Source commit: 1d0baff58bdafb12e99401c9f9c7ef1633f0cb76
+Triggered: 2026-08-15 08:10 Europe/Paris
+Reason: publish current main including Score d’urgence, Radar & War Zone, and Note Builder navigation.
