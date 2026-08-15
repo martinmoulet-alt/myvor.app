@@ -1,4 +1,4 @@
 Force Netlify rebuild for Myvor production deployment.
-Source commit: ac001e20ad649a8d27cc137bf4b40e50b0d28ec9
-Triggered: 2026-08-15 08:08 Europe/Paris
-Reason: publish the current Myvor navigation and production modules, including Radar & War Zone in the sidebar, after GitHub CI validation.
+Source commit: cff874ce64dc6c2e28589fe6383cdbcd0f573083
+Triggered: 2026-08-15 16:32 Europe/Paris
+Reason: deploy the finalized Myvor Note Builder with mandatory Objet, separated sections, rich bold rendering, Decision Engine context preservation, and the validated War Zone quota fix.
