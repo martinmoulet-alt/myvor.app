@@ -23,6 +23,7 @@ jobs:
       - name: Apply verified migration
         run: |
           python .m2m_apply.py
+          sed -i 's/[[:space:]]\+$//' myvor-v1/app/ImpactWatchSelector.tsx
           git diff --check
       - name: Remove temporary migration files
         run: |
