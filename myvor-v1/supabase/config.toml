@@ -24,6 +24,14 @@ verify_jwt = false
 [functions.dossier-profile]
 verify_jwt = true
 
+[functions.dossier-profile-auto]
+# Appel interne signé depuis Postgres à la création / mise à jour d'un dossier.
+verify_jwt = false
+
+[functions.dossier-corpus-auto]
+# Appel interne signé depuis Postgres ; construit automatiquement le corpus officiel du dossier.
+verify_jwt = false
+
 [functions.radar-enrich]
 # Cette fonction vérifie elle-même le JWT via Auth et applique le quota utilisateur.
 verify_jwt = false
