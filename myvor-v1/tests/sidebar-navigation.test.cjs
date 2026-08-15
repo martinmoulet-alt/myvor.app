@@ -4,6 +4,7 @@ const fs=require("node:fs");
 const path=require("node:path");
 
 const source=fs.readFileSync(path.join(__dirname,"../app/page.tsx"),"utf8");
+const dashboardFixes=fs.readFileSync(path.join(__dirname,"../app/dashboard-fixes.css"),"utf8");
 
 test("production modules stay visible in the main navigation",()=>{
   assert.match(source,/\["impact","Score d’urgence",AlertTriangle\]/);
@@ -17,4 +18,10 @@ test("desktop sidebar renders the complete navigation",()=>{
 
 test("mobile menu renders the complete navigation",()=>{
   assert.match(source,/className="mobile-menu-nav">\{nav\.map/);
+});
+
+test("CSS never rewrites a navigation label",()=>{
+  assert.doesNotMatch(dashboardFixes,/navbtn:nth-child/);
+  assert.doesNotMatch(dashboardFixes,/mobile-menu-nav>button:nth-child/);
+  assert.doesNotMatch(dashboardFixes,/content:\s*["']Score d’urgence["']/);
 });
