@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase";
 
-export type ProductionType="impact"|"urgency_score"|"radar"|"builder"|"warzone";
+export type ProductionType="impact"|"urgency_score"|"decision_engine"|"radar"|"builder"|"warzone";
 export type AITrace={
   assisted_by_ai:true;
   system:"Myvor";
@@ -43,11 +43,32 @@ function enrichAITrace(content:Record<string,unknown>){
   return {...raw,ai_trace:trace} as Record<string,unknown>;
 }
 
+async function runDecisionEngine(production:Production){
+  if(!supabase||production.type!=="urgency_score")return null;
+  try{
+    const {data:sessionData}=await supabase.auth.getSession();
+    const token=String(sessionData.session?.access_token||"");
+    if(!token)return null;
+    const {data,error}=await supabase.functions.invoke("decision-engine",{
+      body:{urgency_production_id:production.id},
+      headers:{Authorization:`Bearer ${token}`},
+    });
+    if(error){console.warn("Decision Engine unavailable",error.message);return null;}
+    const decision=data?.decision;
+    return decision&&typeof decision==="object"?decision as Record<string,unknown>:null;
+  }catch(error){console.warn("Decision Engine unavailable",error);return null;}
+}
+
 export async function saveProduction(input:{dossier_id:string;type:ProductionType;title:string;content:Record<string,unknown>}){
   if(!supabase)return {data:null as Production|null,error:new Error("Supabase n’est pas configuré.")};
   const payload={...input,content:enrichAITrace(input.content)};
   const {data,error}=await supabase.from("productions").insert(payload).select("id,dossier_id,type,title,content,created_at").single();
-  return {data:data as Production|null,error};
+  const production=data as Production|null;
+  if(!error&&production?.type==="urgency_score"){
+    const decision=await runDecisionEngine(production);
+    if(decision)production.content={...production.content,decision_engine:decision};
+  }
+  return {data:production,error};
 }
 
 export async function getProduction(id:string){
