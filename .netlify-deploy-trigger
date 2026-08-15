@@ -1,4 +1,4 @@
 Force Netlify rebuild for Myvor production deployment.
-Source commit: d10990312b2ac276f863a9bbba463306fc5de570
-Triggered: 2026-08-15 Europe/Paris
-Reason: deploy the rebuilt professional Note Builder deliverable with A4-style document preview, prominent Objet, separated professional sections, key takeaways, rich bold emphasis, sources footer, collapsed editing panel, and validated Word/PDF rendering.
+Source commit: cc20a734f66310c6aa686318b333fc2d345884d3
+Triggered: 2026-08-15 16:51 Europe/Paris
+Reason: retry the professional Note Builder production deployment after the previous Netlify deploy was canceled. This retry starts only after GitHub CI completed successfully and no further code changes are planned behind it.
