@@ -40,3 +40,19 @@ test('Veille cards prefer publication date over import date',()=>{
   assert.match(veille,/item\.published_at\|\|item\.created_at/);
   assert.match(veille,/item\.source_name\|\|sourceLabel/);
 });
+
+test('action lifecycle is idempotent, terminable and reopenable',()=>{
+  const enhancer=read('app/ActionLifecycleEnhancer.tsx');
+  const layout=read('app/layout.tsx');
+  const migration=read('supabase/migrations/20260816153000_action_lifecycle_p1.sql');
+  assert.match(layout,/ActionLifecycleEnhancer/);
+  assert.match(enhancer,/Terminer ✓/);
+  assert.match(enhancer,/Réouvrir/);
+  assert.match(enhancer,/\.eq\("status","termine"\)/);
+  assert.match(enhancer,/\.is\("superseded_by",null\)/);
+  assert.match(migration,/actions_canonical_identity_uidx/);
+  assert.match(migration,/actions_prevent_duplicate_insert/);
+  assert.match(migration,/actions_stamp_lifecycle/);
+  assert.match(migration,/completed_at/);
+  assert.match(migration,/superseded_by/);
+});
