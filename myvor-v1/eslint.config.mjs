@@ -9,6 +9,7 @@ const baseline={
   "react-hooks/purity":"off",
   "react-hooks/immutability":"off",
   "react-hooks/exhaustive-deps":"warn",
+  "react/no-unescaped-entities":"warn",
   "@next/next/no-html-link-for-pages":"warn",
 };
 
@@ -34,6 +35,7 @@ export default defineConfig([
     files:["supabase/functions/**/*.ts"],
     rules:{
       "prefer-const":"off",
+      "react-hooks/rules-of-hooks":"off",
     },
   },
   globalIgnores([
