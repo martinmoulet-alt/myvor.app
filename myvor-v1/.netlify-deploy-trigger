@@ -1,4 +1,4 @@
 Force Myvor V1 Netlify production rebuild.
-Source commit: 77cd3fb6043b157ee33dac51300b5fac618e3b3c
-Triggered: 2026-08-15 17:09 Europe/Paris
-Reason: publish the definitive Myvor Decision Engine wiring: automatic execution after each saved urgency score, grounded server-side reload of verified dossier and full source texts, deterministic decision rules, explainability metrics, evidence traceability, dedicated decision_engine production, and Note Builder bridge.
+Source commit: 37ee1157b50836acf47d4720493de3f367905a9b
+Triggered: 2026-08-16 20:09 Europe/Paris
+Reason: publish the operational veille priority classification: P1 À traiter, P2 À surveiller, P3 Information; priority filter; grouped feed; priority-first sorting while preserving dossier, urgency, jurisdiction, source, Radar, Note and validation workflows.
