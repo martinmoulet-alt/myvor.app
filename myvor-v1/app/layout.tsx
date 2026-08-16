@@ -21,6 +21,7 @@ import AITransparencyNotice from "./AITransparencyNotice";
 import FirstRunOnboarding from "./FirstRunOnboarding";
 import MobileModuleDock from "./MobileModuleDock";
 import DossierRealtimeRefresh from "./DossierRealtimeRefresh";
+import DossierCompactEnhancer from "./DossierCompactEnhancer";
 
 export const metadata: Metadata = {
   title: "Myvor — Anticipez l’impact",
@@ -45,5 +46,5 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="fr"><body><PwaRegister/><StartupRecovery/><NetworkStatus/><DossierRealtimeRefresh/><LegalHelpMenu/><MobileDossierTabs/><WorkflowGuide/><AITransparencyNotice/><FirstRunOnboarding/><MobileModuleDock/>{children}</body></html>;
+  return <html lang="fr"><body><PwaRegister/><StartupRecovery/><NetworkStatus/><DossierRealtimeRefresh/><DossierCompactEnhancer/><LegalHelpMenu/><MobileDossierTabs/><WorkflowGuide/><AITransparencyNotice/><FirstRunOnboarding/><MobileModuleDock/>{children}</body></html>;
 }
