@@ -40,8 +40,8 @@ function resetLifecyclePanel(){
 
 export default function ActionLifecycleEnhancer(){
   useEffect(()=>{
+    if(!supabase)return;
     const client=supabase;
-    if(!client)return;
     let disposed=false;
     let scheduled=false;
     const busy=new Set<string>();
