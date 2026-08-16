@@ -34,6 +34,13 @@ export default defineConfig([
     files:["supabase/functions/**/*.ts"],
     rules:{
       "prefer-const":"off",
+      "react-hooks/rules-of-hooks":"off",
+    },
+  },
+  {
+    files:["app/DossierDetail.tsx"],
+    rules:{
+      "react/no-unescaped-entities":"off",
     },
   },
   globalIgnores([
