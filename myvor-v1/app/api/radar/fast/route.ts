@@ -9,6 +9,7 @@ const GENERIC_ACTOR=/(comp[eé]tent|chef de file|commissions? parlementaires? co
 
 type Dossier={id:string;client:string;title:string;objective:string;context?:string;key_actors?:string[];key_deadlines?:string[]};
 type WatchItem={id:string;title:string;nature:string;source_url?:string;source_name?:string|null;urgency?:string;created_at?:string;published_at?:string|null};
+type CorpusRow={reference_id?:string;title?:string;role?:string;source_url?:string;published_at?:string|null;confidence?:number|string};
 type ActorSeed={name:string;role:string;institution?:string;certainty:"confirme"|"a_confirmer";source?:WatchItem|null;baseInfluence?:number;origin:"dossier"|"source"};
 
 function text(value:unknown){return typeof value==="string"?value.trim():"";}
@@ -16,12 +17,12 @@ function urgency(value:unknown){const key=text(value).toLowerCase();return key==
 function normalized(value:unknown){return text(value).normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim();}
 function hostname(url:string){try{return new URL(url).hostname.toLowerCase().replace(/^www\./,"");}catch{return "";}}
 function specificActor(value:string){const name=text(value);return Boolean(name)&&!GENERIC_ACTOR.test(name);}
+function supabaseConfig(){return{url:(process.env.NEXT_PUBLIC_SUPABASE_URL||"").replace(/\/$/,""),key:process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY||""};}
 
 async function requireSessionAndQuota(request:Request){
   const authorization=request.headers.get("authorization")||"";
   if(!authorization.toLowerCase().startsWith("bearer "))return {ok:false,status:401,error:"Session Myvor requise."};
-  const url=(process.env.NEXT_PUBLIC_SUPABASE_URL||"").replace(/\/$/,"");
-  const key=process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY||"";
+  const {url,key}=supabaseConfig();
   if(!url||!key)return {ok:false,status:503,error:"La sécurité Supabase de Myvor n’est pas configurée."};
   const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),2500);
   try{
@@ -36,6 +37,14 @@ async function requireSessionAndQuota(request:Request){
   finally{clearTimeout(timer);}
 }
 
+async function fetchCorpusItems(request:Request,dossierId:string):Promise<WatchItem[]>{
+  const authorization=request.headers.get("authorization")||"";const{url,key}=supabaseConfig();if(!authorization||!url||!key)return[];
+  const query=new URLSearchParams({select:"reference_id,title,role,source_url,published_at,confidence",dossier_id:`eq.${dossierId}`,order:"confidence.desc",limit:"16"});
+  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),2800);
+  try{const response=await fetch(`${url}/rest/v1/dossier_corpus?${query.toString()}`,{headers:{apikey:key,Authorization:authorization},signal:controller.signal,cache:"no-store"});if(!response.ok)return[];const rows=(await response.json().catch(()=>[])) as CorpusRow[];return rows.map((row,index)=>({id:`corpus:${text(row.reference_id)||index}`,title:text(row.title),nature:text(row.role)||"Corpus applicable",source_url:text(row.source_url),source_name:"Corpus juridique Myvor",urgency:"faible",published_at:text(row.published_at)||null})).filter(item=>Boolean(item.title&&item.source_url));}catch{return[];}finally{clearTimeout(timer);}
+}
+function mergeItems(incoming:WatchItem[],corpus:WatchItem[]){const seen=new Set<string>();const result:WatchItem[]=[];const add=(item:WatchItem)=>{const key=text(item.source_url)||normalized(item.title);if(!key||seen.has(key))return;seen.add(key);result.push(item);};incoming.forEach(add);corpus.sort((a,b)=>sourcePriority(b)-sourcePriority(a)).forEach(add);return result.slice(0,MAX_CONTEXT_ITEMS);}
+function sourcePriority(item:WatchItem){const host=hostname(text(item.source_url));if(/senat\.fr|assemblee-nationale\.fr/.test(host))return 100;if(/economie\.gouv\.fr|ecologie\.gouv\.fr|ademe\.fr|gouvernement\.fr/.test(host))return 90;if(/commission\.europa\.eu|europarl\.europa\.eu/.test(host))return 80;if(/eur-lex\.europa\.eu/.test(host))return 70;return 20;}
 function institutionFromSource(item:WatchItem):ActorSeed|null{
   const host=hostname(text(item.source_url));if(!host)return null;
   const matches:Array<[string,string,string,number]>=[
@@ -87,7 +96,7 @@ export async function POST(request:Request){
     const access=await requireSessionAndQuota(request);if(!access.ok)return NextResponse.json({error:access.error},{status:access.status});
     const body=await request.json().catch(()=>null);const dossier=(body?.dossier||null) as Dossier|null;const incoming=(Array.isArray(body?.items)?body.items:[]) as WatchItem[];
     if(!dossier)return NextResponse.json({error:"Sélectionne un dossier client."},{status:400});
-    const items=[...incoming].sort((a,b)=>urgency(b.urgency)-urgency(a.urgency)||(Date.parse(b.published_at||b.created_at||"")||0)-(Date.parse(a.published_at||a.created_at||"")||0)).filter(item=>Boolean(text(item.source_url))).slice(0,MAX_CONTEXT_ITEMS);
+    const corpus=await fetchCorpusItems(request,dossier.id);const items=mergeItems([...incoming].sort((a,b)=>urgency(b.urgency)-urgency(a.urgency)||(Date.parse(b.published_at||b.created_at||"")||0)-(Date.parse(a.published_at||a.created_at||"")||0)).filter(item=>Boolean(text(item.source_url))),corpus);
     const deadline=Array.isArray(dossier.key_deadlines)&&dossier.key_deadlines.length?text(dossier.key_deadlines[0]):"À déterminer";
     const actors=buildSeeds(dossier,items).map((seed,index)=>{
       const source=seed.source||null;const signals=signalsFor(seed,items);const score=scoreFor(seed,signals,items);const sourceCount=seed.origin==="source"?Math.max(1,signals.length):signals.length;
@@ -95,6 +104,6 @@ export async function POST(request:Request){
     });
     const groundedActors=actors.filter(actor=>actor.evidence.verified).length;const status=actors.length?(groundedActors===actors.length?"grounded":"review_required"):"insufficient_context";
     const specificDossierActors=(Array.isArray(dossier.key_actors)?dossier.key_actors:[]).map(text).filter(specificActor).length;
-    return NextResponse.json({actors,engine:"myvor-radar-stable-v7-sourced-first",model:"deterministic",quality:{status,client_excluded:true,generic_unsubstantiated_filtered:true,structured_output:true,grounded_actors:groundedActors,total_actors:actors.length,grounding_rate:actors.length?groundedActors/actors.length:0,official_contact_lookup:false,verified_contact_pages:0,fallback_used:specificDossierActors===0,complete_sentence_style:true},grounding:{official_sources_requested:items.length,official_sources_fetched:groundedActors,max_official_sources:MAX_CONTEXT_ITEMS,statuses:items.map(item=>({url:item.source_url,resolved_url:item.source_url,status:"linked",read_chars:0}))}});
+    return NextResponse.json({actors,engine:"myvor-radar-stable-v8-corpus-sourced-first",model:"deterministic",quality:{status,client_excluded:true,generic_unsubstantiated_filtered:true,structured_output:true,grounded_actors:groundedActors,total_actors:actors.length,grounding_rate:actors.length?groundedActors/actors.length:0,official_contact_lookup:false,verified_contact_pages:0,fallback_used:specificDossierActors===0,complete_sentence_style:true,canonical_corpus_used:corpus.length>0},grounding:{official_sources_requested:items.length,official_sources_fetched:groundedActors,max_official_sources:MAX_CONTEXT_ITEMS,statuses:items.map(item=>({url:item.source_url,resolved_url:item.source_url,status:"linked",read_chars:0}))}});
   }catch(error:any){return NextResponse.json({error:error?.message||"Erreur interne du Radar."},{status:500});}
 }
