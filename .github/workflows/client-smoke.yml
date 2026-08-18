@@ -23,8 +23,15 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: myvor-v1/package-lock.json
+      - name: Require authenticated smoke credentials
+        env:
+          E2E_EMAIL: ${{ secrets.E2E_EMAIL }}
+          E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+        run: |
+          test -n "$E2E_EMAIL" || { echo "E2E_EMAIL is required for the authenticated production smoke test."; exit 1; }
+          test -n "$E2E_PASSWORD" || { echo "E2E_PASSWORD is required for the authenticated production smoke test."; exit 1; }
       - name: Install dependencies
-        run: npm install
+        run: npm ci
       - name: Install browsers
         run: npx playwright install --with-deps chromium webkit
       - name: Public and authenticated smoke tests
