@@ -15,6 +15,7 @@ import PwaRegister from "./PwaRegister";
 import StartupRecovery from "./StartupRecovery";
 import NetworkStatus from "./NetworkStatus";
 import LegalHelpMenu from "./LegalHelpMenu";
+import LaunchLegalCompliance from "./LaunchLegalCompliance";
 import MobileDossierTabs from "./MobileDossierTabs";
 import WorkflowGuide from "./WorkflowGuide";
 import AITransparencyNotice from "./AITransparencyNotice";
@@ -46,5 +47,5 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="fr"><body><PwaRegister/><StartupRecovery/><NetworkStatus/><DossierRealtimeRefresh/><DossierCompactEnhancer/><LegalHelpMenu/><MobileDossierTabs/><WorkflowGuide/><AITransparencyNotice/><FirstRunOnboarding/><MobileModuleDock/>{children}</body></html>;
+  return <html lang="fr"><body><PwaRegister/><StartupRecovery/><NetworkStatus/><DossierRealtimeRefresh/><DossierCompactEnhancer/><LegalHelpMenu/><LaunchLegalCompliance/><MobileDossierTabs/><WorkflowGuide/><AITransparencyNotice/><FirstRunOnboarding/><MobileModuleDock/>{children}</body></html>;
 }
